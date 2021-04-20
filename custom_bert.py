@@ -56,6 +56,11 @@ from transformers.utils import logging
 from transformers.models.bert.configuration_bert import BertConfig
 
 
+from custom_embedding import CustomEmbedding
+from custom_linear import CustomLinear
+from custom_layernorm import CustomLayerNorm
+
+
 logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "bert-base-uncased"
@@ -169,9 +174,10 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
         pointer.data = torch.from_numpy(array)
     return model
 
-# TODO: use config instead of sample_embed_dim, super_embed_dim
-def calc_dropout(dropout, sample_embed_dim, super_embed_dim):
-    return dropout * 1.0 * sample_embed_dim / super_embed_dim
+
+# TODO: use config instead of sample_hidden_size, super_hidden_size
+def calc_dropout(dropout, sample_hidden_size, super_hidden_size):
+    return dropout * 1.0 * sample_hidden_size / super_hidden_size
 
 
 class BertEmbeddings(nn.Module):
@@ -179,19 +185,19 @@ class BertEmbeddings(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.word_embeddings = nn.Embedding(
+        self.word_embeddings = CustomEmbedding(
             config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id
         )
-        self.position_embeddings = nn.Embedding(
+        self.position_embeddings = CustomEmbedding(
             config.max_position_embeddings, config.hidden_size
         )
-        self.token_type_embeddings = nn.Embedding(
+        self.token_type_embeddings = CustomEmbedding(
             config.type_vocab_size, config.hidden_size
         )
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
@@ -201,6 +207,25 @@ class BertEmbeddings(nn.Module):
         self.position_embedding_type = getattr(
             config, "position_embedding_type", "absolute"
         )
+
+    def set_sample_config(self, config):
+        # we name all param inside sampling ocnfig as sample_*
+        # hidden_size -> sample_hidden_size
+        sample_hidden_size = config.sample_hidden_size
+        self.word_embeddings.set_sample_config(sample_hidden_size, part="encoder")
+        self.position_embeddings.set_sample_config(sample_hidden_size, part="encoder")
+        self.token_type_embeddings.set_sample_config(sample_hidden_size, part="encoder")
+
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
+            sample_hidden_size=sample_hidden_size,
+        )
+        # reinitialize the dropout module with new dropout rate
+        # we can also directly use F.dropout as a function with the input
+        # embedding on forward and the new dropout rate. But for now, we are just
+        # reinitialing the module and using this in the forward function
+        self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(
         self,
@@ -255,9 +280,9 @@ class BertSelfAttention(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
-        self.query = nn.Linear(config.hidden_size, self.all_head_size)
-        self.key = nn.Linear(config.hidden_size, self.all_head_size)
-        self.value = nn.Linear(config.hidden_size, self.all_head_size)
+        self.query = CustomLinear(config.hidden_size, self.all_head_size)
+        self.key = CustomLinear(config.hidden_size, self.all_head_size)
+        self.value = CustomLinear(config.hidden_size, self.all_head_size)
 
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
         self.position_embedding_type = getattr(
@@ -268,7 +293,7 @@ class BertSelfAttention(nn.Module):
             or self.position_embedding_type == "relative_key_query"
         ):
             self.max_position_embeddings = config.max_position_embeddings
-            self.distance_embedding = nn.Embedding(
+            self.distance_embedding = CustomEmbedding(
                 2 * config.max_position_embeddings - 1, self.attention_head_size
             )
 
@@ -403,8 +428,8 @@ class BertSelfAttention(nn.Module):
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dense = CustomLinear(config.hidden_size, config.hidden_size)
+        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
@@ -422,6 +447,7 @@ class BertAttention(nn.Module):
         self.pruned_heads = set()
 
     def set_sample_config(config):
+        pass
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -475,7 +501,7 @@ class BertAttention(nn.Module):
 class BertIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.intermediate_size)
+        self.dense = CustomLinear(config.hidden_size, config.intermediate_size)
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
@@ -490,8 +516,8 @@ class BertIntermediate(nn.Module):
 class BertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.dense = CustomLinear(config.intermediate_size, config.hidden_size)
+        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
@@ -701,7 +727,7 @@ class BertEncoder(nn.Module):
 class BertPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = CustomLinear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
 
     def forward(self, hidden_states):
@@ -716,12 +742,12 @@ class BertPooler(nn.Module):
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        self.dense = CustomLinear(config.hidden_size, config.hidden_size)
         if isinstance(config.hidden_act, str):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -737,7 +763,7 @@ class BertLMPredictionHead(nn.Module):
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self.decoder = CustomLinear(config.hidden_size, config.vocab_size, bias=False)
 
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
 
@@ -763,7 +789,7 @@ class BertOnlyMLMHead(nn.Module):
 class BertOnlyNSPHead(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.seq_relationship = nn.Linear(config.hidden_size, 2)
+        self.seq_relationship = CustomLinear(config.hidden_size, 2)
 
     def forward(self, pooled_output):
         seq_relationship_score = self.seq_relationship(pooled_output)
@@ -774,7 +800,7 @@ class BertPreTrainingHeads(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.predictions = BertLMPredictionHead(config)
-        self.seq_relationship = nn.Linear(config.hidden_size, 2)
+        self.seq_relationship = CustomLinear(config.hidden_size, 2)
 
     def forward(self, sequence_output, pooled_output):
         prediction_scores = self.predictions(sequence_output)
@@ -795,17 +821,17 @@ class BertPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         """ Initialize the weights """
-        if isinstance(module, nn.Linear):
+        if isinstance(module, CustomLinear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.bias is not None:
                 module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
+        elif isinstance(module, CustomEmbedding):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, nn.LayerNorm):
+        elif isinstance(module, CustomLayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
@@ -964,7 +990,6 @@ class BertModel(BertPreTrainedModel):
         output_type=BaseModelOutputWithPoolingAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
     )
-
     def set_sample_config(self, config):
         self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
@@ -1655,7 +1680,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self.classifier = CustomLinear(config.hidden_size, config.num_labels)
 
         self.init_weights()
 
@@ -1743,7 +1768,7 @@ class BertForMultipleChoice(BertPreTrainedModel):
 
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, 1)
+        self.classifier = CustomLinear(config.hidden_size, 1)
 
         self.init_weights()
 
@@ -1858,7 +1883,7 @@ class BertForTokenClassification(BertPreTrainedModel):
 
         self.bert = BertModel(config, add_pooling_layer=False)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        self.classifier = CustomLinear(config.hidden_size, config.num_labels)
 
         self.init_weights()
 
@@ -1954,7 +1979,7 @@ class BertForQuestionAnswering(BertPreTrainedModel):
         self.num_labels = config.num_labels
 
         self.bert = BertModel(config, add_pooling_layer=False)
-        self.qa_outputs = nn.Linear(config.hidden_size, config.num_labels)
+        self.qa_outputs = CustomLinear(config.hidden_size, config.num_labels)
 
         self.init_weights()
 

@@ -20,17 +20,18 @@ def LayerNorm(normalized_shape, eps=1e-5, elementwise_affine=True, export=False)
 
 
 class CustomLayerNorm(torch.nn.LayerNorm):
-    def __init__(self, super_embed_dim):
-        super().__init__(super_embed_dim)
+    def __init__(self, super_hidden_size, eps):
+        super().__init__(super_hidden_size)
 
         # the largest embed dim
-        self.super_embed_dim = super_embed_dim
+        self.super_hidden_size = super_hidden_size
 
         # the current sampled embed dim
-        self.sample_embed_dim = None
+        self.sample_hidden_size = None
 
         self.samples = {}
         self.profiling = False
+        self.eps = eps
 
     def profile(self, mode=True):
         self.profiling = mode
@@ -41,19 +42,19 @@ class CustomLayerNorm(torch.nn.LayerNorm):
         return self.samples
 
     def _sample_parameters(self):
-        self.samples["weight"] = self.weight[: self.sample_embed_dim]
-        self.samples["bias"] = self.bias[: self.sample_embed_dim]
+        self.samples["weight"] = self.weight[: self.sample_hidden_size]
+        self.samples["bias"] = self.bias[: self.sample_hidden_size]
         return self.samples
 
-    def set_sample_config(self, sample_embed_dim):
-        self.sample_embed_dim = sample_embed_dim
+    def set_sample_config(self, sample_hidden_size):
+        self.sample_hidden_size = sample_hidden_size
         self._sample_parameters()
 
     def forward(self, x):
         self.sample_parameters()
         return F.layer_norm(
             x,
-            (self.sample_embed_dim,),
+            (self.sample_hidden_size,),
             weight=self.samples["weight"],
             bias=self.samples["bias"],
             eps=self.eps,

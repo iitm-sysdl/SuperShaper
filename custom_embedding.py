@@ -12,14 +12,17 @@ import numpy as np
 
 
 class CustomEmbedding(nn.Embedding):
-    def __init__(self, num_embeddings, super_embed_dim, padding_idx, *args, **kwargs):
-        super().__init__(num_embeddings, super_embed_dim, padding_idx, *args, **kwargs)
+    def __init__(self, vocab_size, super_hidden_size, padding_idx, *args, **kwargs):
+        super().__init__(vocab_size, super_hidden_size, padding_idx, *args, **kwargs)
 
         # the largest embed dim
-        self.super_embed_dim = {"encoder": super_embed_dim, "decoder": super_embed_dim}
+        self.super_hidden_size = {
+            "encoder": super_hidden_size,
+            "decoder": super_hidden_size,
+        }
 
         # the current sampled embed dim
-        self.sample_embed_dim = {"encoder": None, "decoder": None}
+        self.sample_hidden_size = {"encoder": None, "decoder": None}
 
         self.samples = {"encoder": {}, "decoder": {}}
         self.profiling = False
@@ -33,12 +36,12 @@ class CustomEmbedding(nn.Embedding):
         nn.init.normal_(self.weight, mean=0, std=self.embedding_dim ** -0.5)
         nn.init.constant_(self.weight[self.padding_idx], 0)
 
-    def set_sample_config(self, sample_embed_dim, part):
-        self.sample_embed_dim[part] = sample_embed_dim
+    def set_sample_config(self, sample_hidden_size, part):
+        self.sample_hidden_size[part] = sample_hidden_size
         self._sample_parameters(part)
 
     def _sample_parameters(self, part):
-        weight = self.weight[..., : self.sample_embed_dim[part]]
+        weight = self.weight[..., : self.sample_hidden_size[part]]
         self.samples[part]["weight"] = weight
 
         return self.samples
