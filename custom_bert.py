@@ -176,6 +176,8 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
 
 
 # TODO: use config instead of sample_hidden_size, super_hidden_size
+# ^ rethinking this. For all lowest level set_sample_function, we directly use
+# the required variable instead of config. Looks fine for now.
 def calc_dropout(dropout, sample_hidden_size, super_hidden_size):
     return dropout * 1.0 * sample_hidden_size / super_hidden_size
 
@@ -215,6 +217,8 @@ class BertEmbeddings(nn.Module):
         self.word_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.position_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.token_type_embeddings.set_sample_config(sample_hidden_size, part="encoder")
+
+        self.LayerNorm.set_sample_config(sample_hidden_size)
 
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
@@ -279,7 +283,7 @@ class BertSelfAttention(nn.Module):
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
-
+        # TODO: make all these hidden_sizes different for supertransformer
         self.query = CustomLinear(config.hidden_size, self.all_head_size)
         self.key = CustomLinear(config.hidden_size, self.all_head_size)
         self.value = CustomLinear(config.hidden_size, self.all_head_size)
@@ -293,6 +297,7 @@ class BertSelfAttention(nn.Module):
             or self.position_embedding_type == "relative_key_query"
         ):
             self.max_position_embeddings = config.max_position_embeddings
+            # not elastic but it uses the customembedding wrapper
             self.distance_embedding = CustomEmbedding(
                 2 * config.max_position_embeddings - 1, self.attention_head_size
             )
@@ -306,6 +311,27 @@ class BertSelfAttention(nn.Module):
         )
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
+
+    def set_sample_config(self, config):
+        sample_num_attention_heads = config.sample_num_attention_heads
+        sample_hidden_size = config.sample_hidden_size
+        sample_attention_head_size = int(
+            sample_hidden_size / sample_num_attention_heads
+        )
+        sample_all_head_size = sample_num_attention_heads * sample_attention_head_size
+        self.query.set_sample_config(sample_hidden_size, sample_all_head_size)
+        self.key.set_sample_config(sample_hidden_size, sample_all_head_size)
+        self.value.set_sample_config(sample_hidden_size, sample_all_head_size)
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
+            sample_hidden_size=sample_hidden_size,
+        )
+        # reinitialize the dropout module with new dropout rate
+        # we can also directly use F.dropout as a function with the input
+        # embedding on forward and the new dropout rate. But for now, we are just
+        # reinitialing the module and using this in the forward function
+        self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(
         self,
@@ -432,6 +458,21 @@ class BertSelfOutput(nn.Module):
         self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
+    def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
+        self.LayerNorm.set_sample_config(sample_hidden_size)
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
+            sample_hidden_size=sample_hidden_size,
+        )
+        # reinitialize the dropout module with new dropout rate
+        # we can also directly use F.dropout as a function with the input
+        # embedding on forward and the new dropout rate. But for now, we are just
+        # reinitialing the module and using this in the forward function
+        self.dropout = nn.Dropout(sample_hidden_dropout_prob)
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -446,8 +487,9 @@ class BertAttention(nn.Module):
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
 
-    def set_sample_config(config):
-        pass
+    def set_sample_config(self, config):
+        self.self.set_sample_config(config)
+        self.output.set_sample_config(config)
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -507,6 +549,11 @@ class BertIntermediate(nn.Module):
         else:
             self.intermediate_act_fn = config.hidden_act
 
+    def set_sampling_config(self, config):
+        sample_intermediate_size = config.sample_intermediate_size
+        sample_hidden_size = config.sample_hidden_size
+        self.dense.set_sample_config(sample_intermediate_size, sample_hidden_size)
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
@@ -519,6 +566,12 @@ class BertOutput(nn.Module):
         self.dense = CustomLinear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def set_sampling_config(self, config):
+        sample_intermediate_size = config.sample_intermediate_size
+        sample_hidden_size = config.sample_hidden_size
+        self.LayerNorm.set_sample_config(sample_hidden_size)
+        self.dense.set_sample_config(sample_intermediate_size, sample_hidden_size)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -542,6 +595,12 @@ class BertLayer(nn.Module):
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
+
+    def set_sample_config(self, config):
+        self.attention.set_sample_config(config)
+        self.crossattention.set_sample_config(config)
+        self.intermediate.set_sample_config(config)
+        self.output.set_sample_config(config)
 
     def forward(
         self,
@@ -630,6 +689,10 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList(
             [BertLayer(config) for _ in range(config.num_hidden_layers)]
         )
+
+    def set_sample_config(self, config):
+        for layer in self.layer:
+            layer.set_sample_config(config)
 
     def forward(
         self,
@@ -729,6 +792,10 @@ class BertPooler(nn.Module):
         super().__init__()
         self.dense = CustomLinear(config.hidden_size, config.hidden_size)
         self.activation = nn.Tanh()
+
+    def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
 
     def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
