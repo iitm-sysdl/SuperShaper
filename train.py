@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
-
+import time
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -75,7 +75,8 @@ def get_choices():
         "sample_hidden_size": [360, 480, 540, 600, 768],
         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
         "sample_intermediate_size": [512, 1024, 2048, 3072],
-        "sample_num_hidden_layers": [4, 6, 8, 10, 12],
+        # "sample_num_hidden_layers": [4, 6, 8, 10, 12],
+        "sample_num_hidden_layers": [12],
     }
     return choices
 
@@ -227,36 +228,40 @@ def training_function(config, args):
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(tqdm(train_dataloader)):
-            # We could avoid this line since we set the accelerator with `device_placement=True`.
-            config = sample_subtransformer(randomize=True, rand_seed=step)
-            model.set_sample_config(config)
-            batch.to(accelerator.device)
-            outputs = model(**batch)
-            loss = outputs.loss
-            loss = loss / gradient_accumulation_steps
-            accelerator.backward(loss)
-            if step % gradient_accumulation_steps == 0:
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
+            while True:
+                random_number = step + int(time.perf_counter())
+                config = sample_subtransformer(randomize=True, rand_seed=random_number)
+                # make sure hidden_size is divisible by number of heads
+                if config.sample_hidden_size % config.sample_num_attention_heads:
+                    # print_subtransformer_config(config)
+                    # print(
+                    #     f"Error with config generated with random number {random_number}.... regenerating"
+                    # )
+                    continue
+                else:
+                    break
+            try:
+                # We could avoid this line since we set the accelerator with `device_placement=True`.
 
-        # resetting to supertransformer before validation
-        model.set_sample_config(config=get_supertransformer_config())
-        model.eval()
-        for step, batch in enumerate(eval_dataloader):
-            # We could avoid this line since we set the accelerator with `device_placement=True`.
-            batch.to(accelerator.device)
-            with torch.no_grad():
+                model.set_sample_config(config)
+                batch.to(accelerator.device)
                 outputs = model(**batch)
-            predictions = outputs.logits.argmax(dim=-1)
-            metric.add_batch(
-                predictions=accelerator.gather(predictions),
-                references=accelerator.gather(batch["labels"]),
-            )
+                loss = outputs.loss
+                loss = loss / gradient_accumulation_steps
+                accelerator.backward(loss)
+                if step % gradient_accumulation_steps == 0:
+                    optimizer.step()
+                    lr_scheduler.step()
+                    optimizer.zero_grad()
+            except RuntimeError as e:
+                print(e)
+                print_subtransformer_config(config)
+                print("please recheck the above config")
+        print(f"Epoch {epoch + 1}:", end=" ")
+        # resetting to supertransformer before validation
+        config = get_supertransformer_config()
+        validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
 
-        eval_metric = metric.compute()
-        # Use accelerator.print to print only on the main process.
-        accelerator.print(f"epoch {epoch}:", eval_metric)
         model.save_pretrained("checkpoints")
 
     for i in range(5):
@@ -276,7 +281,7 @@ def main():
     args = parser.parse_args()
     config = {
         "lr": 2e-5,
-        "num_epochs": 3,
+        "num_epochs": 10,
         "correct_bias": True,
         "seed": 42,
         "batch_size": 16,
