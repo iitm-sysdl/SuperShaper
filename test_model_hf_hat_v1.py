@@ -1,6 +1,6 @@
 from transformers import AutoConfig, AutoTokenizer
 from transformers.models.bert.configuration_bert import BertConfig
-from custom_bert import BertModel
+from custom_bert import BertModel, BertForSequenceClassification
 
 
 def add_sampling_params(config):
@@ -26,11 +26,30 @@ print("running supertransformer for a sample input")
 model(**inputs)
 
 
+bert_config.sample_hidden_size = 756  # 768 -> 756
+bert_config.sample_intermediate_size = 3000  # 3072 -> 756
+bert_config.sample_num_hidden_layers = 6  # 12 -> 6
+bert_config.sample_num_attention_heads = 6  # 12 -> 6
+model.set_sample_config(bert_config)
+
+print("running subtransformer for a sample input")
+model(**inputs)
+
+
+# prepring model
+bert_config = AutoConfig.from_pretrained("bert-base-uncased")
+bert_config = add_sampling_params(bert_config)
+model = BertForSequenceClassification(config=bert_config)
+model.set_sample_config(bert_config)
+print("running seq classification supertransformer for a sample input")
+model(**inputs)
+
+
 bert_config.sample_hidden_size = 756
 bert_config.sample_intermediate_size = 3000
 bert_config.sample_num_hidden_layers = 6
 bert_config.sample_num_attention_heads = 6
 model.set_sample_config(bert_config)
 
-print("running subtransformer for a sample input")
+print("running seq classification subtransformer for a sample input")
 model(**inputs)

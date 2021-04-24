@@ -655,7 +655,7 @@ class BertLayer(nn.Module):
         output_attentions=False,
     ):
         if self.is_identity_layer:
-            print('Returning without any operations')
+            print("Returning without any operations")
             return hidden_states
 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
@@ -1803,6 +1803,22 @@ class BertForSequenceClassification(BertPreTrainedModel):
         self.classifier = CustomLinear(config.hidden_size, config.num_labels)
 
         self.init_weights()
+
+    def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        self.bert.set_sample_config(config)
+        self.classifier.set_sample_config(sample_hidden_size, config.num_labels)
+
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
+            sample_hidden_size=sample_hidden_size,
+        )
+        # reinitialize the dropout module with new dropout rate
+        # we can also directly use F.dropout as a function with the input
+        # embedding on forward and the new dropout rate. But for now, we are just
+        # reinitialing the module and using this in the forward function
+        self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
