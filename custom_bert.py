@@ -15,6 +15,12 @@
 # limitations under the License.
 """PyTorch BERT model. """
 
+# HF-HAT
+# For subtransformers, we slice the parameters of the supertransformer
+# Here, each parameter is an object and not a scalar, and hence the parameters
+# are shallow copied and hence the changes in parameters(during backprop) will
+# be reflected in the supertransformer
+
 
 import math
 import os
@@ -191,10 +197,12 @@ class BertEmbeddings(nn.Module):
             config.vocab_size, config.hidden_size, padding_idx=config.pad_token_id
         )
         self.position_embeddings = CustomEmbedding(
-            config.max_position_embeddings, config.hidden_size
+            config.max_position_embeddings,
+            config.hidden_size,
+            padding_idx=config.pad_token_id,
         )
         self.token_type_embeddings = CustomEmbedding(
-            config.type_vocab_size, config.hidden_size
+            config.type_vocab_size, config.hidden_size, padding_idx=config.pad_token_id
         )
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
@@ -304,24 +312,38 @@ class BertSelfAttention(nn.Module):
 
         self.is_decoder = config.is_decoder
 
+        self.sample_num_attention_heads = self.num_attention_heads
+        self.sample_num_attention_heads = self.attention_head_size
+        self.sample_all_head_size = self.all_head_size
+
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (
-            self.num_attention_heads,
-            self.attention_head_size,
+            self.sample_num_attention_heads,
+            self.sample_attention_head_size,
         )
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
 
     def set_sample_config(self, config):
-        sample_num_attention_heads = config.sample_num_attention_heads
+        self.sample_num_attention_heads = config.sample_num_attention_heads
         sample_hidden_size = config.sample_hidden_size
-        sample_attention_head_size = int(
-            sample_hidden_size / sample_num_attention_heads
+        self.sample_attention_head_size = int(
+            sample_hidden_size / self.sample_num_attention_heads
         )
-        sample_all_head_size = sample_num_attention_heads * sample_attention_head_size
-        self.query.set_sample_config(sample_hidden_size, sample_all_head_size)
-        self.key.set_sample_config(sample_hidden_size, sample_all_head_size)
-        self.value.set_sample_config(sample_hidden_size, sample_all_head_size)
+        self.sample_all_head_size = (
+            self.sample_num_attention_heads * self.sample_attention_head_size
+        )
+
+        # print(
+        #     f"Changing num_attention heads from {self.num_attention_heads} -> {self.sample_num_attention_heads}"
+        # )
+        # print(
+        #     f"Changing attention head size from {self.attention_head_size} -> {self.sample_attention_head_size}"
+        # )
+
+        self.query.set_sample_config(sample_hidden_size, self.sample_all_head_size)
+        self.key.set_sample_config(sample_hidden_size, self.sample_all_head_size)
+        self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
             super_hidden_size=config.hidden_size,
@@ -439,7 +461,9 @@ class BertSelfAttention(nn.Module):
         context_layer = torch.matmul(attention_probs, value_layer)
 
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        new_context_layer_shape = context_layer.size()[:-2] + (
+            self.sample_all_head_size,
+        )
         context_layer = context_layer.view(*new_context_layer_shape)
 
         outputs = (
@@ -549,12 +573,14 @@ class BertIntermediate(nn.Module):
         else:
             self.intermediate_act_fn = config.hidden_act
 
-    def set_sampling_config(self, config):
+    def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
         sample_hidden_size = config.sample_hidden_size
-        self.dense.set_sample_config(sample_intermediate_size, sample_hidden_size)
+        self.dense.set_sample_config(sample_hidden_size, sample_intermediate_size)
 
     def forward(self, hidden_states):
+        # print(hidden_states.shape)
+        # print(self.dense.samples["weight"].shape)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
@@ -567,11 +593,21 @@ class BertOutput(nn.Module):
         self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-    def set_sampling_config(self, config):
+    def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
         sample_hidden_size = config.sample_hidden_size
         self.LayerNorm.set_sample_config(sample_hidden_size)
         self.dense.set_sample_config(sample_intermediate_size, sample_hidden_size)
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.intermediate_size,
+            sample_hidden_size=sample_intermediate_size,
+        )
+        # reinitialize the dropout module with new dropout rate
+        # we can also directly use F.dropout as a function with the input
+        # embedding on forward and the new dropout rate. But for now, we are just
+        # reinitialing the module and using this in the forward function
+        self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -595,10 +631,16 @@ class BertLayer(nn.Module):
             self.crossattention = BertAttention(config)
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
+        self.is_identity_layer = False
 
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, is_identity_layer=False):
+        if is_identity_layer:
+            self.is_identity_layer = True
+            return
+        self.is_identity_layer = False
         self.attention.set_sample_config(config)
-        self.crossattention.set_sample_config(config)
+        if hasattr(self, "crossattention"):
+            self.crossattention.set_sample_config(config)
         self.intermediate.set_sample_config(config)
         self.output.set_sample_config(config)
 
@@ -612,6 +654,10 @@ class BertLayer(nn.Module):
         past_key_value=None,
         output_attentions=False,
     ):
+        if self.is_identity_layer:
+            print('Returning without any operations')
+            return hidden_states
+
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
             past_key_value[:2] if past_key_value is not None else None
@@ -689,10 +735,15 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList(
             [BertLayer(config) for _ in range(config.num_hidden_layers)]
         )
+        self.sample_num_hidden_layers = config.num_hidden_layers
 
     def set_sample_config(self, config):
-        for layer in self.layer:
-            layer.set_sample_config(config)
+        self.sample_num_hidden_layers = config.sample_num_hidden_layers
+        for i, layer in enumerate(self.layer):
+            if i < self.sample_num_hidden_layers:
+                layer.set_sample_config(config, is_identity_layer=False)
+            else:
+                layer.set_sample_config(config, is_identity_layer=True)
 
     def forward(
         self,
@@ -715,6 +766,8 @@ class BertEncoder(nn.Module):
 
         next_decoder_cache = () if use_cache else None
         for i, layer_module in enumerate(self.layer):
+            if i >= self.sample_num_hidden_layers:
+                continue
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
@@ -754,7 +807,7 @@ class BertEncoder(nn.Module):
                     past_key_value,
                     output_attentions,
                 )
-
+            # print(layer_outputs[0].shape)
             hidden_states = layer_outputs[0]
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
