@@ -53,6 +53,12 @@ class CustomEmbedding(nn.Embedding):
             else self.samples
         )
 
+    def get_active_subnet(self, part):
+        sub_layer = nn.Embedding(self.vocab_size, self.sample_hidden_size[part], padding_idx = self.padding_idx)
+        sub_layer.weight.data.copy_(self.samples[part]["weight"])
+
+        return sub_layer
+
     def sampled_weight(self, part):
         return self.sample_parameters(part)[part]["weight"]
 

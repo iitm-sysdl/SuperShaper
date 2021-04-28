@@ -59,6 +59,13 @@ class CustomLayerNorm(torch.nn.LayerNorm):
             bias=self.samples["bias"],
             eps=self.eps,
         )
+    
+    def get_active_subnet(self):
+        sub_layer = torch.nn.LayerNorm(self.sample_hidden_size, self.eps)
+        sub_layer.weight.data.copy_(self.samples["weight"])
+
+        return sub_layer
+
 
     def calc_sampled_param_num(self):
         assert "weight" in self.samples.keys()
