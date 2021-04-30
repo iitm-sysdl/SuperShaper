@@ -128,3 +128,9 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Current repo ignore following files - originals from HAT:
+latency_predictor.py
+utils.py
+/latency_dataset/iwslt14deen_gpu_titanxp_all.csv
