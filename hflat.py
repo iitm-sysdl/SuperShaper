@@ -212,7 +212,7 @@ class LatencyPredictor(object):
         ###########################################
         # Removed the decoder features extracted 
         # by HAT authors
-        # We 
+        # We need to change the this input representation in the future
         ###########################################
         features = []
 
