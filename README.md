@@ -1,1 +1,1 @@
-# efficient-hardware-aware-transformers
+# eHAT: Efficient-Hardware-Aware-Transformers
