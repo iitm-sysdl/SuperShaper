@@ -101,16 +101,22 @@ def sample_subtransformer(randomize=False, rand_seed=0):
     ### Figuring the hidden layers 
     hidden_layers_list = choices["sample_num_hidden_layers"]
     num_hidden_layers  = random.choice(hidden_layers_list)
-    setattr(config, key, num_hidden_layers)
+    setattr(config, "sample_num_hidden_layers", num_hidden_layers)
 
-    super_config.append(config) ## superconfig[0] refers to the global config containing only hidden_layers and the rest are for layer configs 
+    #super_config.append(config) ## superconfig[0] refers to the global config containing only hidden_layers and the rest are for layer configs 
 
     ## Figuring the hidden size for BERT embeddings 
-    hidden_size_embeddings_list = choices["sample_hidden_size"]
-    num_hidden_size = random.choice(hidden_layers_list)
-    setattr(config, key, num_hidden_size)
+    #hidden_size_embeddings_list = choices["sample_hidden_size"]
+    #num_hidden_size = random.choice(hidden_layers_list)
+    #setattr(config, key, num_hidden_size)
 
-    super_config.append(config) ## superconfig[1] refers to the config related to BERT embeddings 
+    #super_config.append(config) ## superconfig[1] refers to the config related to BERT embeddings 
+    
+    config_dict = {
+            "sample_hidden_size" : [], 
+            "sample_num_attention_heads": [],
+            "sample_intermediate_size": [],
+             }
 
     for i in range(num_hidden_layers+1): ## For the number of hidden layers followed by the BERTPooler
         config = get_supertransformer_config() 
@@ -121,25 +127,32 @@ def sample_subtransformer(randomize=False, rand_seed=0):
                 else: 
                     choice_list = choices[key]
                     choice = random.choice(choice_list)
-                setattr(config, key, choice)
+                    config_dict[key].append(choice)
+                #setattr(config, key, choice)
 
             if config.sample_hidden_size % config.sample_num_attention_heads:
+                for key in choices.keys(): 
+                    if key != "sample_num_hidden_layers":
+                        config_dict[key] = config_dict[key][:-1]
                 continue 
             else:
                 break
-        super_config.append(config)
+        #super_config.append(config)
+    for key in choices.keys():
+        if key != "sample_num_hidden_layers": 
+            setattr(config, key, config_dict[key])
 
-    hidden_size_classifier_list = choices["sample_hidden_size"]
+    hidden_size_classifier_list = choices["sample_classifier_hidden_size"]
     num_hidden_size = random.choice(hidden_layers_list) ## We may just fix this
-    setattr(config, key, num_hidden_size)
+    setattr(config, "sample_classifier_hidden_size", num_hidden_size)
 
-    super_config.append(config)
+    #super_config.append(config)
 
     #for key in choices.keys():
     #    choice_list = choices[key]
     #    choice = random.choice(choice_list)
     #    setattr(config, key, choice)
-    return super_config
+    return config
 
 
 def validate_subtransformer(model, config, eval_dataloader, accelerator, metric):
