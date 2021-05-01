@@ -21,7 +21,6 @@ from accelerate import Accelerator, DistributedType
 from datasets import load_dataset, load_metric
 from transformers import (
     AdamW,
-    AutoModelForSequenceClassification,
     AutoTokenizer,
     get_linear_schedule_with_warmup,
     set_seed,
@@ -52,15 +51,6 @@ MAX_GPU_BATCH_SIZE = 16
 EVAL_BATCH_SIZE = 32
 
 
-def add_sampling_params():
-    config = AutoConfig.from_pretrained("bert-base-uncased")
-    config.sample_hidden_size = config.hidden_size
-    config.sample_num_attention_heads = config.num_attention_heads
-    config.sample_intermediate_size = config.intermediate_size
-    config.sample_num_hidden_layers = config.num_hidden_layers
-    return config
-
-
 def get_supertransformer_config():
     config = AutoConfig.from_pretrained("bert-base-uncased")
     config.sample_hidden_size = config.hidden_size
@@ -75,8 +65,7 @@ def get_choices():
         "sample_hidden_size": [360, 480, 540, 600, 768],
         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
         "sample_intermediate_size": [512, 1024, 2048, 3072],
-        # "sample_num_hidden_layers": [4, 6, 8, 10, 12],
-        "sample_num_hidden_layers": [12],
+        "sample_num_hidden_layers": [6, 8, 10, 12],
     }
     return choices
 
@@ -96,62 +85,39 @@ def sample_subtransformer(randomize=False, rand_seed=0):
     choices = get_choices()
     config = get_supertransformer_config()
 
-    super_config = []
-    
-    ### Figuring the hidden layers 
+    ### Figuring the number of hidden layers
     hidden_layers_list = choices["sample_num_hidden_layers"]
-    num_hidden_layers  = random.choice(hidden_layers_list)
+    num_hidden_layers = random.choice(hidden_layers_list)
     setattr(config, "sample_num_hidden_layers", num_hidden_layers)
 
-    #super_config.append(config) ## superconfig[0] refers to the global config containing only hidden_layers and the rest are for layer configs 
+    ## Figuring the hidden size for BERT embeddings
+    hidden_size_embeddings_list = choices["sample_hidden_size"]
+    num_hidden_size = random.choice(hidden_size_embeddings_list)
+    setattr(config, "sample_hidden_size", num_hidden_size)
 
-    ## Figuring the hidden size for BERT embeddings 
-    #hidden_size_embeddings_list = choices["sample_hidden_size"]
-    #num_hidden_size = random.choice(hidden_layers_list)
-    #setattr(config, key, num_hidden_size)
-
-    #super_config.append(config) ## superconfig[1] refers to the config related to BERT embeddings 
-    
     config_dict = {
-            "sample_hidden_size" : [], 
-            "sample_num_attention_heads": [],
-            "sample_intermediate_size": [],
-             }
+        "sample_num_attention_heads": [],
+        "sample_intermediate_size": [],
+    }
 
-    for i in range(num_hidden_layers+1): ## For the number of hidden layers followed by the BERTPooler
-        config = get_supertransformer_config() 
-        while True: 
-            for key in choices.keys():
-                if key == "sample_num_hidden_layers":
-                    choice = num_hidden_layers
-                else: 
-                    choice_list = choices[key]
-                    choice = random.choice(choice_list)
-                    config_dict[key].append(choice)
-                #setattr(config, key, choice)
+    for i in range(num_hidden_layers):
+        while True:
+            for key in config_dict.keys():
 
-            if config.sample_hidden_size % config.sample_num_attention_heads:
-                for key in choices.keys(): 
-                    if key != "sample_num_hidden_layers":
-                        config_dict[key] = config_dict[key][:-1]
-                continue 
+                choice_list = choices[key]
+                choice = random.choice(choice_list)
+                config_dict[key].append(choice)
+
+            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+                for key in config_dict.keys():
+                    config_dict[key] = config_dict[key][:-1]
+                continue
             else:
                 break
-        #super_config.append(config)
-    for key in choices.keys():
-        if key != "sample_num_hidden_layers": 
-            setattr(config, key, config_dict[key])
 
-    hidden_size_classifier_list = choices["sample_classifier_hidden_size"]
-    num_hidden_size = random.choice(hidden_layers_list) ## We may just fix this
-    setattr(config, "sample_classifier_hidden_size", num_hidden_size)
+    for key in config_dict.keys():
+        setattr(config, key, config_dict[key])
 
-    #super_config.append(config)
-
-    #for key in choices.keys():
-    #    choice_list = choices[key]
-    #    choice = random.choice(choice_list)
-    #    setattr(config, key, choice)
     return config
 
 
@@ -246,9 +212,9 @@ def training_function(config, args):
     # Instantiate the model (we build the model here so that the seed also control new weights initialization)
     # uncomment this if you want to start the supertransformer from pretrained
     # bert weights
-    # model = BertForSequenceClassification.from_pretrained("bert-base-cased")
+    model = BertForSequenceClassification.from_pretrained("bert-base-cased")
     # use this from randomly initialized supertransformer
-    model = BertForSequenceClassification(config=config)
+    # model = BertForSequenceClassification(config=config)
 
     # We could avoid this line since the accelerator is set with `device_placement=True` (default value).
     # Note that if you are placing tensors on devices manually, this line absolutely needs to be before the optimizer
@@ -281,22 +247,13 @@ def training_function(config, args):
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(tqdm(train_dataloader)):
-            while True:
-                random_number = step + int(time.perf_counter())
-                super_config = sample_subtransformer(randomize=True, rand_seed=random_number)
-                # make sure hidden_size is divisible by number of heads
-                # This is moved up in the sample_subtransformer function itself
-                #if config.sample_hidden_size % config.sample_num_attention_heads:
-                #    # print_subtransformer_config(config)
-                #    # print(
-                #    #     f"Error with config generated with random number {random_number}.... regenerating"
-                #    # )
-                #    continue
-                #else:
-                #    break
+
+            random_number = step + int(time.perf_counter())
+            super_config = sample_subtransformer(
+                randomize=True, rand_seed=random_number
+            )
             try:
                 # We could avoid this line since we set the accelerator with `device_placement=True`.
-
                 model.set_sample_config(super_config)
                 batch.to(accelerator.device)
                 outputs = model(**batch)
@@ -318,10 +275,10 @@ def training_function(config, args):
 
         model.save_pretrained("checkpoints")
 
-    for i in range(5):
-        config = sample_subtransformer(randomize=True, rand_seed=i)
-        print_subtransformer_config(config)
-        validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
+        for i in range(5):
+            config = sample_subtransformer(randomize=True, rand_seed=i)
+            print_subtransformer_config(config)
+            validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
 
 
 def main():

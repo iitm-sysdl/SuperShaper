@@ -65,7 +65,7 @@ from transformers.models.bert.configuration_bert import BertConfig
 from custom_embedding import CustomEmbedding
 from custom_linear import CustomLinear
 from custom_layernorm import CustomLayerNorm
-
+from copy import deepcopy
 
 logger = logging.get_logger(__name__)
 
@@ -220,9 +220,8 @@ class BertEmbeddings(nn.Module):
 
     def set_sample_config(self, config):
         # we name all param inside sampling ocnfig as sample_*
-        # hidden_size -> sample_hidden_size
+        # hidden_size -> sample_emb_hidden_size
         sample_hidden_size = config.sample_hidden_size
-        print(sample_hidden_size)
         self.word_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.position_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.token_type_embeddings.set_sample_config(sample_hidden_size, part="encoder")
@@ -739,13 +738,31 @@ class BertEncoder(nn.Module):
         self.sample_num_hidden_layers = config.num_hidden_layers
 
     def set_sample_config(self, config):
-        self.sample_num_hidden_layers = config[0].sample_num_hidden_layers
-        super_config = config[1:]
+
+        self.sample_num_hidden_layers = config.sample_num_hidden_layers
+
+        if isinstance(config.sample_intermediate_size, list):
+            sample_intermediate_sizes = config.sample_intermediate_size
+        else:
+            sample_intermediate_sizes = [config.sample_intermediate_size] * len(
+                self.layer
+            )
+        if isinstance(config.num_attention_heads, list):
+            sample_num_attention_heads_list = config.num_attention_heads
+        else:
+            sample_num_attention_heads_list = [config.num_attention_heads] * len(
+                self.layer
+            )
+
         for i, layer in enumerate(self.layer):
+            layer_config = deepcopy(config)
+
             if i < self.sample_num_hidden_layers:
-                layer.set_sample_config(super_config[i], is_identity_layer=False)
+                layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
+                layer_config.sample_num_attention_heads = sample_num_attention_heads_list[i]
+                layer.set_sample_config(layer_config, is_identity_layer=False)
             else:
-                layer.set_sample_config(super_config[i], is_identity_layer=True)
+                layer.set_sample_config(layer_config, is_identity_layer=True)
 
     def forward(
         self,
@@ -849,7 +866,10 @@ class BertPooler(nn.Module):
         self.activation = nn.Tanh()
 
     def set_sample_config(self, config):
-        sample_hidden_size = config.sample_hidden_size
+        if isinstance(config.sample_hidden_size, list):
+            sample_hidden_size = config.sample_hidden_size[-1]
+        else:
+            sample_hidden_size = config.sample_hidden_size
         self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
 
     def forward(self, hidden_states):
@@ -1113,10 +1133,9 @@ class BertModel(BertPreTrainedModel):
         config_class=_CONFIG_FOR_DOC,
     )
     def set_sample_config(self, config):
-        self.super_config = config
-        self.embeddings.set_sample_config(config[1]) ## Setting Configs related to BERT Embeddings
+        self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
-        self.pooler.set_sample_config(config[-1]) ## Setting Configs related to BERT Pooler
+        self.pooler.set_sample_config(config)
 
     def forward(
         self,
@@ -1265,12 +1284,6 @@ class BertModel(BertPreTrainedModel):
             attentions=encoder_outputs.attentions,
             cross_attentions=encoder_outputs.cross_attentions,
         )
-
-    def get_active_subnet(self):
-        ## Write code to extract the subtransformer 
-
-        return subnet 
-
 
 
 @add_start_docstrings(
@@ -1814,16 +1827,13 @@ class BertForSequenceClassification(BertPreTrainedModel):
         self.init_weights()
 
     def set_sample_config(self, config):
-        sample_hidden_size = config[-1].sample_hidden_size
-        self.bert.set_sample_config(config[:-1]) ## Sending all configs except last layer
-        #self.classifier.set_sample_config(sample_hidden_size, config.num_labels)
-        self.classifier.set_sample_config(sample_hidden_size, self.num_labels)
-        
-        ## What to do for Dropout? -->?
+        sample_hidden_size = config.sample_hidden_size
+        self.bert.set_sample_config(config)
+        self.classifier.set_sample_config(sample_hidden_size, config.num_labels)
+
         sample_hidden_dropout_prob = calc_dropout(
-            config[-1].hidden_dropout_prob,
-            #super_hidden_size=config.hidden_size,
-            super_hidden_size=sample_hidden_size,
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
             sample_hidden_size=sample_hidden_size,
         )
         # reinitialize the dropout module with new dropout rate

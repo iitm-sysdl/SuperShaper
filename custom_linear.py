@@ -25,7 +25,7 @@ class CustomLinear(nn.Linear):
 
         self.samples = {}
 
-        self.bias = bias
+        self.bias_sample = bias
         self.uniform_ = uniform_
         self.non_linear = non_linear
 
@@ -63,7 +63,13 @@ class CustomLinear(nn.Linear):
         return self.samples
 
     def get_active_subnet(self):
-        sub_layer = nn.Linear(self.sample_in_dim, self.sample_out_dim, self.bias, self.uniform_, self.non_linear)
+        sub_layer = nn.Linear(
+            self.sample_in_dim,
+            self.sample_out_dim,
+            self.bias_sample,
+            self.uniform_,
+            self.non_linear,
+        )
         sub_layer.weight.data.copy_(self.samples["weight"])
 
         return sub_layer
