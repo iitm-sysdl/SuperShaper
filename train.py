@@ -54,9 +54,14 @@ EVAL_BATCH_SIZE = 32
 def get_supertransformer_config():
     config = AutoConfig.from_pretrained("bert-base-uncased")
     config.sample_hidden_size = config.hidden_size
-    config.sample_num_attention_heads = config.num_attention_heads
-    config.sample_intermediate_size = config.intermediate_size
     config.sample_num_hidden_layers = config.num_hidden_layers
+    config.sample_num_attention_heads = [
+        config.num_attention_heads
+    ] * config.sample_num_hidden_layers
+    config.sample_intermediate_size = [
+        config.intermediate_size
+    ] * config.sample_num_hidden_layers
+
     return config
 
 
@@ -137,7 +142,8 @@ def validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
 
     eval_metric = metric.compute()
     # Use accelerator.print to print only on the main process.
-    accelerator.print(eval_metric)
+    # accelerator.print(eval_metric)
+    return eval_metric
 
 
 def training_function(config, args):
@@ -212,9 +218,9 @@ def training_function(config, args):
     # Instantiate the model (we build the model here so that the seed also control new weights initialization)
     # uncomment this if you want to start the supertransformer from pretrained
     # bert weights
-    model = BertForSequenceClassification.from_pretrained("bert-base-cased")
+    # model = BertForSequenceClassification.from_pretrained("bert-base-cased")
     # use this from randomly initialized supertransformer
-    # model = BertForSequenceClassification(config=config)
+    model = BertForSequenceClassification(config=config)
 
     # We could avoid this line since the accelerator is set with `device_placement=True` (default value).
     # Note that if you are placing tensors on devices manually, this line absolutely needs to be before the optimizer
@@ -243,12 +249,13 @@ def training_function(config, args):
         num_warmup_steps=100,
         num_training_steps=len(train_dataloader) * num_epochs,
     )
+
     # Now we train the model
     for epoch in range(num_epochs):
         model.train()
         for step, batch in enumerate(tqdm(train_dataloader)):
 
-            random_number = step + int(time.perf_counter())
+            random_number = step + int(10000 * time.perf_counter())
             super_config = sample_subtransformer(
                 randomize=True, rand_seed=random_number
             )
@@ -271,14 +278,31 @@ def training_function(config, args):
         print(f"Epoch {epoch + 1}:", end=" ")
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
-        validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
+        eval_metric = validate_subtransformer(
+            model, config, eval_dataloader, accelerator, metric
+        )
+        accelerator.print(eval_metric)
 
         model.save_pretrained("checkpoints")
-
-        for i in range(5):
+        sub_transformer_configs_metrics = []
+        for i in range(10):
             config = sample_subtransformer(randomize=True, rand_seed=i)
-            print_subtransformer_config(config)
-            validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
+            # print_subtransformer_config(config)
+            metrics = validate_subtransformer(
+                model, config, eval_dataloader, accelerator, metric
+            )
+            sub_transformer_configs_metrics.append(
+                (metrics["accuracy"], metrics["f1"], config, i)
+            )
+
+        for acc, f1, config, idx in sorted(
+            sub_transformer_configs_metrics, key=lambda tup: tup[1]
+        ):
+
+            print(f"{acc:.2f} ({idx})", end=", ")
+            # print_subtransformer_config(config)
+            # print(f1)
+        print()
 
 
 def main():
@@ -292,7 +316,7 @@ def main():
     args = parser.parse_args()
     config = {
         "lr": 2e-5,
-        "num_epochs": 10,
+        "num_epochs": 50,
         "correct_bias": True,
         "seed": 42,
         "batch_size": 16,
