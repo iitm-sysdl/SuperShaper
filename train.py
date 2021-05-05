@@ -137,7 +137,9 @@ def sample_subtransformer(randomize=False, rand_seed=0):
     return config
 
 
-def validate_subtransformer(model, config, eval_dataloader, accelerator, metric):
+def validate_subtransformer(
+    model, config, eval_dataloader, accelerator, metric, task="mrpc"
+):
     model.set_sample_config(config=config)
     model.eval()
     for step, batch in enumerate(eval_dataloader):
@@ -145,7 +147,10 @@ def validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
         batch.to(accelerator.device)
         with torch.no_grad():
             outputs = model(**batch)
-        predictions = outputs.logits.argmax(dim=-1)
+        if task == "stsb":
+            predictions = predictions[:, 0]
+        else:
+            predictions = outputs.logits.argmax(dim=-1)
         metric.add_batch(
             predictions=accelerator.gather(predictions),
             references=accelerator.gather(batch["labels"]),
@@ -291,7 +296,7 @@ def training_function(args):
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
         eval_metric = validate_subtransformer(
-            model, config, eval_dataloader, accelerator, metric
+            model, config, eval_dataloader, accelerator, metric, task
         )
         accelerator.print(eval_metric)
 
