@@ -28,6 +28,11 @@ from transformers import (
 )
 from custom_bert import BertForSequenceClassification
 import random
+import os
+from prepare_task import GlueTask
+from module_proxy_wrapper import ModuleProxyWrapper
+
+from pprint import pprint
 
 
 ########################################################################
@@ -47,8 +52,8 @@ import random
 ########################################################################
 
 
-MAX_GPU_BATCH_SIZE = 16
-EVAL_BATCH_SIZE = 32
+MAX_GPU_BATCH_SIZE = 32
+EVAL_BATCH_SIZE = 64
 
 
 def get_supertransformer_config():
@@ -66,11 +71,17 @@ def get_supertransformer_config():
 
 
 def get_choices():
+    # choices = {
+    #     "sample_hidden_size": [360, 480, 540, 600, 768],
+    #     "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+    #     "sample_intermediate_size": [512, 1024, 2048, 3072],
+    #     "sample_num_hidden_layers": [6, 8, 10, 12],
+    # }
     choices = {
-        "sample_hidden_size": [360, 480, 540, 600, 768],
-        "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-        "sample_intermediate_size": [512, 1024, 2048, 3072],
-        "sample_num_hidden_layers": [6, 8, 10, 12],
+        "sample_hidden_size": [768],
+        "sample_num_attention_heads": [12],
+        "sample_intermediate_size": [3072],
+        "sample_num_hidden_layers": [12],
     }
     return choices
 
@@ -146,91 +157,86 @@ def validate_subtransformer(model, config, eval_dataloader, accelerator, metric)
     return eval_metric
 
 
-def training_function(config, args):
-    print(args)
+def training_function(args):
+
+    print("===================================================================")
+    print("Training Arguments:")
+    for arg in vars(args):
+        print(f"{arg}: {getattr(args, arg)}")
+    print("===================================================================")
     # Initialize accelerator
     accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu)
 
-    print(accelerator.device)
+    print("Running on: ", accelerator.device)
 
     # Sample hyper-parameters for learning rate, batch size, seed and a few other HPs
-    lr = config["lr"]
-    num_epochs = int(config["num_epochs"])
-    correct_bias = config["correct_bias"]
-    seed = int(config["seed"])
-    batch_size = int(config["batch_size"])
+    lr = args.learning_rate
+    num_epochs = int(args.num_epochs)
+    # for now correcting adam bias is hardcoded to True
+    correct_bias = True
+    seed = int(args.seed)
 
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-cased")
-    datasets = load_dataset("glue", "mrpc")
-    metric = load_metric("glue", "mrpc")
+    # note your effective batch size while training would be:
+    # per_gpu_train_batch_size * gradient_accumulation_steps * num_gpus
+    # so for instance, if you train with:
+    # per_gpu_train_batch_size = 32
+    # gradient_accumulation_steps = 4
+    # num_gpus (number of gpus) = 2
+    # then your effective training batch size is (32 * 4 * 2) = 256
+    per_gpu_train_batch_size = int(args.per_gpu_train_batch_size)
+    per_gpu_eval_batch_size = int(args.per_gpu_eval_batch_size)
+    gradient_accumulation_steps = int(args.gradient_accumulation_steps)
 
-    def tokenize_function(examples):
-        # max_length=None => use the model max length (it's actually the default)
-        outputs = tokenizer(
-            examples["sentence1"],
-            examples["sentence2"],
-            truncation=True,
-            max_length=None,
-        )
-        return outputs
+    set_seed(seed)
+    config = get_supertransformer_config()
+    # print(f"Batch Size: {batch_size}")
+    task = args.task
+    use_pretained = args.use_pretrained_supertransformer
+    model_checkpoint = args.model_name_or_path
 
-    # Apply the method we just defined to all the examples in all the splits of the dataset
-    tokenized_datasets = datasets.map(
-        tokenize_function,
-        batched=True,
-        remove_columns=["idx", "sentence1", "sentence2"],
+    # if this is not a path to a saved model checkpoint, ensure that we are using a bert-base model
+    if not os.path.exists(model_checkpoint):
+        assert (
+            model_checkpoint == "bert-base-cased"
+            or model_checkpoint == "bert-base-uncased"
+        ), f"HF model {model_checkpoint} is not supported, pls use bert-base"
+
+    glue_task = GlueTask(
+        task, model_checkpoint, config, initialize_pretrained_model=use_pretained
     )
-
-    # We also rename the 'label' column to 'labels' which is the expected name for labels by the models of the
-    # transformers library
-    tokenized_datasets.rename_column_("label", "labels")
-
-    # If the batch size is too big we use gradient accumulation
-    gradient_accumulation_steps = 1
-    if batch_size > MAX_GPU_BATCH_SIZE:
-        gradient_accumulation_steps = batch_size // MAX_GPU_BATCH_SIZE
-        batch_size = MAX_GPU_BATCH_SIZE
 
     def collate_fn(examples):
         # On TPU it's best to pad everything to the same length or training will be very slow.
         if accelerator.distributed_type == DistributedType.TPU:
-            return tokenizer.pad(
-                examples, padding="max_length", max_length=128, return_tensors="pt"
+            return glue_task.tokenizer.pad(
+                examples,
+                padding="max_length",
+                max_length=args.max_seq_length,
+                return_tensors="pt",
             )
-        return tokenizer.pad(examples, padding="longest", return_tensors="pt")
+        return glue_task.tokenizer.pad(examples, padding="longest", return_tensors="pt")
 
     # Instantiate dataloaders.
     train_dataloader = DataLoader(
-        tokenized_datasets["train"],
+        glue_task.train_dataset,
         shuffle=True,
         collate_fn=collate_fn,
-        batch_size=batch_size,
+        batch_size=per_gpu_train_batch_size,
     )
     eval_dataloader = DataLoader(
-        tokenized_datasets["validation"],
+        glue_task.eval_dataset,
         shuffle=False,
         collate_fn=collate_fn,
-        batch_size=EVAL_BATCH_SIZE,
+        batch_size=per_gpu_eval_batch_size,
     )
 
-    set_seed(seed)
-    config = get_supertransformer_config()
-    # Instantiate the model (we build the model here so that the seed also control new weights initialization)
-    # uncomment this if you want to start the supertransformer from pretrained
-    # bert weights
-    # model = BertForSequenceClassification.from_pretrained("bert-base-cased")
-    # use this from randomly initialized supertransformer
-    model = BertForSequenceClassification(config=config)
+    model = glue_task.model
+    metric = glue_task.metric
 
     # We could avoid this line since the accelerator is set with `device_placement=True` (default value).
     # Note that if you are placing tensors on devices manually, this line absolutely needs to be before the optimizer
     # creation otherwise training will not work on TPU (`accelerate` will kindly throw an error to make us aware of that).
     model = model.to(accelerator.device)
-    # config.sample_hidden_size = 756  # 768 -> 756
-    # config.sample_intermediate_size = 3000  # 3072 -> 756
-    # config.sample_num_hidden_layers = 6  # 12 -> 6
-    # config.sample_num_attention_heads = 6
-    # model.set_sample_config(config)
 
     # Instantiate optimizer
     optimizer = AdamW(params=model.parameters(), lr=lr, correct_bias=correct_bias)
@@ -241,6 +247,12 @@ def training_function(config, args):
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
+    if (
+        accelerator.distributed_type == DistributedType.MULTI_GPU
+        or accelerator.distributed_type == DistributedType.TPU
+    ):
+        # forward missing getattr and state_dict/load_state_dict to orig model
+        model = ModuleProxyWrapper(model)
 
     # Instantiate learning rate scheduler after preparing the training dataloader as the prepare method
     # may change its length.
@@ -283,45 +295,102 @@ def training_function(config, args):
         )
         accelerator.print(eval_metric)
 
-        model.save_pretrained("checkpoints")
-        sub_transformer_configs_metrics = []
-        for i in range(10):
-            config = sample_subtransformer(randomize=True, rand_seed=i)
-            # print_subtransformer_config(config)
-            metrics = validate_subtransformer(
-                model, config, eval_dataloader, accelerator, metric
-            )
-            sub_transformer_configs_metrics.append(
-                (metrics["accuracy"], metrics["f1"], config, i)
-            )
+        model.save_pretrained(args.output_dir)
+        # sub_transformer_configs_metrics = []
+        # for i in range(10):
+        #     config = sample_subtransformer(randomize=True, rand_seed=i)
+        #     print_subtransformer_config(config)
+        #     metrics = validate_subtransformer(
+        #         model, config, eval_dataloader, accelerator, metric
+        #     )
+        #     print(metrics)
+        #     sub_transformer_configs_metrics.append((metrics["accuracy"], config, i))
 
-        for acc, f1, config, idx in sorted(
-            sub_transformer_configs_metrics, key=lambda tup: tup[1]
-        ):
+        # for acc, f1, config, idx in sorted(
+        #     sub_transformer_configs_metrics, key=lambda tup: tup[1]
+        # ):
 
-            print(f"{acc:.2f} ({idx})", end=", ")
-            # print_subtransformer_config(config)
-            # print(f1)
-        print()
+        #     print(f"{acc:.2f} ({idx})", end=", ")
+        #     # print_subtransformer_config(config)
+        #     # print(f1)
+        # print()
 
 
 def main():
     parser = argparse.ArgumentParser(description="Simple example of training script.")
     parser.add_argument(
-        "--fp16", type=bool, default=False, help="If passed, will use FP16 training."
+        "--task", type=str, default="mrpc", help="The Glue task you want to run"
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        default="bert-base-uncased",
+        type=str,
+        help="Path to model checkpoint or name of hf pretrained model",
+    )
+    parser.add_argument(
+        "--use_pretrained_supertransformer",
+        type=bool,
+        default=True,
+        help="If passed and set to True, will use pretrained bert-uncased model. If set to False, it will initialize a random model and train from scratch",
+    )
+    parser.add_argument(
+        "--output_dir",
+        default="checkpoints",
+        type=str,
+        help="The output directory where the model checkpoints and predictions will be written.",
+    )
+    parser.add_argument(
+        "--max_seq_length",
+        default=128,
+        type=int,
+        help="The maximum total input sequence length after WordPiece tokenization. Sequences "
+        "longer than this will be truncated, and sequences shorter than this will be padded.",
+    )
+    parser.add_argument(
+        "--per_gpu_train_batch_size",
+        default=32,
+        type=int,
+        help="Batch size per GPU/CPU for training.",
+    )
+    parser.add_argument(
+        "--per_gpu_eval_batch_size",
+        default=64,
+        type=int,
+        help="Batch size per GPU/CPU for evaluation.",
+    )
+    parser.add_argument(
+        "--learning_rate",
+        default=2e-5,
+        type=float,
+        help="The initial learning rate for Adam.",
+    )
+    parser.add_argument(
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Number of updates steps to accumulate before performing a backward/update pass.",
+    )
+    parser.add_argument(
+        "--num_epochs",
+        default=5.0,
+        type=float,
+        help="Total number of training epochs to perform.",
+    )
+    parser.add_argument(
+        "--fp16", type=bool, default=True, help="If passed, will use FP16 training."
     )
     parser.add_argument(
         "--cpu", type=bool, default=False, help="If passed, will train on the CPU."
     )
+    parser.add_argument(
+        "--seed", type=int, default=42, help="random seed for initialization"
+    )
+
     args = parser.parse_args()
-    config = {
-        "lr": 2e-5,
-        "num_epochs": 50,
-        "correct_bias": True,
-        "seed": 42,
-        "batch_size": 16,
-    }
-    training_function(config, args)
+    # if the mentioned output_dir does not exist, create it
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
+    training_function(args)
 
 
 if __name__ == "__main__":
