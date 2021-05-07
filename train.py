@@ -33,6 +33,12 @@ from prepare_task import GlueTask
 from module_proxy_wrapper import ModuleProxyWrapper
 
 from pprint import pprint
+import wandb 
+
+import plotly 
+
+import plotly.graph_objects as go
+
 
 
 ########################################################################
@@ -71,17 +77,11 @@ def get_supertransformer_config():
 
 
 def get_choices():
-    # choices = {
-    #     "sample_hidden_size": [360, 480, 540, 600, 768],
-    #     "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-    #     "sample_intermediate_size": [512, 1024, 2048, 3072],
-    #     "sample_num_hidden_layers": [6, 8, 10, 12],
-    # }
     choices = {
-        "sample_hidden_size": [768],
-        "sample_num_attention_heads": [12],
-        "sample_intermediate_size": [3072],
-        "sample_num_hidden_layers": [12],
+         "sample_hidden_size": [360, 480, 540, 600, 768],
+         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+         "sample_intermediate_size": [512, 1024, 2048, 3072],
+         "sample_num_hidden_layers": [6, 8, 10, 12],
     }
     return choices
 
@@ -266,6 +266,7 @@ def training_function(args):
         num_warmup_steps=100,
         num_training_steps=len(train_dataloader) * num_epochs,
     )
+    wandb.watch(model)
 
     # Now we train the model
     for epoch in range(num_epochs):
@@ -288,17 +289,54 @@ def training_function(args):
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
+                wandb.log({'random-subtransformer-loss': loss, 'rand-seed': random_number})
             except RuntimeError as e:
                 print(e)
                 print_subtransformer_config(config)
                 print("please recheck the above config")
         print(f"Epoch {epoch + 1}:", end=" ")
+        wandb.log({'epochs': epoch})
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
         eval_metric = validate_subtransformer(
             model, config, eval_dataloader, accelerator, metric, task
         )
+        super_dict = {}
+        for key in eval_metric:
+            super_key = 'supertransformer_'+key
+            super_dict[super_key] = eval_metric[key]
+
+
         accelerator.print(eval_metric)
+        wandb.log(eval_metric)
+        
+        # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
+        label_seed = []
+        label_acc = []
+        for i in range(10):
+            random_seed = i * 1000 
+            config = sample_subtransformer(randomize=True, rand_seed=random_seed)
+            eval_metric = validate_subtransformer(
+                    model, config, eval_dataloader, accelerator, metric, task
+            )
+            #eval_metric['validation_random_seed'] = random_seed
+            #label_lst.append([eval_metric['accuracy'], random_seed])
+            #label_lst.append([random_seed, eval_metric['accuracy']])
+            label_acc.append(eval_metric['accuracy'])
+            label_seed.append(random_seed)
+            accelerator.print(eval_metric)
+            #wandb.log(eval_metric)
+
+        ## If plotting using Custom Plotly
+        fig = go.Figure() 
+        fig.add_trace(go.Bar(x=label_seed, y = label_acc))
+        fig.update_layout(title='Relative Performance Order', xaxis_title = 'Random Seed', yaxis_title = 'Accuracy')
+        wandb.log({"bar_chart":wandb.data_types.Plotly(fig)})
+
+        ## If plotting using existing wandb APIs
+        #table = wandb.Table(data=label_lst, columns = ["Random Seed", "Accuracy"])
+        #wandb.log({"bar_chart" : wandb.plot.bar(table, "Random Seed",
+                                  #      "Accuracy", title="Relative Order of random sub-transformers")}, step = epoch)
 
         model.save_pretrained(args.output_dir)
         # sub_transformer_configs_metrics = []
@@ -393,6 +431,7 @@ def main():
 
     args = parser.parse_args()
     # if the mentioned output_dir does not exist, create it
+    wandb.init(project='eHAT-warmups', entity='efficient-hat', name=args.task+'_train_scratch')
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     training_function(args)
