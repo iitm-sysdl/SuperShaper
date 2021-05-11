@@ -17,7 +17,7 @@ import time
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from accelerate import Accelerator, DistributedType
+from accelerate import Accelerator, DistributedType, DistributedDataParallelKwargs
 from datasets import load_dataset, load_metric
 from transformers import (
     AdamW,
@@ -169,8 +169,9 @@ def training_function(args):
     for arg in vars(args):
         print(f"{arg}: {getattr(args, arg)}")
     print("===================================================================")
+    param = DistributedDataParallelKwargs(find_unused_parameters= True, check_reduction= False)
     # Initialize accelerator
-    accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu)
+    accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu, kwargs_handlers=[param])
 
     print("Running on: ", accelerator.device)
 
@@ -266,16 +267,18 @@ def training_function(args):
         num_warmup_steps=100,
         num_training_steps=len(train_dataloader) * num_epochs,
     )
-    wandb.watch(model)
+    if accelerate.is_local_main_process:
+        wandb.watch(model)
 
     # Now we train the model
     for epoch in range(num_epochs):
         model.train()
+        seed = -1
         for step, batch in enumerate(tqdm(train_dataloader)):
-
-            random_number = step + int(10000 * time.perf_counter())
+            seed += 1 
+            #random_number = step + int(10000 * time.perf_counter())
             super_config = sample_subtransformer(
-                randomize=True, rand_seed=random_number
+                randomize=True, rand_seed=seed
             )
             try:
                 # We could avoid this line since we set the accelerator with `device_placement=True`.
@@ -286,16 +289,19 @@ def training_function(args):
                 loss = loss / gradient_accumulation_steps
                 accelerator.backward(loss)
                 if step % gradient_accumulation_steps == 0:
+                    #print(super_config)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
-                wandb.log({'random-subtransformer-loss': loss, 'rand-seed': random_number})
+                if accelerate.is_local_main_process:
+                    wandb.log({'random-subtransformer-loss': loss, 'rand-seed': random_number})
             except RuntimeError as e:
-                print(e)
-                print_subtransformer_config(config)
-                print("please recheck the above config")
-        print(f"Epoch {epoch + 1}:", end=" ")
-        wandb.log({'epochs': epoch})
+                accelerator.print(e)
+                print_subtransformer_config(super_config)
+                accelerator.print("please recheck the above config")
+        accelerator.print(f"Epoch {epoch + 1}:", end=" ")
+        if accelerator.is_local_main_process:
+            wandb.log({'epochs': epoch})
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
         eval_metric = validate_subtransformer(
@@ -308,7 +314,9 @@ def training_function(args):
 
 
         accelerator.print(eval_metric)
-        wandb.log(eval_metric)
+        if accelerator.is_local_main_process:
+            wandb.log(eval_metric)
+	
         
         # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
         label_seed = []
@@ -326,17 +334,18 @@ def training_function(args):
             label_seed.append(random_seed)
             accelerator.print(eval_metric)
             #wandb.log(eval_metric)
+        
+        if accelerator.is_local_main_process:
+            ## If plotting using Custom Plotly
+            fig = go.Figure() 
+            fig.add_trace(go.Bar(x=label_seed, y = label_acc))
+            fig.update_layout(title='Relative Performance Order', xaxis_title = 'Random Seed', yaxis_title = 'Accuracy')
+            wandb.log({"bar_chart":wandb.data_types.Plotly(fig)})
 
-        ## If plotting using Custom Plotly
-        fig = go.Figure() 
-        fig.add_trace(go.Bar(x=label_seed, y = label_acc))
-        fig.update_layout(title='Relative Performance Order', xaxis_title = 'Random Seed', yaxis_title = 'Accuracy')
-        wandb.log({"bar_chart":wandb.data_types.Plotly(fig)})
-
-        ## If plotting using existing wandb APIs
-        #table = wandb.Table(data=label_lst, columns = ["Random Seed", "Accuracy"])
-        #wandb.log({"bar_chart" : wandb.plot.bar(table, "Random Seed",
-                                  #      "Accuracy", title="Relative Order of random sub-transformers")}, step = epoch)
+            ## If plotting using existing wandb APIs
+            #table = wandb.Table(data=label_lst, columns = ["Random Seed", "Accuracy"])
+            #wandb.log({"bar_chart" : wandb.plot.bar(table, "Random Seed",
+                                      #      "Accuracy", title="Relative Order of random sub-transformers")}, step = epoch)
 
         model.save_pretrained(args.output_dir)
         # sub_transformer_configs_metrics = []

@@ -655,8 +655,8 @@ class BertLayer(nn.Module):
         output_attentions=False,
     ):
         if self.is_identity_layer:
-            print("Returning without any operations")
-            return hidden_states
+            #print("Returning without any operations")
+            return (hidden_states,)
 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
@@ -785,8 +785,6 @@ class BertEncoder(nn.Module):
 
         next_decoder_cache = () if use_cache else None
         for i, layer_module in enumerate(self.layer):
-            if i >= self.sample_num_hidden_layers:
-                continue
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
@@ -826,7 +824,6 @@ class BertEncoder(nn.Module):
                     past_key_value,
                     output_attentions,
                 )
-            # print(layer_outputs[0].shape)
             hidden_states = layer_outputs[0]
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)

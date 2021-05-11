@@ -3,7 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 checkpoints/
-
+wandb/
 # C extensions
 *.so
 
@@ -134,3 +134,5 @@ dmypy.json
 latency_predictor.py
 utils.py
 /latency_dataset/iwslt14deen_gpu_titanxp_all.csv
+evo_search.py
+evolution.py
