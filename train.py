@@ -86,7 +86,7 @@ def get_choices():
     return choices
 
 
-def print_subtransformer_config(config):
+def print_subtransformer_config(config, accelerator):
     accelerator.print("===========================================================")
     accelerator.print("hidden size: ", config.sample_hidden_size)
     accelerator.print("num attention heads: ", config.sample_num_attention_heads)
@@ -176,7 +176,7 @@ def training_function(args):
 
     accelerator.print("Running on: ", accelerator.device)
 
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         wandb.init(project='eHAT-warmups', entity='efficient-hat', name=args.task+'_train_scratch')
  
     # Sample hyper-parameters for learning rate, batch size, seed and a few other HPs
@@ -271,7 +271,7 @@ def training_function(args):
         num_warmup_steps=100,
         num_training_steps=len(train_dataloader) * num_epochs,
     )
-    if accelerator.is_local_main_process:
+    if accelerator.is_main_process:
         wandb.watch(model)
 
     # Now we train the model
@@ -297,14 +297,14 @@ def training_function(args):
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
-                if accelerator.is_local_main_process:
+                if accelerator.is_main_process:
                     wandb.log({'random-subtransformer-loss': loss, 'rand-seed': seed})
             except RuntimeError as e:
                 accelerator.print(e)
-                print_subtransformer_config(super_config)
+                print_subtransformer_config(super_config, accelerator)
                 accelerator.print("please recheck the above config")
         accelerator.print(f"Epoch {epoch + 1}:", end=" ")
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             wandb.log({'epochs': epoch})
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
@@ -317,9 +317,9 @@ def training_function(args):
             super_dict[super_key] = eval_metric[key]
 
 
-        accelerator.print(eval_metric)
-        if accelerator.is_local_main_process:
-            wandb.log(eval_metric)
+        accelerator.print(super_dict)
+        if accelerator.is_main_process:
+            wandb.log(super_dict)
 	
         
         # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
@@ -339,7 +339,7 @@ def training_function(args):
             accelerator.print(eval_metric)
             #wandb.log(eval_metric)
         
-        if accelerator.is_local_main_process:
+        if accelerator.is_main_process:
             ## If plotting using Custom Plotly
             fig = go.Figure() 
             fig.add_trace(go.Bar(x=label_seed, y = label_acc))
@@ -385,8 +385,8 @@ def main():
     )
     parser.add_argument(
         "--use_pretrained_supertransformer",
-        type=bool,
-        default=True,
+        type=int,
+        default=1,
         help="If passed and set to True, will use pretrained bert-uncased model. If set to False, it will initialize a random model and train from scratch",
     )
     parser.add_argument(
@@ -443,6 +443,7 @@ def main():
     )
 
     args = parser.parse_args()
+    print(args.use_pretrained_supertransformer)
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
