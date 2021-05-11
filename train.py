@@ -87,12 +87,12 @@ def get_choices():
 
 
 def print_subtransformer_config(config):
-    print("===========================================================")
-    print("hidden size: ", config.sample_hidden_size)
-    print("num attention heads: ", config.sample_num_attention_heads)
-    print("intermediate sizes: ", config.sample_intermediate_size)
-    print("num hidden layers: ", config.sample_num_hidden_layers)
-    print("===========================================================")
+    accelerator.print("===========================================================")
+    accelerator.print("hidden size: ", config.sample_hidden_size)
+    accelerator.print("num attention heads: ", config.sample_num_attention_heads)
+    accelerator.print("intermediate sizes: ", config.sample_intermediate_size)
+    accelerator.print("num hidden layers: ", config.sample_num_hidden_layers)
+    accelerator.print("===========================================================")
 
 
 def sample_subtransformer(randomize=False, rand_seed=0):
@@ -164,17 +164,21 @@ def validate_subtransformer(
 
 def training_function(args):
 
-    print("===================================================================")
-    print("Training Arguments:")
-    for arg in vars(args):
-        print(f"{arg}: {getattr(args, arg)}")
-    print("===================================================================")
     param = DistributedDataParallelKwargs(find_unused_parameters= True, check_reduction= False)
-    # Initialize accelerator
     accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu, kwargs_handlers=[param])
 
-    print("Running on: ", accelerator.device)
+    accelerator.print("===================================================================")
+    accelerator.print("Training Arguments:")
+    for arg in vars(args):
+        accelerator.print(f"{arg}: {getattr(args, arg)}")
+    accelerator.print("===================================================================")
+    # Initialize accelerator
 
+    accelerator.print("Running on: ", accelerator.device)
+
+    if accelerator.is_local_main_process:
+        wandb.init(project='eHAT-warmups', entity='efficient-hat', name=args.task+'_train_scratch')
+ 
     # Sample hyper-parameters for learning rate, batch size, seed and a few other HPs
     lr = args.learning_rate
     num_epochs = int(args.num_epochs)
@@ -208,7 +212,7 @@ def training_function(args):
         ), f"HF model {model_checkpoint} is not supported, pls use bert-base"
 
     glue_task = GlueTask(
-        task, model_checkpoint, config, initialize_pretrained_model=use_pretained
+        task, model_checkpoint, config, accelerator, initialize_pretrained_model=use_pretained
     )
 
     def collate_fn(examples):
@@ -267,7 +271,7 @@ def training_function(args):
         num_warmup_steps=100,
         num_training_steps=len(train_dataloader) * num_epochs,
     )
-    if accelerate.is_local_main_process:
+    if accelerator.is_local_main_process:
         wandb.watch(model)
 
     # Now we train the model
@@ -293,8 +297,8 @@ def training_function(args):
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
-                if accelerate.is_local_main_process:
-                    wandb.log({'random-subtransformer-loss': loss, 'rand-seed': random_number})
+                if accelerator.is_local_main_process:
+                    wandb.log({'random-subtransformer-loss': loss, 'rand-seed': seed})
             except RuntimeError as e:
                 accelerator.print(e)
                 print_subtransformer_config(super_config)
@@ -440,7 +444,6 @@ def main():
 
     args = parser.parse_args()
     # if the mentioned output_dir does not exist, create it
-    wandb.init(project='eHAT-warmups', entity='efficient-hat', name=args.task+'_train_scratch')
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
     training_function(args)

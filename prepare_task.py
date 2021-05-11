@@ -33,7 +33,7 @@ GLUE_task_to_keys = {
 }
 
 
-def show_random_elements(dataset, num_examples=10):
+def show_random_elements(dataset, accelerator, num_examples=10):
     assert num_examples <= len(
         dataset
     ), "Can't pick more elements than there are in the dataset."
@@ -48,20 +48,20 @@ def show_random_elements(dataset, num_examples=10):
     for column, typ in dataset.features.items():
         if isinstance(typ, datasets.ClassLabel):
             df[column] = df[column].transform(lambda i: typ.names[i])
-    print(df)
+    accelerator.print(df)
 
 
 class GlueTask:
     def __init__(
-        self, task, model_checkpoint, model_config, initialize_pretrained_model=True
+        self, task, model_checkpoint, model_config, accelerator, initialize_pretrained_model=True
     ):
         assert task in GLUE_TASKS, f"Task must be one of these: {GLUE_TASKS} "
         self.actual_task = "mnli" if task == "mnli-mm" else task
         dataset = load_dataset("glue", self.actual_task)
-        print(f"{task} dataset statistics:")
-        print(dataset)
-        print(f"Random samples from {task} dataset")
-        show_random_elements(dataset["train"], 5)
+        accelerator.print(f"{task} dataset statistics:")
+        accelerator.print(dataset)
+        accelerator.print(f"Random samples from {task} dataset")
+        show_random_elements(dataset["train"], accelerator, 5)
         self.metric = load_metric("glue", self.actual_task)
         validation_key = (
             "validation_mismatched"
