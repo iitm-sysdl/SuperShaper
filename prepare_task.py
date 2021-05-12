@@ -53,7 +53,13 @@ def show_random_elements(dataset, accelerator, num_examples=10):
 
 class GlueTask:
     def __init__(
-        self, task, model_checkpoint, model_config, accelerator, initialize_pretrained_model=True
+        self,
+        task,
+        model_checkpoint,
+        model_config,
+        max_seq_len,
+        accelerator,
+        initialize_pretrained_model=True,
     ):
         assert task in GLUE_TASKS, f"Task must be one of these: {GLUE_TASKS} "
         self.actual_task = "mnli" if task == "mnli-mm" else task
@@ -63,6 +69,7 @@ class GlueTask:
         accelerator.print(f"Random samples from {task} dataset")
         show_random_elements(dataset["train"], accelerator, 5)
         self.metric = load_metric("glue", self.actual_task)
+        self.max_seq_len = max_seq_len
         validation_key = (
             "validation_mismatched"
             if task == "mnli-mm"
@@ -104,13 +111,15 @@ class GlueTask:
     def preprocess_function(self, examples):
         if self.sentence2_key is None:
             return self.tokenizer(
-                examples[self.sentence1_key], truncation=True, max_length=None
+                examples[self.sentence1_key],
+                truncation=True,
+                max_length=self.max_seq_len,
             )
         return self.tokenizer(
             examples[self.sentence1_key],
             examples[self.sentence2_key],
             truncation=True,
-            max_length=None,
+            max_length=self.max_seq_len,
         )
 
     def compute_metrics(self, eval_pred):

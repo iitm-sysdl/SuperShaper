@@ -234,6 +234,7 @@ def training_function(args):
         task,
         model_checkpoint,
         config,
+        args.max_seq_length,
         accelerator,
         initialize_pretrained_model=use_pretained,
     )
