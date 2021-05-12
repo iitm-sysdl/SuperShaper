@@ -370,7 +370,7 @@ def training_function(args):
             # label_lst.append([eval_metric['accuracy'], random_seed])
             # label_lst.append([random_seed, eval_metric['accuracy']])
             hover_templates.append(
-                "<br>".join([f"{key}: {config[key]}" for key in sampling_dimensions])
+                "<br>".join([f"{key}: {config.key}" for key in sampling_dimensions])
             )
             label_acc.append(eval_metric["accuracy"])
             label_seed.append(random_seed)
