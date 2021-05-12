@@ -351,7 +351,8 @@ def training_function(args):
         # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
         label_seed = []
         label_acc = []
-        for i in range(10):
+        hover_templates = []
+        for i in range(25):
             random_seed = i * 1000
             config = sample_subtransformer(
                 args.limit_subtransformer_choices, randomize=True, rand_seed=random_seed
@@ -362,6 +363,9 @@ def training_function(args):
             # eval_metric['validation_random_seed'] = random_seed
             # label_lst.append([eval_metric['accuracy'], random_seed])
             # label_lst.append([random_seed, eval_metric['accuracy']])
+            hover_templates.append(
+                "<br>".join([f"{key}: {value}" for key, value in config.items()])
+            )
             label_acc.append(eval_metric["accuracy"])
             label_seed.append(random_seed)
             accelerator.print(eval_metric)
@@ -370,7 +374,8 @@ def training_function(args):
         if accelerator.is_main_process:
             ## If plotting using Custom Plotly
             fig = go.Figure()
-            fig.add_trace(go.Bar(x=label_seed, y=label_acc))
+
+            fig.add_trace(go.Bar(x=label_seed, y=label_acc, hovertext=hover_templates))
             fig.update_layout(
                 title="Relative Performance Order",
                 xaxis_title="Random Seed",
