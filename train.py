@@ -370,11 +370,13 @@ def training_function(args):
             # label_lst.append([eval_metric['accuracy'], random_seed])
             # label_lst.append([random_seed, eval_metric['accuracy']])
             hover_templates.append(
-                "<br>".join([f"{key}: {config.key}" for key in sampling_dimensions])
+                "<br>".join(
+                    [f"{key}: {getattr(config, key)}" for key in sampling_dimensions]
+                )
             )
             label_acc.append(eval_metric["accuracy"])
             label_seed.append(random_seed)
-            accelerator.print(eval_metric)
+            # accelerator.print(eval_metric)
             # wandb.log(eval_metric)
 
         if accelerator.is_main_process:
@@ -484,7 +486,6 @@ def main():
     )
 
     args = parser.parse_args()
-    print(args.use_pretrained_supertransformer)
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
