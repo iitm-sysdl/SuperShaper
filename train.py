@@ -33,12 +33,11 @@ from prepare_task import GlueTask
 from module_proxy_wrapper import ModuleProxyWrapper
 
 from pprint import pprint
-import wandb 
+import wandb
 
-import plotly 
+import plotly
 
 import plotly.graph_objects as go
-
 
 
 ########################################################################
@@ -76,13 +75,21 @@ def get_supertransformer_config():
     return config
 
 
-def get_choices():
-    choices = {
-         "sample_hidden_size": [360, 480, 540, 600, 768],
-         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-         "sample_intermediate_size": [512, 1024, 2048, 3072],
-         "sample_num_hidden_layers": [6, 8, 10, 12],
-    }
+def get_choices(limit_subtransformer_choices=False):
+    if limit_subtransformer_choices:
+        choices = {
+            "sample_hidden_size": [600, 768],
+            "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+            "sample_intermediate_size": [512, 1024, 2048, 3072],
+            "sample_num_hidden_layers": [8, 10, 12],
+        }
+    else:
+        choices = {
+            "sample_hidden_size": [360, 480, 540, 600, 768],
+            "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+            "sample_intermediate_size": [512, 1024, 2048, 3072],
+            "sample_num_hidden_layers": [6, 8, 10, 12],
+        }
     return choices
 
 
@@ -95,10 +102,12 @@ def print_subtransformer_config(config, accelerator):
     accelerator.print("===========================================================")
 
 
-def sample_subtransformer(randomize=False, rand_seed=0):
+def sample_subtransformer(
+    limit_subtransformer_choices=False, randomize=False, rand_seed=0
+):
     if randomize:
         random.seed(rand_seed)
-    choices = get_choices()
+    choices = get_choices(limit_subtransformer_choices)
     config = get_supertransformer_config()
 
     ### Figuring the number of hidden layers
@@ -164,21 +173,31 @@ def validate_subtransformer(
 
 def training_function(args):
 
-    param = DistributedDataParallelKwargs(find_unused_parameters= True, check_reduction= False)
+    param = DistributedDataParallelKwargs(
+        find_unused_parameters=True, check_reduction=False
+    )
     accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu, kwargs_handlers=[param])
 
-    accelerator.print("===================================================================")
+    accelerator.print(
+        "==================================================================="
+    )
     accelerator.print("Training Arguments:")
     for arg in vars(args):
         accelerator.print(f"{arg}: {getattr(args, arg)}")
-    accelerator.print("===================================================================")
+    accelerator.print(
+        "==================================================================="
+    )
     # Initialize accelerator
 
     accelerator.print("Running on: ", accelerator.device)
 
     if accelerator.is_main_process:
-        wandb.init(project='eHAT-warmups', entity='efficient-hat', name=args.task+'_train_scratch')
- 
+        wandb.init(
+            project="eHAT-warmups",
+            entity="efficient-hat",
+            name=args.task + "_train_scratch",
+        )
+
     # Sample hyper-parameters for learning rate, batch size, seed and a few other HPs
     lr = args.learning_rate
     num_epochs = int(args.num_epochs)
@@ -212,7 +231,11 @@ def training_function(args):
         ), f"HF model {model_checkpoint} is not supported, pls use bert-base"
 
     glue_task = GlueTask(
-        task, model_checkpoint, config, accelerator, initialize_pretrained_model=use_pretained
+        task,
+        model_checkpoint,
+        config,
+        accelerator,
+        initialize_pretrained_model=use_pretained,
     )
 
     def collate_fn(examples):
@@ -274,15 +297,19 @@ def training_function(args):
     if accelerator.is_main_process:
         wandb.watch(model)
 
+    best_val_accuracy = 0
+    metric_not_improved_count = 0
+    metric_to_track = "supertransformer_accuracy"
+
     # Now we train the model
     for epoch in range(num_epochs):
         model.train()
         seed = -1
         for step, batch in enumerate(tqdm(train_dataloader)):
-            seed += 1 
-            #random_number = step + int(10000 * time.perf_counter())
+            seed += 1
+            # random_number = step + int(10000 * time.perf_counter())
             super_config = sample_subtransformer(
-                randomize=True, rand_seed=seed
+                args.limit_subtransformer_choices, randomize=True, rand_seed=seed
             )
             try:
                 # We could avoid this line since we set the accelerator with `device_placement=True`.
@@ -293,19 +320,19 @@ def training_function(args):
                 loss = loss / gradient_accumulation_steps
                 accelerator.backward(loss)
                 if step % gradient_accumulation_steps == 0:
-                    #print(super_config)
+                    # print(super_config)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad()
                 if accelerator.is_main_process:
-                    wandb.log({'random-subtransformer-loss': loss, 'rand-seed': seed})
+                    wandb.log({"random-subtransformer-loss": loss, "rand-seed": seed})
             except RuntimeError as e:
                 accelerator.print(e)
                 print_subtransformer_config(super_config, accelerator)
                 accelerator.print("please recheck the above config")
         accelerator.print(f"Epoch {epoch + 1}:", end=" ")
         if accelerator.is_main_process:
-            wandb.log({'epochs': epoch})
+            wandb.log({"epochs": epoch})
         # resetting to supertransformer before validation
         config = get_supertransformer_config()
         eval_metric = validate_subtransformer(
@@ -313,63 +340,53 @@ def training_function(args):
         )
         super_dict = {}
         for key in eval_metric:
-            super_key = 'supertransformer_'+key
+            super_key = "supertransformer_" + key
             super_dict[super_key] = eval_metric[key]
-
 
         accelerator.print(super_dict)
         if accelerator.is_main_process:
             wandb.log(super_dict)
-	
-        
+
         # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
         label_seed = []
         label_acc = []
         for i in range(10):
-            random_seed = i * 1000 
-            config = sample_subtransformer(randomize=True, rand_seed=random_seed)
-            eval_metric = validate_subtransformer(
-                    model, config, eval_dataloader, accelerator, metric, task
+            random_seed = i * 1000
+            config = sample_subtransformer(
+                args.limit_subtransformer_choices, randomize=True, rand_seed=random_seed
             )
-            #eval_metric['validation_random_seed'] = random_seed
-            #label_lst.append([eval_metric['accuracy'], random_seed])
-            #label_lst.append([random_seed, eval_metric['accuracy']])
-            label_acc.append(eval_metric['accuracy'])
+            eval_metric = validate_subtransformer(
+                model, config, eval_dataloader, accelerator, metric, task
+            )
+            # eval_metric['validation_random_seed'] = random_seed
+            # label_lst.append([eval_metric['accuracy'], random_seed])
+            # label_lst.append([random_seed, eval_metric['accuracy']])
+            label_acc.append(eval_metric["accuracy"])
             label_seed.append(random_seed)
             accelerator.print(eval_metric)
-            #wandb.log(eval_metric)
-        
+            # wandb.log(eval_metric)
+
         if accelerator.is_main_process:
             ## If plotting using Custom Plotly
-            fig = go.Figure() 
-            fig.add_trace(go.Bar(x=label_seed, y = label_acc))
-            fig.update_layout(title='Relative Performance Order', xaxis_title = 'Random Seed', yaxis_title = 'Accuracy')
-            wandb.log({"bar_chart":wandb.data_types.Plotly(fig)})
+            fig = go.Figure()
+            fig.add_trace(go.Bar(x=label_seed, y=label_acc))
+            fig.update_layout(
+                title="Relative Performance Order",
+                xaxis_title="Random Seed",
+                yaxis_title="Accuracy",
+            )
+            wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
-            ## If plotting using existing wandb APIs
-            #table = wandb.Table(data=label_lst, columns = ["Random Seed", "Accuracy"])
-            #wandb.log({"bar_chart" : wandb.plot.bar(table, "Random Seed",
-                                      #      "Accuracy", title="Relative Order of random sub-transformers")}, step = epoch)
-
-        model.save_pretrained(args.output_dir)
-        # sub_transformer_configs_metrics = []
-        # for i in range(10):
-        #     config = sample_subtransformer(randomize=True, rand_seed=i)
-        #     print_subtransformer_config(config)
-        #     metrics = validate_subtransformer(
-        #         model, config, eval_dataloader, accelerator, metric
-        #     )
-        #     print(metrics)
-        #     sub_transformer_configs_metrics.append((metrics["accuracy"], config, i))
-
-        # for acc, f1, config, idx in sorted(
-        #     sub_transformer_configs_metrics, key=lambda tup: tup[1]
-        # ):
-
-        #     print(f"{acc:.2f} ({idx})", end=", ")
-        #     # print_subtransformer_config(config)
-        #     # print(f1)
-        # print()
+        # early stopping
+        if super_dict[metric_to_track] > best_val_accuracy:
+            metric_not_improved_count = 0
+            best_val_accuracy = super_dict[metric_to_track]
+            # save best model so far
+            model.save_pretrained(args.output_dir)
+        else:
+            metric_not_improved_count += 1
+            if metric_not_improved_count >= args.early_stopping_patience:
+                break
 
 
 def main():
@@ -413,6 +430,18 @@ def main():
         default=64,
         type=int,
         help="Batch size per GPU/CPU for evaluation.",
+    )
+    parser.add_argument(
+        "--early_stopping_patience",
+        default=5,
+        type=int,
+        help="Patience for early stopping to stop training if val_acc doesnt converge",
+    )
+    parser.add_argument(
+        "--limit_subtransformer_choices",
+        default=0,
+        type=int,
+        help="If set to 1, it will limit the hidden_size and number of encoder layers of the subtransformer choices",
     )
     parser.add_argument(
         "--learning_rate",
