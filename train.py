@@ -352,6 +352,12 @@ def training_function(args):
         label_seed = []
         label_acc = []
         hover_templates = []
+        sampling_dimensions = [
+            "sample_hidden_size",
+            "sample_num_attention_heads",
+            "sample_intermediate_size",
+            "sample_num_hidden_layers",
+        ]
         for i in range(25):
             random_seed = i * 1000
             config = sample_subtransformer(
@@ -364,7 +370,7 @@ def training_function(args):
             # label_lst.append([eval_metric['accuracy'], random_seed])
             # label_lst.append([random_seed, eval_metric['accuracy']])
             hover_templates.append(
-                "<br>".join([f"{key}: {value}" for key, value in config.items()])
+                "<br>".join([f"{key}: {config[key]}" for key in sampling_dimensions])
             )
             label_acc.append(eval_metric["accuracy"])
             label_seed.append(random_seed)
