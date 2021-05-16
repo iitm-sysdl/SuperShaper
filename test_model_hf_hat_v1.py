@@ -43,7 +43,9 @@ new_config = add_sampling_params(new_config)
 
 from train import sample_subtransformer
 
-new_config = sample_subtransformer(False, False, 100)
+new_config = sample_subtransformer(False, True, 10)
+
+new_config.num_hidden_layers = new_config.sample_num_hidden_layers
 
 model.set_sample_config(new_config)
 
@@ -65,6 +67,8 @@ state_dict = sub_net.state_dict()
 
 for key in state_dict:
     print(key, state_dict[key].shape)
+
+#print(sub_net)
 
 #for name, param in sub_net.named_parameters():
 #    print(name, param.shape)

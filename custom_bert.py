@@ -845,15 +845,11 @@ class BertEncoder(nn.Module):
         if isinstance(config.sample_intermediate_size, list):
             sample_intermediate_sizes = config.sample_intermediate_size
         else:
-            sample_intermediate_sizes = [config.sample_intermediate_size] * len(
-                self.layer
-            )
+            sample_intermediate_sizes = [config.sample_intermediate_size] * config.sample_num_hidden_layers
         if isinstance(config.num_attention_heads, list):
             sample_num_attention_heads_list = config.num_attention_heads
         else:
-            sample_num_attention_heads_list = [config.num_attention_heads] * len(
-                self.layer
-            )
+            sample_num_attention_heads_list = [config.num_attention_heads] * config.sample_num_hidden_layers
 
         ### Extracting the subnetworks
         for i in range(config.sample_num_hidden_layers):
