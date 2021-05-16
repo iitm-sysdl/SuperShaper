@@ -34,12 +34,31 @@ model(**inputs)
 
 new_config = AutoConfig.from_pretrained("bert-base-uncased")
 new_config = add_sampling_params(new_config)
+new_config.num_hidden_layers = 6
 new_config.sample_num_hidden_layers = 6
 new_config.sample_hidden_size = 720
 new_config.sample_intermediate_size[2] = 3000
 new_config.sample_num_attention_heads[4] = 6
-print(new_config)
+#print(new_config)
 model.set_sample_config(new_config)
 
-print("running seq classification subtransformer for a sample input")
-model(**inputs)
+sub_net = model.get_active_subnet(new_config)
+
+def print_subtransformer_config(config):
+    print("===========================================================")
+    print("hidden size: ", config.sample_hidden_size)
+    print("num attention heads: ", config.sample_num_attention_heads)
+    print("intermediate sizes: ", config.sample_intermediate_size)
+    print("num hidden layers: ", config.sample_num_hidden_layers)
+    print("===========================================================")
+
+print_subtransformer_config(new_config)
+print("===================================")
+
+for name, param in sub_net.named_parameters():
+    print(name, param.shape)
+
+sub_net(**inputs)
+
+#print("running seq classification subtransformer for a sample input")
+#model(**inputs)

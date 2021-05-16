@@ -24,6 +24,8 @@ class CustomEmbedding(nn.Embedding):
         # the current sampled embed dim
         self.sample_hidden_size = {"encoder": None, "decoder": None}
 
+        self.vocab_size = vocab_size
+
         self.samples = {"encoder": {}, "decoder": {}}
         self.profiling = False
         self.reset_parameters()

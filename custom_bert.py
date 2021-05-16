@@ -187,7 +187,6 @@ def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
 def calc_dropout(dropout, sample_hidden_size, super_hidden_size):
     return dropout * 1.0 * sample_hidden_size / super_hidden_size
 
-
 class BertEmbeddings(nn.Module):
     """Construct the embeddings from word, position and token_type embeddings."""
 
@@ -238,6 +237,15 @@ class BertEmbeddings(nn.Module):
         # embedding on forward and the new dropout rate. But for now, we are just
         # reinitialing the module and using this in the forward function
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
+
+    def get_active_subnet(self, config):
+        sublayer = BertEmbeddings(config)
+        sublayer.word_embeddings = self.word_embeddings.get_active_subnet(part="encoder")
+        sublayer.position_embeddings = self.position_embeddings.get_active_subnet(part="encoder")
+        sublayer.token_type_embeddings = self.token_type_embeddings.get_active_subnet(part="encoder")
+
+        sublayer.LayerNorm = self.LayerNorm.get_active_subnet()
+        return sublayer
 
     def forward(
         self,
@@ -497,6 +505,16 @@ class BertSelfOutput(nn.Module):
         # reinitialing the module and using this in the forward function
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
+    def get_active_subnet(self, config):
+        sublayer = BertSelfOutput(config)
+
+        sublayer.dense = self.dense.get_active_subnet()
+        sublayer.LayerNorm = self.LayerNorm.get_active_subnet()
+        print("==========OUT ",sublayer.LayerNorm.weight.shape)
+
+        return sublayer
+
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
@@ -644,6 +662,45 @@ class BertLayer(nn.Module):
         self.intermediate.set_sample_config(config)
         self.output.set_sample_config(config)
 
+    def get_active_subnet(self, config):
+        sublayer = BertLayer(config)
+
+        sublayer.attention.self.set_sample_config(config) ## Just to access those variables
+
+        sublayer.attention.self.query = self.attention.self.query.get_active_subnet()
+        sublayer.attention.self.key   = self.attention.self.query.get_active_subnet()
+        sublayer.attention.self.value = self.attention.self.query.get_active_subnet()
+
+        sublayer.attention.output = self.attention.output.get_active_subnet(config)
+
+        ### Building the attention layer
+        #if self.attention.qkv_same_dim:
+        #    sublayer.attention.in_proj_weight.weight.data.copy_(self.attention.in_proj_weight.weight)
+        #else:
+        #    sublayer.attention.k_proj_weight.weight.data.copy_(self.attention.k_proj_weight.weight)
+        #    sublayer.attention.v_proj_weight.weight.data.copy_(self.attention.v_proj_weight.weight)
+        #    sublayer.attention.q_proj_weight.weight.data.copy_(self.attention.q_proj_weight.weight)
+
+        #if self.attention.bias:
+        #    sublayer.attention.in_proj_bias.weight.data.copy_(self.attention.in_proj_bias.weight)
+
+        #if self.attention.out_dim is None:
+        #    sublayer.out_proj = self.atttention.out_proj.get_active_subnet()
+
+        #if self.attention.add_bias_kv:
+        #    # TODO: have super_k and super_v dimension and def bias
+        #    sublayer.attention.bias_k.weight.data.copy_(self.attention.bias_k.weight)
+        #    sublayer.attention.bias_v.weight.data.copy_(self.attention.bias_v.weight)
+
+        #### Building the intermediate layer
+        sublayer.intermediate.dense = self.intermediate.dense.get_active_subnet()
+
+        #### Building the output layer
+        sublayer.output.dense = self.output.dense.get_active_subnet()
+
+        return sublayer
+
+
     def forward(
         self,
         hidden_states,
@@ -727,7 +784,6 @@ class BertLayer(nn.Module):
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
-
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -763,6 +819,35 @@ class BertEncoder(nn.Module):
                 layer.set_sample_config(layer_config, is_identity_layer=False)
             else:
                 layer.set_sample_config(layer_config, is_identity_layer=True)
+
+    def get_active_subnet(self, config):
+        sublayer = BertEncoder(config)
+
+        if isinstance(config.sample_intermediate_size, list):
+            sample_intermediate_sizes = config.sample_intermediate_size
+        else:
+            sample_intermediate_sizes = [config.sample_intermediate_size] * len(
+                self.layer
+            )
+        if isinstance(config.num_attention_heads, list):
+            sample_num_attention_heads_list = config.num_attention_heads
+        else:
+            sample_num_attention_heads_list = [config.num_attention_heads] * len(
+                self.layer
+            )
+
+        ### Extracting the subnetworks
+        for i in range(config.sample_num_hidden_layers):
+            layer_config = deepcopy(config)
+
+            if i < self.sample_num_hidden_layers:
+                layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
+                layer_config.sample_num_attention_heads = sample_num_attention_heads_list[i]
+                sublayer.layer[i].set_sample_config(layer_config, is_identity_layer=False)
+
+            sublayer.layer[i] = self.layer[i].get_active_subnet(layer_config)
+
+        return sublayer
 
     def forward(
         self,
@@ -868,6 +953,11 @@ class BertPooler(nn.Module):
         else:
             sample_hidden_size = config.sample_hidden_size
         self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
+
+    def get_active_subnet(self, config):
+        sublayer = BertPooler(config)
+        sublayer.dense = self.dense.get_active_subnet()
+        return sublayer
 
     def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
@@ -1081,6 +1171,7 @@ BERT_INPUTS_DOCSTRING = r"""
     "The bare Bert Model transformer outputting raw hidden-states without any specific head on top.",
     BERT_START_DOCSTRING,
 )
+
 class BertModel(BertPreTrainedModel):
     """
 
@@ -1133,6 +1224,15 @@ class BertModel(BertPreTrainedModel):
         self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
         self.pooler.set_sample_config(config)
+
+    def get_active_subnet(self, config):
+        subnet = BertModel(config)
+
+        subnet.embeddings = self.embeddings.get_active_subnet(config)
+        subnet.encoder    = self.encoder.get_active_subnet(config)
+        subnet.pooler     = self.encoder.get_active_subnet(config)
+
+        return subnet
 
     def forward(
         self,
@@ -1848,6 +1948,14 @@ class BertForSequenceClassification(BertPreTrainedModel):
         output_type=SequenceClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
     )
+
+    def get_active_subnet(self, config):
+        subnet = BertForSequenceClassification(config)
+        subnet.bert = self.bert.get_active_subnet(config)
+        subnet.classifier = self.classifier.get_active_subnet()
+
+        return subnet
+
     def forward(
         self,
         input_ids=None,
