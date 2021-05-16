@@ -363,6 +363,15 @@ class BertSelfAttention(nn.Module):
         # reinitialing the module and using this in the forward function
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
+    def get_active_subnet(self, config):
+        sublayer = BertSelfAttention(config)
+        sublayer.set_sample_config(config) ## Necessary evil
+        sublayer.query = self.query.get_active_subnet()
+        sublayer.key   = self.key.get_active_subnet()
+        sublayer.value = self.value.get_active_subnet()
+
+        return sublayer
+
     def forward(
         self,
         hidden_states,
@@ -555,6 +564,13 @@ class BertAttention(nn.Module):
         )
         self.pruned_heads = self.pruned_heads.union(heads)
 
+    def get_active_subnet(self, config):
+        sublayer = BertAttention(config)
+        sublayer.self = self.self.get_active_subnet(config)
+        sublayer.output = self.output.get_active_subnet(config)
+
+        return sublayer
+
     def forward(
         self,
         hidden_states,
@@ -666,11 +682,13 @@ class BertLayer(nn.Module):
 
         sublayer.attention.self.set_sample_config(config) ## Just to access those variables
 
-        sublayer.attention.self.query = self.attention.self.query.get_active_subnet()
-        sublayer.attention.self.key   = self.attention.self.query.get_active_subnet()
-        sublayer.attention.self.value = self.attention.self.query.get_active_subnet()
+        sublayer.attention = self.attention.get_active_subnet(config)
 
-        sublayer.attention.output = self.attention.output.get_active_subnet(config)
+        #sublayer.attention.self.query = self.attention.self.query.get_active_subnet()
+        #sublayer.attention.self.key   = self.attention.self.query.get_active_subnet()
+        #sublayer.attention.self.value = self.attention.self.query.get_active_subnet()
+
+        #sublayer.attention.output = self.attention.output.get_active_subnet(config)
 
         ### Building the attention layer
         #if self.attention.qkv_same_dim:
