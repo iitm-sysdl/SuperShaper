@@ -510,7 +510,6 @@ class BertSelfOutput(nn.Module):
 
         sublayer.dense = self.dense.get_active_subnet()
         sublayer.LayerNorm = self.LayerNorm.get_active_subnet()
-        print("==========OUT ",sublayer.LayerNorm.weight.shape)
 
         return sublayer
 
@@ -697,6 +696,8 @@ class BertLayer(nn.Module):
 
         #### Building the output layer
         sublayer.output.dense = self.output.dense.get_active_subnet()
+        sublayer.output.LayerNorm = self.output.LayerNorm.get_active_subnet()
+
 
         return sublayer
 
@@ -1230,7 +1231,7 @@ class BertModel(BertPreTrainedModel):
 
         subnet.embeddings = self.embeddings.get_active_subnet(config)
         subnet.encoder    = self.encoder.get_active_subnet(config)
-        subnet.pooler     = self.encoder.get_active_subnet(config)
+        subnet.pooler     = self.pooler.get_active_subnet(config)
 
         return subnet
 
@@ -1951,6 +1952,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
     def get_active_subnet(self, config):
         subnet = BertForSequenceClassification(config)
+        #subnet.set_sample_config(config)
         subnet.bert = self.bert.get_active_subnet(config)
         subnet.classifier = self.classifier.get_active_subnet()
 
@@ -1992,6 +1994,7 @@ class BertForSequenceClassification(BertPreTrainedModel):
         )
 
         pooled_output = outputs[1]
+
 
         pooled_output = self.dropout(pooled_output)
         logits = self.classifier(pooled_output)

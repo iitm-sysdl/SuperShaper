@@ -70,6 +70,7 @@ class CustomLinear(nn.Linear):
             #self.uniform_,  #Vin: Check if these cause some issues down the line
             #self.non_linear,
         )
+        self._sample_parameters()
         sub_layer.weight.data.copy_(self.samples["weight"])
         sub_layer.bias.data.copy_(self.samples["bias"])
 
