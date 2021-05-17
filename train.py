@@ -28,6 +28,7 @@ from transformers import (
 )
 from custom_bert import BertForSequenceClassification
 import random
+import numpy as np
 import os
 from prepare_task import GlueTask
 from module_proxy_wrapper import ModuleProxyWrapper
@@ -38,6 +39,15 @@ import wandb
 import plotly
 
 import plotly.graph_objects as go
+
+
+def seed_everything(seed=1234):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 
 ########################################################################
@@ -147,9 +157,10 @@ def sample_subtransformer(
 
 
 def validate_subtransformer(
-    model, config, eval_dataloader, accelerator, metric, task="mrpc"
+    model, config, eval_dataloader, accelerator, metric, task="mrpc", sample=True
 ):
-    model.set_sample_config(config=config)
+    if sample:
+        model.set_sample_config(config=config)
     model.eval()
     for step, batch in enumerate(eval_dataloader):
         # We could avoid this line since we set the accelerator with `device_placement=True`.
@@ -169,6 +180,45 @@ def validate_subtransformer(
     # Use accelerator.print to print only on the main process.
     # accelerator.print(eval_metric)
     return eval_metric
+
+
+def train_transformer_one_epoch(
+    args,
+    model,
+    optimizer,
+    lr_scheduler,
+    gradient_accumulation_steps,
+    train_dataloader,
+    accelerator,
+    train_subtransformer=False,
+    subtransformer_seed=42,
+):
+    optimizer.zero_grad()
+
+    model.train()
+    seed = -1
+    for step, batch in enumerate(tqdm(train_dataloader)):
+        if not train_subtransformer:
+            # if we are training a supertransformer, then we need to change the
+            # seed in each step
+            seed += 1
+            super_config = sample_subtransformer(
+                args.limit_subtransformer_choices, randomize=True, rand_seed=seed
+            )
+            model.set_sample_config(super_config)
+
+        batch.to(accelerator.device)
+        outputs = model(**batch)
+        loss = outputs.loss
+        loss = loss / gradient_accumulation_steps
+        accelerator.backward(loss)
+        if step % gradient_accumulation_steps == 0:
+            # print(super_config)
+            optimizer.step()
+            lr_scheduler.step()
+            optimizer.zero_grad()
+        if accelerator.is_main_process:
+            wandb.log({"random-subtransformer-loss": loss, "rand-seed": seed})
 
 
 def training_function(args):
@@ -304,33 +354,18 @@ def training_function(args):
 
     # Now we train the model
     for epoch in range(num_epochs):
-        model.train()
-        seed = -1
-        for step, batch in enumerate(tqdm(train_dataloader)):
-            seed += 1
-            # random_number = step + int(10000 * time.perf_counter())
-            super_config = sample_subtransformer(
-                args.limit_subtransformer_choices, randomize=True, rand_seed=seed
-            )
-            try:
-                # We could avoid this line since we set the accelerator with `device_placement=True`.
-                model.set_sample_config(super_config)
-                batch.to(accelerator.device)
-                outputs = model(**batch)
-                loss = outputs.loss
-                loss = loss / gradient_accumulation_steps
-                accelerator.backward(loss)
-                if step % gradient_accumulation_steps == 0:
-                    # print(super_config)
-                    optimizer.step()
-                    lr_scheduler.step()
-                    optimizer.zero_grad()
-                if accelerator.is_main_process:
-                    wandb.log({"random-subtransformer-loss": loss, "rand-seed": seed})
-            except RuntimeError as e:
-                accelerator.print(e)
-                print_subtransformer_config(super_config, accelerator)
-                accelerator.print("please recheck the above config")
+
+        train_transformer_one_epoch(
+            args,
+            model,
+            optimizer,
+            lr_scheduler,
+            gradient_accumulation_steps,
+            train_dataloader,
+            accelerator,
+            train_subtransformer=False,  # first we will train the supertransformer
+        )
+
         accelerator.print(f"Epoch {epoch + 1}:", end=" ")
         if accelerator.is_main_process:
             wandb.log({"epochs": epoch})
@@ -347,60 +382,142 @@ def training_function(args):
         accelerator.print(super_dict)
         if accelerator.is_main_process:
             wandb.log(super_dict)
-
-        # Sampling 10 random sub-transformers and evaluate them to understand the relative performance order
-        label_seed = []
-        label_acc = []
-        hover_templates = []
-        sampling_dimensions = [
-            "sample_hidden_size",
-            "sample_num_attention_heads",
-            "sample_intermediate_size",
-            "sample_num_hidden_layers",
-        ]
-        for i in range(25):
-            random_seed = i * 1000
-            config = sample_subtransformer(
-                args.limit_subtransformer_choices, randomize=True, rand_seed=random_seed
-            )
-            eval_metric = validate_subtransformer(
-                model, config, eval_dataloader, accelerator, metric, task
-            )
-            # eval_metric['validation_random_seed'] = random_seed
-            # label_lst.append([eval_metric['accuracy'], random_seed])
-            # label_lst.append([random_seed, eval_metric['accuracy']])
-            hover_templates.append(
-                "<br>".join(
-                    [f"{key}: {getattr(config, key)}" for key in sampling_dimensions]
+        if args.eval_random_subtransformers:
+            label_seed = []
+            label_acc = []
+            hover_templates = []
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+            # Sampling 25 random sub-transformers and evaluate them to understand the relative performance order
+            for i in range(25):
+                random_seed = i * 1000
+                config = sample_subtransformer(
+                    args.limit_subtransformer_choices,
+                    randomize=True,
+                    rand_seed=random_seed,
                 )
-            )
-            label_acc.append(eval_metric["accuracy"])
-            label_seed.append(random_seed)
-            # accelerator.print(eval_metric)
-            # wandb.log(eval_metric)
+                eval_metric = validate_subtransformer(
+                    model, config, eval_dataloader, accelerator, metric, task
+                )
+                # eval_metric['validation_random_seed'] = random_seed
+                # label_lst.append([eval_metric['accuracy'], random_seed])
+                # label_lst.append([random_seed, eval_metric['accuracy']])
+                hover_templates.append(
+                    "<br>".join(
+                        [
+                            f"{key}: {getattr(config, key)}"
+                            for key in sampling_dimensions
+                        ]
+                    )
+                )
+                label_acc.append(eval_metric["accuracy"])
+                label_seed.append(random_seed)
+                # accelerator.print(eval_metric)
+                # wandb.log(eval_metric)
 
-        if accelerator.is_main_process:
-            ## If plotting using Custom Plotly
-            fig = go.Figure()
+            if accelerator.is_main_process:
+                ## If plotting using Custom Plotly
+                fig = go.Figure()
 
-            fig.add_trace(go.Bar(x=label_seed, y=label_acc, hovertext=hover_templates))
-            fig.update_layout(
-                title="Relative Performance Order",
-                xaxis_title="Random Seed",
-                yaxis_title="Accuracy",
-            )
-            wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+                fig.add_trace(
+                    go.Bar(x=label_seed, y=label_acc, hovertext=hover_templates)
+                )
+                fig.update_layout(
+                    title="Relative Performance Order",
+                    xaxis_title="Random Seed",
+                    yaxis_title="Accuracy",
+                )
+                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
         # early stopping
         if super_dict[metric_to_track] > best_val_accuracy:
             metric_not_improved_count = 0
             best_val_accuracy = super_dict[metric_to_track]
-            # save best model so far
-            model.save_pretrained(args.output_dir)
+            # unwrap and save best model so far
+            accelerator.unwrap_model(model).save_pretrained(args.output_dir)
+            torch.save(optimizer.state_dict(), args.output_dir)
+            glue_task.tokenizer.save_pretrained("./models/tokenizer/")
         else:
             metric_not_improved_count += 1
             if metric_not_improved_count >= args.early_stopping_patience:
                 break
+    accelerator.print()
+    accelerator.print("Evaluating subtransformer training")
+    accelerator.print()
+
+    metric_to_track = "accuracy"
+    for _ in range(3):
+        # sample one random subtransformer
+        random_subtransformer_seed = random.randint(0, 25) * 1000
+        # initialize the model to the best pretrained checkpoint
+        model = BertForSequenceClassification.from_pretrained(args.output_dir)
+        model = model.to(accelerator.device)
+        # resetting optimizer at start of new subtransformer
+
+        best_val_accuracy = 0
+
+        ## initialize subtransformer
+        super_config = sample_subtransformer(
+            args.limit_subtransformer_choices,
+            randomize=True,
+            rand_seed=random_subtransformer_seed,
+        )
+        model.set_sample_config(super_config)
+        super_config.num_hidden_layers = super_config.sample_num_hidden_layers
+        accelerator.print(
+            "Training an epoch on subtransformer with config: ",
+            print_subtransformer_config(super_config, accelerator),
+        )
+        model = model.get_active_subnet(super_config)
+        model = model.to(accelerator.device)
+        # reducing the lr for further finetuning
+        optimizer = AdamW(params=model.parameters(), lr=3e-6, correct_bias=correct_bias)
+        lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=100,
+            num_training_steps=len(train_dataloader) * num_epochs,
+        )
+        # model, optimizer = accelerator.prepare(model, optimizer)
+
+        for epoch in range(num_epochs):
+
+            train_transformer_one_epoch(
+                args,
+                model,
+                optimizer,
+                lr_scheduler,
+                gradient_accumulation_steps,
+                train_dataloader,
+                accelerator,
+                train_subtransformer=True,
+                subtransformer_seed=random_subtransformer_seed,
+            )
+            # no need to sample config while validating in this case
+            # hence setting the sample to False
+            eval_metric = validate_subtransformer(
+                model,
+                super_config,
+                eval_dataloader,
+                accelerator,
+                metric,
+                task,
+                sample=False,
+            )
+
+            accelerator.print(f"Epoch {epoch + 1}:", end=" ")
+            accelerator.print(eval_metric)
+            # early stopping
+            if eval_metric[metric_to_track] > best_val_accuracy:
+                metric_not_improved_count = 0
+                best_val_accuracy = eval_metric[metric_to_track]
+            else:
+                metric_not_improved_count += 1
+                if metric_not_improved_count >= args.early_stopping_patience:
+                    break
 
 
 def main():
@@ -458,6 +575,12 @@ def main():
         help="If set to 1, it will limit the hidden_size and number of encoder layers of the subtransformer choices",
     )
     parser.add_argument(
+        "--eval_random_subtransformers",
+        default=1,
+        type=int,
+        help="If set to 1, this will evaluate 25 random subtransformers after every training epoch",
+    )
+    parser.add_argument(
         "--learning_rate",
         default=2e-5,
         type=float,
@@ -489,6 +612,7 @@ def main():
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+    seed_everything()
     training_function(args)
 
 
