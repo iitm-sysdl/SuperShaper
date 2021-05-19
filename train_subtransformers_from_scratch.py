@@ -1,4 +1,19 @@
+# coding=utf-8
+# Copyright 2021 The HuggingFace Inc. team. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 import argparse
+import time
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -6,35 +21,33 @@ from accelerate import Accelerator, DistributedType, DistributedDataParallelKwar
 from datasets import load_dataset, load_metric
 from transformers import (
     AdamW,
+    AutoTokenizer,
     get_linear_schedule_with_warmup,
+    set_seed,
     AutoConfig,
 )
-from custom_layers.custom_bert import BertForSequenceClassification
+from custom_bert import BertForSequenceClassification
 import random
 import numpy as np
 import os
-from tasks.glue.prepare_task import GlueTask
-from utils.module_proxy_wrapper import ModuleProxyWrapper
+from prepare_task import GlueTask
+from module_proxy_wrapper import ModuleProxyWrapper
 
 from pprint import pprint
 import wandb
 
+import plotly
+
 import plotly.graph_objects as go
-from utils.wipe_memory import wipe_memory
 
 
-def seed_everything(accelerator, seed=1234, randomize_across_diff_devices=False):
-    if randomize_across_diff_devices:
-        # following sgugger's comment here https://github.com/huggingface/accelerate/issues/90
-        random.seed(seed + accelerator.process_index)
-        np.random.seed(seed + accelerator.process_index)
-        torch.manual_seed(seed + accelerator.process_index)
-        torch.cuda.manual_seed_all(seed + accelerator.process_index)
-    else:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+def seed_everything(seed=1234):
+    random.seed(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 
 ########################################################################
@@ -88,6 +101,14 @@ def get_choices(limit_subtransformer_choices=False):
             "sample_num_hidden_layers": [6, 8, 10, 12],
         }
     return choices
+
+
+def save_checkpoint(state, is_best, save_path, filename, timestamp=""):
+    filename = os.path.join(save_path, filename)
+    torch.save(state, filename)
+    if is_best:
+        bestname = os.path.join(save_path, "model_best_{0}.pth.tar".format(timestamp))
+        shutil.copyfile(filename, bestname)
 
 
 def print_subtransformer_config(config, accelerator):
@@ -205,21 +226,15 @@ def train_transformer_one_epoch(
             lr_scheduler.step()
             optimizer.zero_grad()
         if accelerator.is_main_process:
-            wandb.log({"random-subtransformer-loss": loss.item(), "rand-seed": seed})
+            wandb.log({"random-subtransformer-loss": loss, "rand-seed": seed})
 
 
 def training_function(args):
-    # path to save the optimizer and scheduler states
-    optim_scheduler_states_path = os.path.join(args.output_dir, "optim_scheduler.pt")
 
     param = DistributedDataParallelKwargs(
         find_unused_parameters=True, check_reduction=False
     )
     accelerator = Accelerator(fp16=args.fp16, cpu=args.cpu, kwargs_handlers=[param])
-    seed_everything(
-        accelerator=accelerator,
-        seed=args.seed,
-    )
 
     accelerator.print(
         "==================================================================="
@@ -235,19 +250,11 @@ def training_function(args):
     accelerator.print("Running on: ", accelerator.device)
 
     if accelerator.is_main_process:
-        if not args.train_subtransformers_from_scratch:
-            # TODO: change this to a better name for trianing + finetuning
-            wandb.init(
-                project="eHAT-warmups",
-                entity="efficient-hat",
-                name=args.task + "_train_scratch",
-            )
-        else:
-            wandb.init(
-                project="eHAT-warmups",
-                entity="efficient-hat",
-                name=args.task + "subtransformers_train_scratch",
-            )
+        wandb.init(
+            project="eHAT-warmups",
+            entity="efficient-hat",
+            name=args.task + "_train_scratch",
+        )
 
     # Sample hyper-parameters for learning rate, batch size, seed and a few other HPs
     lr = args.learning_rate
@@ -267,6 +274,7 @@ def training_function(args):
     per_gpu_eval_batch_size = int(args.per_gpu_eval_batch_size)
     gradient_accumulation_steps = int(args.gradient_accumulation_steps)
 
+    set_seed(seed)
     config = get_supertransformer_config()
     # print(f"Batch Size: {batch_size}")
     task = args.task
@@ -348,14 +356,12 @@ def training_function(args):
     if accelerator.is_main_process:
         wandb.watch(model)
 
-    if not args.train_subtransformers_from_scratch:
-        ## train and finetune the supertransformer
+    best_val_accuracy = 0
+    metric_not_improved_count = 0
+    metric_to_track = "supertransformer_accuracy"
 
-        best_val_accuracy = 0
-        metric_not_improved_count = 0
-        metric_to_track = "supertransformer_accuracy"
-
-        # Now we train the model
+    # Now we train the model
+    for subtransformer_idx in range(25):
         for epoch in range(num_epochs):
 
             train_transformer_one_epoch(
@@ -442,199 +448,13 @@ def training_function(args):
                 best_val_accuracy = super_dict[metric_to_track]
                 # unwrap and save best model so far
                 accelerator.unwrap_model(model).save_pretrained(args.output_dir)
-                accelerator.save(
-                    {
-                        "epoch": epoch + 1,
-                        "optimizer": optimizer.state_dict(),
-                        "scheduler": lr_scheduler.state_dict(),
-                    },
-                    optim_scheduler_states_path,
-                )
-                glue_task.tokenizer.save_pretrained(args.output_dir)
+                torch.save(optimizer.state_dict(), args.output_dir + "/optimizer.pt")
+                torch.save(lr_scheduler, args.output_dir + "/lr_scheduler.pt")
+                glue_task.tokenizer.save_pretrained("./models/tokenizer/")
             else:
                 metric_not_improved_count += 1
                 if metric_not_improved_count >= args.early_stopping_patience:
                     break
-        accelerator.print()
-        accelerator.print("Evaluating subtransformer training")
-        accelerator.print()
-
-        metric_to_track = "accuracy"
-
-        ## for finetuning, we load the best model, optimizer and scheduler
-        # states. Naively loading them is causing OOM issue. Hence we first
-        # clear torch cuda memory
-
-        print(
-            "===========================Wiping memory================================================="
-        )
-        # GR: suspecting that memory is not fully cleared here
-        # based on some testing, the supertrasnformer training on mrpc with batchsize of 32
-        # used around 3921 MB on gpu. After wiping mem, we are still left with aronud 1.6 GB
-        # Have to check if there is a leak
-        # TODO: revisit this and modify utils.wipe_memory
-        wipe_memory(optimizer)
-
-        # we will finetune 3 random subtransformers
-        num_subtransformers_for_finetuning = 3
-
-        # initialize the model to the best pretrained checkpoint
-        model = BertForSequenceClassification.from_pretrained(args.output_dir)
-
-        # it is important to send the model to device before sampling.
-        # Else we would get an error that weights are in cpu (not fullly sure why)
-        model = model.to(accelerator.device)
-
-        optimizer = AdamW(
-            params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
-        )
-        lr_scheduler = get_linear_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=100,
-            num_training_steps=len(train_dataloader)
-            * num_subtransformers_for_finetuning,
-        )
-        model, optimizer = accelerator.prepare(model, optimizer)
-
-        for _ in range(num_subtransformers_for_finetuning):
-
-            best_val_accuracy = 0
-            # sample one random subtransformer
-            random_subtransformer_seed = random.randint(0, 25) * 1000
-
-            ## initialize subtransformer
-            super_config = sample_subtransformer(
-                args.limit_subtransformer_choices,
-                randomize=True,
-                rand_seed=random_subtransformer_seed,
-            )
-            model.set_sample_config(super_config)
-
-            # uncomment this block to use subtransformer from get_active_subnet
-            # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-            # model = model.get_active_subnet(super_config)
-            # model = model.to(accelerator.device)
-
-            accelerator.print(
-                "Finetuning subtransformer with config: ",
-                print_subtransformer_config(super_config, accelerator),
-            )
-
-            optim_scheduler_states = torch.load(optim_scheduler_states_path)
-            optimizer.load_state_dict(optim_scheduler_states["optimizer"])
-            lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
-
-            for epoch in range(num_epochs):
-
-                train_transformer_one_epoch(
-                    args,
-                    model,
-                    optimizer,
-                    lr_scheduler,
-                    gradient_accumulation_steps,
-                    train_dataloader,
-                    accelerator,
-                    train_subtransformer=True,
-                    subtransformer_seed=random_subtransformer_seed,
-                )
-                # no need to sample config while validating in this case
-                # hence setting the sample to False
-                eval_metric = validate_subtransformer(
-                    model,
-                    super_config,
-                    eval_dataloader,
-                    accelerator,
-                    metric,
-                    task,
-                    sample=False,
-                )
-
-                accelerator.print(f"Epoch {epoch + 1}:", end=" ")
-                accelerator.print(eval_metric)
-                # early stopping
-                if eval_metric[metric_to_track] > best_val_accuracy:
-                    metric_not_improved_count = 0
-                    best_val_accuracy = eval_metric[metric_to_track]
-                else:
-                    metric_not_improved_count += 1
-                    if metric_not_improved_count >= args.early_stopping_patience:
-                        break
-    else:
-        ## train subtransformers from scratch
-
-        # we will train 25 random subtransformers from scratch
-        num_subtransformers_for_training_from_scratch = 25
-        best_val_accuracy = 0
-        metric_not_improved_count = 0
-        metric_to_track = "subtransformer_accuracy"
-
-        for idx in range(num_subtransformers_for_training_from_scratch):
-            subtransformer_output_dir = os.path.join(
-                args.output_dir, f"subtransformer_{str(idx)}"
-            )
-
-            super_config = sample_subtransformer(
-                args.limit_subtransformer_choices,
-                randomize=True,
-                rand_seed=idx * 1000,
-            )
-            model.set_sample_config(super_config)
-            accelerator.print(
-                "Training subtransformer from scratch with config: ",
-                print_subtransformer_config(super_config, accelerator),
-            )
-
-            os.makedirs(subtransformer_output_dir, exist_ok=True)
-
-            for epoch in range(num_epochs):
-
-                train_transformer_one_epoch(
-                    args,
-                    model,
-                    optimizer,
-                    lr_scheduler,
-                    gradient_accumulation_steps,
-                    train_dataloader,
-                    accelerator,
-                    train_subtransformer=True,  # first we will train the supertransformer
-                )
-
-                accelerator.print(f"Epoch {epoch + 1}:", end=" ")
-                if accelerator.is_main_process:
-                    wandb.log({"epochs": epoch})
-
-                eval_metric = validate_subtransformer(
-                    model,
-                    config,
-                    eval_dataloader,
-                    accelerator,
-                    metric,
-                    task,
-                    sample=False,
-                )
-
-                sub_dict = {}
-                for key in eval_metric:
-                    sub_key = "subtransformer_" + key
-                    sub_dict[sub_key] = eval_metric[key]
-
-                accelerator.print(sub_dict)
-
-                if accelerator.is_main_process:
-                    wandb.log(sub_dict)
-
-                # early stopping
-                if sub_dict[metric_to_track] > best_val_accuracy:
-                    metric_not_improved_count = 0
-                    best_val_accuracy = sub_dict[metric_to_track]
-                    # unwrap and save best model so far
-                    accelerator.unwrap_model(model).save_pretrained(
-                        subtransformer_output_dir
-                    )
-                else:
-                    metric_not_improved_count += 1
-                    if metric_not_improved_count >= args.early_stopping_patience:
-                        break
 
 
 def main():
@@ -695,16 +515,7 @@ def main():
         "--eval_random_subtransformers",
         default=1,
         type=int,
-        help="If set to 1, this will evaluate 25 random subtransformers after every training epoch when training a supertransformer",
-    )
-    parser.add_argument(
-        "--train_subtransformers_from_scratch",
-        default=0,
-        type=int,
-        help="""
-        If set to 1, this will train 25 random subtransformers from scratch.
-        By default, it is set to False (0) and we train a supertransformer and finetune subtransformers
-        """,
+        help="If set to 1, this will evaluate 25 random subtransformers after every training epoch",
     )
     parser.add_argument(
         "--learning_rate",
@@ -725,10 +536,10 @@ def main():
         help="Total number of training epochs to perform.",
     )
     parser.add_argument(
-        "--fp16", type=int, default=1, help="If set to 1, will use FP16 training."
+        "--fp16", type=bool, default=True, help="If passed, will use FP16 training."
     )
     parser.add_argument(
-        "--cpu", type=int, default=0, help="If set to 1, will train on the CPU."
+        "--cpu", type=bool, default=False, help="If passed, will train on the CPU."
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="random seed for initialization"
@@ -738,6 +549,7 @@ def main():
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
+    seed_everything()
     training_function(args)
 
 

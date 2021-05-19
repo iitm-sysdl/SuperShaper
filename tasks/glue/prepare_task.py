@@ -3,7 +3,7 @@ import datasets
 import random
 import pandas as pd
 from transformers import AutoTokenizer
-from custom_bert import BertForSequenceClassification
+from custom_layers.custom_bert import BertForSequenceClassification
 import numpy as np
 
 GLUE_TASKS = [
