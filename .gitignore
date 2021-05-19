@@ -6,6 +6,7 @@ checkpoints/
 wandb/
 # C extensions
 *.so
+.vscode/
 
 # Distribution / packaging
 .Python

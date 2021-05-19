@@ -638,7 +638,7 @@ def training_function(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Simple example of training script.")
+    parser = argparse.ArgumentParser(description="Script to train efficient HAT models")
     parser.add_argument(
         "--task", type=str, default="mrpc", help="The Glue task you want to run"
     )
