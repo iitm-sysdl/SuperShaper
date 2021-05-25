@@ -564,11 +564,11 @@ def training_function(args):
 
         # we will train 25 random subtransformers from scratch
         num_subtransformers_for_training_from_scratch = 25
-        best_val_accuracy = 0
-        metric_not_improved_count = 0
         metric_to_track = "subtransformer_accuracy"
 
         for idx in range(num_subtransformers_for_training_from_scratch):
+            best_val_accuracy = 0
+            metric_not_improved_count = 0
             subtransformer_output_dir = os.path.join(
                 args.output_dir, f"subtransformer_{str(idx)}"
             )
@@ -578,7 +578,30 @@ def training_function(args):
                 randomize=True,
                 rand_seed=idx * 1000,
             )
+
+            model = BertForSequenceClassification.from_pretrained(args.model_name_or_path)
+            
+            model = model.to(accelerator.device)
+            super_config.num_hidden_layers = super_config.sample_num_hidden_layers
             model.set_sample_config(super_config)
+
+            model = model.get_active_subnet(super_config)
+
+
+
+            optimizer = AdamW(
+            params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
+            )
+
+            lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=100,
+            num_training_steps=len(train_dataloader)
+            * num_epochs,
+            )
+
+            model, optimizer = accelerator.prepare(model, optimizer)
+
             accelerator.print(
                 "Training subtransformer from scratch with config: ",
                 print_subtransformer_config(super_config, accelerator),
@@ -615,7 +638,7 @@ def training_function(args):
 
                 sub_dict = {}
                 for key in eval_metric:
-                    sub_key = "subtransformer_" + key
+                    sub_key = "subtransformer_" + str(idx) + "_" + key
                     sub_dict[sub_key] = eval_metric[key]
 
                 accelerator.print(sub_dict)
@@ -735,6 +758,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    args.output_dir = args.output_dir + '/' + args.task
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
