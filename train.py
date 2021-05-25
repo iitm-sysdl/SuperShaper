@@ -563,10 +563,10 @@ def training_function(args):
         ## train subtransformers from scratch
 
         # we will train 25 random subtransformers from scratch
-        num_subtransformers_for_training_from_scratch = 25
-        metric_to_track = "subtransformer_accuracy"
+        num_subtransformers_for_training_from_scratch = 10
 
         for idx in range(num_subtransformers_for_training_from_scratch):
+            metric_to_track = "subtransformer_"+str(idx)+"_accuracy"
             best_val_accuracy = 0
             metric_not_improved_count = 0
             subtransformer_output_dir = os.path.join(
