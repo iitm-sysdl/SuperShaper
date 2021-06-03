@@ -25,22 +25,29 @@ from pprint import pprint
 import pandas as pd
 
 
+def get_gpu_temperature():
+    return float(
+        os.popen("nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader")
+        .read()
+        .strip()
+    )
+
+
 class Tester:
     # def init(self, ckpt_path, task):
     #     pass
     def __init__(
-            self,
-            ckpt_path,
-            datasize=2000,
-            task = "sst2",
-            model_name_or_path = "bert-base-uncased",
-            use_pretrained_supertransformer = False,
-            max_seq_length = 128,
-            per_gpu_eval_batch_size = 64,
-            fp16 = True,
-            cpu = False,
-            seed = 42,
-        ):
+        self,
+        ckpt_path,
+        task="sst2",
+        model_name_or_path="bert-base-uncased",
+        use_pretrained_supertransformer=False,
+        max_seq_length=128,
+        per_gpu_eval_batch_size=64,
+        fp16=True,
+        cpu=False,
+        seed=42,
+    ):
 
         # Initialize accelerator
         accelerator = Accelerator(fp16=fp16, cpu=cpu)
@@ -65,7 +72,12 @@ class Tester:
             ), f"HF model {model_checkpoint} is not supported, pls use bert-base"
 
         glue_task = GlueTask(
-            task, model_checkpoint, config, max_seq_length, accelerator, initialize_pretrained_model=use_pretained
+            task,
+            model_checkpoint,
+            config,
+            max_seq_length,
+            accelerator,
+            initialize_pretrained_model=use_pretained,
         )
 
         def collate_fn(examples):
@@ -77,7 +89,9 @@ class Tester:
                     max_length=max_seq_length,
                     return_tensors="pt",
                 )
-            return glue_task.tokenizer.pad(examples, padding="longest", return_tensors="pt")
+            return glue_task.tokenizer.pad(
+                examples, padding="longest", return_tensors="pt"
+            )
 
         # Instantiate dataloader
         eval_dataloader = DataLoader(
@@ -90,6 +104,9 @@ class Tester:
         model = glue_task.model
         metric = glue_task.metric
         model = model.to(accelerator.device)
+        # load the saved checkpoint
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.load_state_dict(torch.load(ckpt_path))
 
         self.model = model
         self.accelerator = accelerator
@@ -97,13 +114,8 @@ class Tester:
         self.metric = metric
         self.task = task
 
-        # The dataset to be stored:
-        self.num_sub = datasize
-        self.dataset = []
-
         # FINISH USING ckpt:
         self.ckpt_path = ckpt_path
-
 
     # Returns the search space from which
     # sub-transformers are sampled:
@@ -115,7 +127,7 @@ class Tester:
             "sample_num_hidden_layers": [6, 8, 10, 12],
         }
         return choices
-    
+
     # Returns the Bert-Supertransformer Configuration:
     def get_supertransformer_config(self):
         config = AutoConfig.from_pretrained("bert-base-uncased")
@@ -160,7 +172,10 @@ class Tester:
                     choice = random.choice(choice_list)
                     config_dict[key].append(choice)
 
-                if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+                if (
+                    config.sample_hidden_size
+                    % config_dict["sample_num_attention_heads"][i]
+                ):
                     for key in config_dict.keys():
                         config_dict[key] = config_dict[key][:-1]
                     continue
@@ -204,15 +219,20 @@ class Tester:
         # End measuring the Latency:
         end_time.record()
         torch.cuda.synchronize()
-        latency = start_time.elapsed_time(end_time)/1000
+        latency = start_time.elapsed_time(end_time) / 1000
 
         return eval_metric, latency
 
     def inference(self, config):
         eval_metric, latency = self.get_latency_eval_subtransformer(
-            self.model, config, self.eval_dataloader, self.accelerator, self.metric, task=self.task
+            self.model,
+            config,
+            self.eval_dataloader,
+            self.accelerator,
+            self.metric,
+            task=self.task,
         )
-        return eval_metric['accuracy']
+        return eval_metric["accuracy"]
 
 
 class Evosearch:
@@ -225,14 +245,14 @@ class Evosearch:
         crossover_size,
         search_space,
         latency_cap,
-        ckpt_path, # Trained supertransformer model
+        ckpt_path,  # Trained supertransformer model
         task,
         mutation_prob,
         evo_iter,
         # Figure this out as we go
     ):
         self.super_num_layers = super_num_layers
-        self.gene_len = 2+2*self.super_num_layers
+        self.gene_len = 2 + 2 * self.super_num_layers
         self.population_size = population_size
         self.parent_size = parent_size
         self.mutation_size = mutation_size
@@ -241,64 +261,62 @@ class Evosearch:
         self.evo_iter = evo_iter
 
         self.gene_choice = []
-        self.gene_choice.append(search_space['encoder_embed_dim'])
-        self.gene_choice.append(search_space['encoder_layer_num'])
+        self.gene_choice.append(search_space["encoder_embed_dim"])
+        self.gene_choice.append(search_space["encoder_layer_num"])
         for _ in range(self.super_num_layers):
-            self.gene_choice.append(search_space['encoder_ffn_embed_dim'])
+            self.gene_choice.append(search_space["encoder_ffn_embed_dim"])
         for _ in range(self.super_num_layers):
-            self.gene_choice.append(search_space['encoder_self_attention_heads'])
+            self.gene_choice.append(search_space["encoder_self_attention_heads"])
 
         self.latency_cap = latency_cap
         self.predictor = LatencyPredictor()
         self.predictor.load_ckpt()
 
-        self.tester = Tester(ckpt_path=ckpt_path)
-        
-
+        self.tester = Tester(ckpt_path=ckpt_path, task=task)
 
     def config2gene(self, config):
         gene = []
 
-        gene.append(config['encoder']['encoder_embed_dim'])
-        gene.append(config['encoder']['encoder_layer_num'])
+        gene.append(config["encoder"]["encoder_embed_dim"])
+        gene.append(config["encoder"]["encoder_layer_num"])
 
         for i in range(self.super_num_layers):
-            if i < config['encoder']['encoder_layer_num']:
-                gene.append(config['encoder']['encoder_ffn_embed_dim'][i])
+            if i < config["encoder"]["encoder_layer_num"]:
+                gene.append(config["encoder"]["encoder_ffn_embed_dim"][i])
             else:
                 gene.append(0)
 
         for i in range(self.super_num_layers):
-            if i < config['encoder']['encoder_layer_num']:
-                gene.append(config['encoder']['encoder_self_attention_heads'][i])
+            if i < config["encoder"]["encoder_layer_num"]:
+                gene.append(config["encoder"]["encoder_self_attention_heads"][i])
             else:
                 gene.append(0)
-        
+
         return gene
-    
+
     def gene2config(self, gene):
         config = {
-            'encoder': {
-                'encoder_embed_dim': None,
-                'encoder_layer_num': None,
-                'encoder_ffn_embed_dim': [],
-                'encoder_self_attention_heads': [],
+            "encoder": {
+                "encoder_embed_dim": None,
+                "encoder_layer_num": None,
+                "encoder_ffn_embed_dim": [],
+                "encoder_self_attention_heads": [],
             }
         }
         index = 0
 
-        config['encoder']['encoder_embed_dim'] = gene[index]
+        config["encoder"]["encoder_embed_dim"] = gene[index]
         index += 1
 
-        config['encoder']['encoder_layer_num'] = gene[index]
+        config["encoder"]["encoder_layer_num"] = gene[index]
         index += 1
 
-        for i in range(config['encoder']['encoder_layer_num']):
-            config['encoder']['encoder_ffn_embed_dim'].append(gene[index+i])            
+        for i in range(config["encoder"]["encoder_layer_num"]):
+            config["encoder"]["encoder_ffn_embed_dim"].append(gene[index + i])
         index += self.super_num_layers
 
-        for i in range(config['encoder']['encoder_layer_num']):
-            config['encoder']['encoder_self_attention_heads'].append(gene[index+i])
+        for i in range(config["encoder"]["encoder_layer_num"]):
+            config["encoder"]["encoder_self_attention_heads"].append(gene[index + i])
         index += self.super_num_layers
 
         return config
@@ -311,13 +329,15 @@ class Evosearch:
             candidate_gene = []
             for i in range(self.gene_len):
                 candidate_gene.append(random.choice(self.gene_choice[i]))
-            if(self.satisfy_constraints(candidate_gene)):
+            if self.satisfy_constraints(candidate_gene):
                 population.append(candidate_gene)
                 cnt += 1
             total += 1
-        print(f'Only {cnt} out of {total} total generated samples were under latency cap.')
+        print(
+            f"Only {cnt} out of {total} total generated samples were under latency cap."
+        )
         return population
-    
+
     def satisfy_constraints(self, gene):
         latency_pred = self.predictor.predict_lat(self.gene2config(gene))
         if latency_pred > self.latency_cap:
@@ -330,25 +350,28 @@ class Evosearch:
         #     "sample_intermediate_size": [512, 1024, 2048, 3072],
         #     "sample_num_hidden_layers": [8, 10, 12],
         # }
+
     def convert_to_right_config(self, config):
         final_config_dict = {
-            "sample_hidden_size": config['encoder']['encoder_embed_dim'],
-            "sample_num_attention_heads": config['encoder']['encoder_self_attention_heads'],
-            "sample_intermediate_size": config['encoder']['encoder_ffn_embed_dim'],
-            "sample_num_hidden_layers": config['encoder']['encoder_layer_num'],
+            "sample_hidden_size": config["encoder"]["encoder_embed_dim"],
+            "sample_num_attention_heads": config["encoder"][
+                "encoder_self_attention_heads"
+            ],
+            "sample_intermediate_size": config["encoder"]["encoder_ffn_embed_dim"],
+            "sample_num_hidden_layers": config["encoder"]["encoder_layer_num"],
         }
         final_config = self.tester.get_supertransformer_config()
         for key in final_config_dict.keys():
             setattr(final_config, key, final_config_dict[key])
         return final_config
-    
+
     def get_scores(self, genes):
         accuracies = []
         for gene in genes:
             config = self.convert_to_right_config(self.gene2config(gene))
             accuracies.append(self.tester.inference(config))
         return accuracies
-    
+
     def crossover(self, genes):
         crossovered_gene = []
         for i in range(self.gene_len):
@@ -358,7 +381,7 @@ class Evosearch:
                 crossovered_gene.append(genes[1][i])
 
         return crossovered_gene
-    
+
     def mutate(self, gene):
         mutated_gene = []
         for i in range(self.gene_len):
@@ -379,11 +402,13 @@ class Evosearch:
             popu_scores = self.get_scores(popu)
             print(f"| Iteration {i}, Highest Accuracy: {max(popu_scores)}")
 
-            sorted_ind = np.array(popu_scores).argsort()[::-1][:self.parent_size]
+            sorted_ind = np.array(popu_scores).argsort()[::-1][: self.parent_size]
 
             self.best_config = self.gene2config(popu[sorted_ind[0]])
             print(f"| Config for highest accuracy model: {self.best_config}")
-            print(f"| Predicted latency for highest accuracy model: {self.predictor.predict_lat(self.gene2config(popu[sorted_ind[0]]))}")
+            print(
+                f"| Predicted latency for highest accuracy model: {self.predictor.predict_lat(self.gene2config(popu[sorted_ind[0]]))}"
+            )
 
             parents_popu = [popu[m] for m in sorted_ind]
 
@@ -413,25 +438,24 @@ class Evosearch:
         return self.best_config
 
 
-
-
-                
-
-
-if __name__=='__main__':
+if __name__ == "__main__":
     search_space_example = {
-        'encoder_embed_dim': [360, 480, 540, 600, 768],
-        'encoder_layer_num': [2, 4, 6, 8, 10, 12],
-        'encoder_ffn_embed_dim': [512, 1024, 2048, 3072],
-        'encoder_self_attention_heads': [6, 8, 10, 12],
+        "encoder_embed_dim": [360, 480, 540, 600, 768],
+        "encoder_layer_num": [2, 4, 6, 8, 10, 12],
+        "encoder_ffn_embed_dim": [512, 1024, 2048, 3072],
+        "encoder_self_attention_heads": [6, 8, 10, 12],
     }
-    runner = Evosearch(12, 6, 2, 2, 2, search_space_example, 6.2, 'blah', 'sst2', 0.5, 3)
+    runner = Evosearch(
+        12,
+        6,
+        2,
+        2,
+        2,
+        search_space_example,
+        6.2,
+        "checkpoints/mrpc/pytorch_model.bin",
+        "mrpc",
+        0.5,
+        3,
+    )
     best_config = runner.run_evo_search()
-
-    
-    
-
-
-
-
-
