@@ -618,6 +618,9 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
+        config = get_supertransformer_config()
+        model.set_sample_config(config)
+
         model.eval()
         losses = []
         for step, batch in enumerate(eval_dataloader):
