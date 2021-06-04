@@ -324,7 +324,7 @@ def main():
                 split=f"train[{args.validation_split_percentage}%:]",
             )
         # limiting dataset for testing
-        raw_datasets["train"] = raw_datasets["train"].select(range(500))
+        # raw_datasets["train"] = raw_datasets["train"].select(range(500))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -532,6 +532,12 @@ def main():
         model, optimizer, train_dataloader, eval_dataloader
     )
 
+    if (
+        accelerator.distributed_type == DistributedType.MULTI_GPU
+        or accelerator.distributed_type == DistributedType.TPU
+    ):
+        # forward missing getattr and state_dict/load_state_dict to orig model
+        model = ModuleProxyWrapper(model)
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
 
