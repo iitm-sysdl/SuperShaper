@@ -5,13 +5,13 @@
 
 ## Usage
 
-We use [accelerate](https://huggingface.co/docs/accelerate/index.html) to train the transformers with no changes on different setups (multi-gpu, TPU, etc)
+We use [accelerate](https://huggingface.co/docs/accelerate/index.html) to train the transformers with no code changes on different setups (multi-gpu, TPU, etc)
 
 ### Configure your training setup
 ```bash
 accelerate config                                       # answer questions wrt your training setup (multi-gpu, tpu, fp16 etc)
 
-accelerate config  --config_file <path to config>       # to create custom training setup for differnet tasks
+accelerate config  --config_file <path to config>       # to create custom training setup for different tasks
 ```
 
 ### Run the code with accelerate launch
