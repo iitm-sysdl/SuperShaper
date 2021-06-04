@@ -441,16 +441,19 @@ def training_function(args):
                 metric_not_improved_count = 0
                 best_val_accuracy = super_dict[metric_to_track]
                 # unwrap and save best model so far
-                accelerator.unwrap_model(model).save_pretrained(args.output_dir)
-                accelerator.save(
-                    {
-                        "epoch": epoch + 1,
-                        "optimizer": optimizer.state_dict(),
-                        "scheduler": lr_scheduler.state_dict(),
-                    },
-                    optim_scheduler_states_path,
-                )
-                glue_task.tokenizer.save_pretrained(args.output_dir)
+                accelerator.wait_for_everyone()
+                
+                unwrapped_model = accelerator.unwrap_model(model)
+                #accelerator.unwrap_model(model).save_pretrained(args.output_dir)
+                accelerator.save(unwrapped_model.state_dict(), args.output_dir+'/pytorch_model.bin')
+                #accelerator.save(
+                #    {
+                #        "epoch": epoch + 1,
+                #        "optimizer": optimizer.state_dict(),
+                #        "scheduler": lr_scheduler.state_dict(),
+                #    },
+                #    optim_scheduler_states_path,
+                #)
             else:
                 metric_not_improved_count += 1
                 if metric_not_improved_count >= args.early_stopping_patience:
@@ -459,7 +462,6 @@ def training_function(args):
         accelerator.print("Evaluating subtransformer training")
         accelerator.print()
 
-        metric_to_track = "accuracy"
 
         ## for finetuning, we load the best model, optimizer and scheduler
         # states. Naively loading them is causing OOM issue. Hence we first
@@ -473,34 +475,53 @@ def training_function(args):
         # used around 3921 MB on gpu. After wiping mem, we are still left with aronud 1.6 GB
         # Have to check if there is a leak
         # TODO: revisit this and modify utils.wipe_memory
-        wipe_memory(optimizer)
 
-        # we will finetune 3 random subtransformers
-        num_subtransformers_for_finetuning = 3
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
 
-        # initialize the model to the best pretrained checkpoint
-        model = BertForSequenceClassification.from_pretrained(args.output_dir)
+        #wipe_memory(optimizer)
 
-        # it is important to send the model to device before sampling.
-        # Else we would get an error that weights are in cpu (not fullly sure why)
-        model = model.to(accelerator.device)
+        ## we will finetune 3 random subtransformers
+        num_subtransformers_for_finetuning = 10
+        fine_tuning_epochs = 10
 
-        optimizer = AdamW(
-            params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
-        )
-        lr_scheduler = get_linear_schedule_with_warmup(
-            optimizer=optimizer,
-            num_warmup_steps=100,
-            num_training_steps=len(train_dataloader)
-            * num_subtransformers_for_finetuning,
-        )
-        model, optimizer = accelerator.prepare(model, optimizer)
+        ## initialize the model to the best pretrained checkpoint
+        #model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+        #
+        ##model = accelerator.unwrap_model(model)
+        #model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
+        #
+        ## it is important to send the model to device before sampling.
+        ## Else we would get an error that weights are in cpu (not fullly sure why)
+        #model = model.to(accelerator.device)
 
-        for _ in range(num_subtransformers_for_finetuning):
+        #optimizer = AdamW(
+        #    params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
+        #)
+
+
+        #lr_scheduler = get_linear_schedule_with_warmup(
+        #    optimizer=optimizer,
+        #    num_warmup_steps=100,
+        #    num_training_steps=len(train_dataloader)
+        #    * fine_tuning_epochs,
+        #)
+        #model, optimizer = accelerator.prepare(model, optimizer)
+
+        #model = ModuleProxyWrapper(model)
+        
+        for idx in range(num_subtransformers_for_finetuning):
+            
+            metric_to_track = "finetuned_subtransformer_" + str(idx) + "_accuracy"
+
+            subtransformer_output_dir = os.path.join(
+                args.output_dir, f"finetune_subtransformer_{str(idx)}"
+            )
+
 
             best_val_accuracy = 0
             # sample one random subtransformer
-            random_subtransformer_seed = random.randint(0, 25) * 1000
+            random_subtransformer_seed = idx * 1000
 
             ## initialize subtransformer
             super_config = sample_subtransformer(
@@ -524,7 +545,7 @@ def training_function(args):
             optimizer.load_state_dict(optim_scheduler_states["optimizer"])
             lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
 
-            for epoch in range(num_epochs):
+            for epoch in range(fine_tuning_epochs):
 
                 train_transformer_one_epoch(
                     args,
@@ -550,11 +571,33 @@ def training_function(args):
                 )
 
                 accelerator.print(f"Epoch {epoch + 1}:", end=" ")
+
                 accelerator.print(eval_metric)
-                # early stopping
+                
+                if accelerator.is_main_process:
+                    wandb.log({"finetuning_epochs": epoch})
+
+                sub_dict = {}
+                for key in eval_metric:
+                    sub_key = "finetuned_subtransformer_" + str(idx) + "_" + key
+                    sub_dict[sub_key] = eval_metric[key]
+
+                accelerator.print(sub_dict)
+
+                if accelerator.is_main_process:
+                    wandb.log(sub_dict)
+
+               # early stopping
                 if eval_metric[metric_to_track] > best_val_accuracy:
                     metric_not_improved_count = 0
                     best_val_accuracy = eval_metric[metric_to_track]
+                    
+                    accelerator.wait_for_everyone()
+                    unwrapped_model = accelerator.unwrap_model(model)
+                    accelerator.save(unwrapped_model.state_dict(), subtransformer_output_dir)
+                    #accelerator.unwrap_model(model).save_pretrained(
+                    #    subtransformer_output_dir
+                    #)
                 else:
                     metric_not_improved_count += 1
                     if metric_not_improved_count >= args.early_stopping_patience:
@@ -563,12 +606,12 @@ def training_function(args):
         ## train subtransformers from scratch
 
         # we will train 25 random subtransformers from scratch
-        num_subtransformers_for_training_from_scratch = 25
-        best_val_accuracy = 0
-        metric_not_improved_count = 0
-        metric_to_track = "subtransformer_accuracy"
+        num_subtransformers_for_training_from_scratch = 10
 
         for idx in range(num_subtransformers_for_training_from_scratch):
+            metric_to_track = "subtransformer_"+str(idx)+"_accuracy"
+            best_val_accuracy = 0
+            metric_not_improved_count = 0
             subtransformer_output_dir = os.path.join(
                 args.output_dir, f"subtransformer_{str(idx)}"
             )
@@ -578,7 +621,30 @@ def training_function(args):
                 randomize=True,
                 rand_seed=idx * 1000,
             )
+
+            model = BertForSequenceClassification.from_pretrained(args.model_name_or_path)
+            
+            model = model.to(accelerator.device)
+            super_config.num_hidden_layers = super_config.sample_num_hidden_layers
             model.set_sample_config(super_config)
+
+            model = model.get_active_subnet(super_config)
+
+
+
+            optimizer = AdamW(
+            params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
+            )
+
+            lr_scheduler = get_linear_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=100,
+            num_training_steps=len(train_dataloader)
+            * num_epochs,
+            )
+
+            model, optimizer = accelerator.prepare(model, optimizer)
+
             accelerator.print(
                 "Training subtransformer from scratch with config: ",
                 print_subtransformer_config(super_config, accelerator),
@@ -615,7 +681,7 @@ def training_function(args):
 
                 sub_dict = {}
                 for key in eval_metric:
-                    sub_key = "subtransformer_" + key
+                    sub_key = "subtransformer_" + str(idx) + "_" + key
                     sub_dict[sub_key] = eval_metric[key]
 
                 accelerator.print(sub_dict)
@@ -735,6 +801,8 @@ def main():
     )
 
     args = parser.parse_args()
+
+    args.output_dir = args.output_dir + '/' + args.task
     # if the mentioned output_dir does not exist, create it
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
