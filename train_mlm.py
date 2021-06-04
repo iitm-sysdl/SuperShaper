@@ -38,6 +38,7 @@ from transformers import (
     set_seed,
 )
 
+from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
 from engine import sample_subtransformer, get_supertransformer_config
