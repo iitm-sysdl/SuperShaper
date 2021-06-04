@@ -276,8 +276,12 @@ def parse_args():
 def main():
     args = parse_args()
 
+    param = DistributedDataParallelKwargs(
+        find_unused_parameters=True, check_reduction=False
+    )
+
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
-    accelerator = Accelerator(fp16=args.fp16)
+    accelerator = Accelerator(fp16=args.fp16, kwargs_handlers=[param])
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
