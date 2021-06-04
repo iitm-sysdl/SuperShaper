@@ -28,7 +28,6 @@ from torch.utils.data.dataloader import DataLoader
 from tqdm.auto import tqdm
 
 import transformers
-from accelerate import Accelerator
 from transformers import (
     CONFIG_MAPPING,
     AdamW,
@@ -38,6 +37,8 @@ from transformers import (
     get_scheduler,
     set_seed,
 )
+
+from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
 from engine import sample_subtransformer, get_supertransformer_config
 from custom_layers import custom_bert
