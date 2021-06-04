@@ -184,7 +184,9 @@ def train_transformer_one_epoch(
 
     model.train()
     seed = -1
-    for step, batch in enumerate(tqdm(train_dataloader)):
+    for step, batch in enumerate(
+        tqdm(train_dataloader, disable=not accelerator.is_local_main_process),
+    ):
         if not train_subtransformer:
             # if we are training a supertransformer, then we need to change the
             # seed in each step
@@ -319,7 +321,6 @@ def training_function(args):
 
     # We could avoid this line since the accelerator is set with `device_placement=True` (default value).
     # Note that if you are placing tensors on devices manually, this line absolutely needs to be before the optimizer
-    # creation otherwise training will not work on TPU (`accelerate` will kindly throw an error to make us aware of that).
     model = model.to(accelerator.device)
 
     # Instantiate optimizer
@@ -336,7 +337,9 @@ def training_function(args):
         or accelerator.distributed_type == DistributedType.TPU
     ):
         # forward missing getattr and state_dict/load_state_dict to orig model
-        model = ModuleProxyWrapper(model)
+        model = ModuleProxyWrapper(
+            model
+        )  # creation otherwise training will not work on TPU (`accelerate` will kindly throw an error to make us aware of that).
 
     # Instantiate learning rate scheduler after preparing the training dataloader as the prepare method
     # may change its length.
@@ -564,11 +567,11 @@ def training_function(args):
 
         # we will train 25 random subtransformers from scratch
         num_subtransformers_for_training_from_scratch = 25
-        best_val_accuracy = 0
-        metric_not_improved_count = 0
         metric_to_track = "subtransformer_accuracy"
 
         for idx in range(num_subtransformers_for_training_from_scratch):
+            best_val_accuracy = 0
+            metric_not_improved_count = 0
             subtransformer_output_dir = os.path.join(
                 args.output_dir, f"subtransformer_{str(idx)}"
             )

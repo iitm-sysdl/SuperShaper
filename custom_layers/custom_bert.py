@@ -1010,6 +1010,12 @@ class BertPredictionHeadTransform(nn.Module):
             self.transform_act_fn = config.hidden_act
         self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
 
+    def set_sample_config(self, config):
+        self.dense.set_sample_config(
+            config.sample_hidden_size, config.sample_hidden_size
+        )
+        self.LayerNorm.set_sample_config(config.sample_hidden_size)
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
@@ -1031,6 +1037,10 @@ class BertLMPredictionHead(nn.Module):
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
 
+    def set_sample_config(self, config):
+        self.transform.set_sample_config(config)
+        self.decoder.set_sample_config(config.sample_hidden_size, config.vocab_size)
+
     def forward(self, hidden_states):
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states)
@@ -1041,6 +1051,9 @@ class BertOnlyMLMHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.predictions = BertLMPredictionHead(config)
+
+    def set_sample_config(self, config):
+        self.predictions.set_sample_config(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
@@ -1254,7 +1267,8 @@ class BertModel(BertPreTrainedModel):
     def set_sample_config(self, config):
         self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
-        self.pooler.set_sample_config(config)
+        if self.pooler is not None:
+            self.pooler.set_sample_config(config)
 
     def get_active_subnet(self, config):
         subnet = BertModel(config)
@@ -1722,6 +1736,10 @@ class BertForMaskedLM(BertPreTrainedModel):
         self.cls = BertOnlyMLMHead(config)
 
         self.init_weights()
+
+    def set_sample_config(self, config):
+        self.bert.set_sample_config(config)
+        self.cls.set_sample_config(config)
 
     def get_output_embeddings(self):
         return self.cls.predictions.decoder
