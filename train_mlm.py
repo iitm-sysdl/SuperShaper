@@ -23,7 +23,7 @@ import random
 
 import datasets
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_metric
 from torch.utils.data.dataloader import DataLoader
 from tqdm.auto import tqdm
 
@@ -45,6 +45,82 @@ from engine import sample_subtransformer, get_supertransformer_config
 from custom_layers import custom_bert
 
 logger = logging.getLogger(__name__)
+
+
+def validate_subtransformer(
+    model,
+    eval_dataloader,
+    accelerator,
+    len_eval_dataset,
+    per_device_eval_batch_size,
+    pad_to_max_length,
+):
+    metric = load_metric("custom_metrics/mlm_accuracy.py")
+
+    def get_labels(predictions, references):
+        # Transform predictions and references tensos to numpy arrays
+        if accelerator.device.type == "cpu":
+            y_pred = predictions.detach().clone().numpy()
+            y_true = references.detach().clone().numpy()
+        else:
+            y_pred = predictions.detach().cpu().clone().numpy()
+            y_true = references.detach().cpu().clone().numpy()
+
+        # Remove ignored index (special tokens)
+        true_predictions = [
+            [str(p) for (p, l) in zip(pred, gold_label) if l != -100]
+            for pred, gold_label in zip(y_pred, y_true)
+        ]
+        true_labels = [
+            [str(l) for (p, l) in zip(pred, gold_label) if l != -100]
+            for pred, gold_label in zip(y_pred, y_true)
+        ]
+
+        return true_predictions, true_labels
+
+    losses = []
+    model.eval()
+    for step, batch in enumerate(eval_dataloader):
+        # We could avoid this line since we set the accelerator with `device_placement=True`.
+        batch.to(accelerator.device)
+        with torch.no_grad():
+            outputs = model(**batch)
+
+        loss = outputs.loss
+        losses.append(accelerator.gather(loss.repeat(per_device_eval_batch_size)))
+
+        predictions = outputs.logits.argmax(dim=-1)
+        labels = batch["labels"]
+        if (
+            not pad_to_max_length
+        ):  # necessary to pad predictions and labels for being gathered
+            predictions = accelerator.pad_across_processes(
+                predictions, dim=1, pad_index=-100
+            )
+            labels = accelerator.pad_across_processes(labels, dim=1, pad_index=-100)
+        predictions_gathered = accelerator.gather(predictions)
+        labels_gathered = accelerator.gather(labels)
+
+        preds, refs = get_labels(predictions_gathered, labels_gathered)
+        metric.add_batch(
+            predictions=preds,
+            references=refs,
+        )  # predictions and preferences are expected to be a nested list of labels, not label_ids
+
+    losses = torch.cat(losses)
+    losses = losses[:len_eval_dataset]
+    eval_metric = metric.compute()
+
+    try:
+        val_loss = torch.mean(losses)
+        perplexity = math.exp(torch.mean(losses))
+    except OverflowError:
+        perplexity = float("inf")
+
+    eval_metric["val_loss"] = val_loss
+    eval_metric["perplexity"] = perplexity
+
+    return eval_metric
 
 
 def parse_args():
@@ -296,8 +372,8 @@ def main():
         logging.INFO if accelerator.is_local_main_process else logging.ERROR
     )
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
-        transformers.utils.logging.set_verbosity(50)
+        datasets.utils.logging.set_verbosity_error()
+        transformers.utils.logging.set_verbosity_error()
     else:
         datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
@@ -330,7 +406,7 @@ def main():
                 split=f"train[{args.validation_split_percentage}%:]",
             )
         # limiting dataset for testing
-        # raw_datasets["train"] = raw_datasets["train"].select(range(500))
+        raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -585,15 +661,15 @@ def main():
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
     # Only show the progress bar once on each machine.
-    # progress_bar = tqdm(
-    #     range(args.max_train_steps), disable=not accelerator.is_local_main_process
-    # )
+    progress_bar = tqdm(
+        range(args.max_train_steps), disable=not accelerator.is_local_main_process
+    )
     completed_steps = 0
 
-    for epoch in tqdm(range(args.num_train_epochs)):
+    for epoch in range(args.num_train_epochs):
         seed = -1
         model.train()
-        for step, batch in enumerate(tqdm(train_dataloader)):
+        for step, batch in enumerate(train_dataloader):
 
             seed += 1
             super_config = sample_subtransformer(
@@ -612,7 +688,7 @@ def main():
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad()
-                # progress_bar.update(1)
+                progress_bar.update(1)
                 completed_steps += 1
 
             if completed_steps >= args.max_train_steps:
@@ -621,25 +697,22 @@ def main():
         config = get_supertransformer_config()
         model.set_sample_config(config)
 
-        model.eval()
-        losses = []
-        for step, batch in enumerate(eval_dataloader):
-            with torch.no_grad():
-                outputs = model(**batch)
-
-            loss = outputs.loss
-            losses.append(
-                accelerator.gather(loss.repeat(args.per_device_eval_batch_size))
-            )
-
-        losses = torch.cat(losses)
-        losses = losses[: len(eval_dataset)]
-        try:
-            perplexity = math.exp(torch.mean(losses))
-        except OverflowError:
-            perplexity = float("inf")
-
-        logger.info(f"epoch {epoch}: perplexity: {perplexity}")
+        eval_metric = validate_subtransformer(
+            model,
+            eval_dataloader,
+            accelerator,
+            len(eval_dataset),
+            args.per_device_eval_batch_size,
+            args.pad_to_max_length,
+        )
+        val_accuracy, val_loss, perplexity = (
+            eval_metric["accuracy"] * 100,
+            eval_metric["val_loss"],
+            eval_metric["perplexity"],
+        )
+        logger.info(
+            f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
+        )
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
