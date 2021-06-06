@@ -252,7 +252,7 @@ def parse_args():
         "--output_dir", type=str, default=None, help="Where to store the final model."
     )
     parser.add_argument(
-        "--seed", type=int, default=None, help="A seed for reproducible training."
+        "--seed", type=int, default=42, help="A seed for reproducible training."
     )
     parser.add_argument(
         "--model_type",
