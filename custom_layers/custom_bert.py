@@ -1021,7 +1021,7 @@ class BertEncoder(nn.Module):
 
             if i < self.sample_num_hidden_layers:
                 layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
-                layer_config.sample_num_attentiont s_heads = (
+                layer_config.sample_num_attention_heads = (
                     sample_num_attention_heads_list[i]
                 )
                 layer.set_sample_config(layer_config, is_identity_layer=False)

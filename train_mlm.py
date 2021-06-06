@@ -48,6 +48,10 @@ from custom_layers import custom_bert
 
 logger = logging.getLogger(__name__)
 
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
 
 def validate_subtransformer(
     model,
@@ -701,6 +705,13 @@ def main():
             )
             model.set_sample_config(super_config)
 
+            #super_config.max_seq_length = config.max_seq_length
+            #super_config.mixing = config.mixing
+            #super_config.num_hidden_layers = super_config.sample_num_hidden_layers
+            #subnet = model.get_active_subnet(super_config)
+
+            #logger.info(subnet)
+            
             outputs = model(**batch)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
