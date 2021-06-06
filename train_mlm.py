@@ -46,15 +46,9 @@ from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedTy
 from engine import sample_subtransformer, get_supertransformer_config
 from custom_layers import custom_bert
 
+from utils import count_parameters, check_path, get_current_datetime
+
 logger = logging.getLogger(__name__)
-
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def check_path(path, error_message_template="Specified path - {} does not exist"):
-    assert os.path.exists(path), error_message_template.format(path)
 
 
 def validate_subtransformer(
@@ -131,10 +125,6 @@ def validate_subtransformer(
     eval_metric["perplexity"] = perplexity
 
     return eval_metric
-
-
-def get_current_datetime():
-    return datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
 
 
 def parse_args():
@@ -518,10 +508,6 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
 
-    if args.resume_from_checkpoint_dir is not None:
-        model.from_pretrained(args.resume_from_checkpoint_dir)
-        optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
-
     # Preprocessing the datasets.
     # First we tokenize all the texts.
     column_names = raw_datasets["train"].column_names
@@ -671,12 +657,22 @@ def main():
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
     if args.resume_from_checkpoint_dir is not None:
+        logger.info("Loading model weights from checkpoint ..")
+        # model.from_pretrained(args.resume_from_checkpoint_dir)
+
+        optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
+
+        logger.info("Loading optimizer states from checkpoint dir ..")
+        accelerator.scaler.load_state_dict(optim_scheduler_states["scaler"])
         optimizer.load_state_dict(optim_scheduler_states["optimizer"])
 
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
+    if args.resume_from_checkpoint_dir is not None:
+        unwrapped_model = accelerator.unwrap_model(model)
+        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
 
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
@@ -705,7 +701,9 @@ def main():
         num_warmup_steps=args.num_warmup_steps,
         num_training_steps=args.max_train_steps,
     )
+
     if args.resume_from_checkpoint_dir is not None:
+        logger.info("Loading scheduler and scalar states from checkpoint dir ..")
         completed_epochs = optim_scheduler_states["epoch"]
         completed_steps = optim_scheduler_states["steps"]
         lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
@@ -714,7 +712,7 @@ def main():
 
         assert (completed_epochs < args.num_train_epochs) and (
             completed_steps < args.max_train_steps
-        ), "model is already trained to specified number of epochs / max steps"
+        ), "model is already trained to specified number of epochs or max steps"
 
     else:
         completed_epochs = 0
@@ -748,11 +746,13 @@ def main():
 
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
+        seed = -1
         for step, batch in enumerate(train_dataloader):
+            seed += 1
             super_config = sample_subtransformer(
                 limit_subtransformer_choices=False,
                 randomize=True,
-                rand_seed=completed_steps,
+                rand_seed=seed,
             )
             model.set_sample_config(super_config)
 
@@ -811,6 +811,7 @@ def main():
                 "steps": completed_steps,
                 "optimizer": optimizer.state_dict(),
                 "scheduler": lr_scheduler.state_dict(),
+                "scaler": accelerator.scaler.state_dict(),
             },
             args.optim_scheduler_states_path,
         )
