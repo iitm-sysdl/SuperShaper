@@ -457,6 +457,11 @@ def main():
     #     logger.info("Training new model from scratch")
     #     model = AutoModelForMaskedLM.from_config(config)
 
+    # add max_seq_len or model_max_len to config
+    if args.max_seq_length:
+        config.max_seq_length = args.max_seq_length
+    else:
+        config.max_seq_length = tokenizer.model_max_length
     model = custom_bert.BertForMaskedLM(config)
 
     model.resize_token_embeddings(len(tokenizer))

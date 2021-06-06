@@ -543,12 +543,20 @@ Implementation for Spatial Unit and Dense layers inspired from https://github.co
 
 
 class SpatialUnit(nn.Module):
-    def __init__(self, intermediate_size, seq_len, act, causal=False, init_eps=1e-3):
+    def __init__(
+        self,
+        intermediate_size,
+        seq_len,
+        act,
+        layer_norm_eps,
+        causal=False,
+        init_eps=1e-3,
+    ):
         super().__init__()
         out = intermediate_size // 2
         self.causal = causal
 
-        self.norm = CustomLayerNorm(out)
+        self.norm = CustomLayerNorm(out, eps=layer_norm_eps)
         self.proj = nn.Conv1d(seq_len, seq_len, 1)
 
         self.act = act
@@ -558,11 +566,13 @@ class SpatialUnit(nn.Module):
         nn.init.constant_(self.proj.bias, 1.0)
 
     def set_sample_config(self, sample_intermediate_size):
-        self.norm.set_sample_config(sample_intermediate_size)
+        self.norm.set_sample_config(sample_intermediate_size // 2)
 
     def get_active_subnet(self, config):
         sublayer = SpatialUnit(config)
-        sublayer.norm = self.norm.get_active_subnet(config.sample_intermediate_size)
+        sublayer.norm = self.norm.get_active_subnet(
+            config.sample_intermediate_size // 2
+        )
         sublayer.proj.weight.data.copy_(self.proj.weight)
         sublayer.proj.bias.data.copy_(self.proj.bias)
 
@@ -583,12 +593,12 @@ class SpatialUnit(nn.Module):
             # gate_res is output of bertselfattention which is a tuple of
             # (outputs, attention_scores), where attention scores can be None
             gate = gate + gate_res[0]
-
-        gate = self.act(gate) * res
+        # make gate a tuple
+        gate = (self.act(gate) * res,)
 
         if gate_res is not None:
             # add attention scores if we output them
-            gate = (gate,) + gate_res[1:]
+            gate = gate + gate_res[1:]
 
         return gate
 
@@ -605,13 +615,18 @@ class BertDense(nn.Module):
         )
         self.proj_act = nn.GELU()
         self.spatial_projection = SpatialUnit(
-            config.intermediate_size, config.sequence_length, act
+            config.intermediate_size, config.max_seq_length, act, config.layer_norm_eps
         )
         self.channel_projection_out = CustomLinear(
             config.intermediate_size // 2, config.hidden_size
         )
+        self.is_identity_layer = False
 
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, is_identity_layer=False):
+        if is_identity_layer:
+            self.is_identity_layer = True
+            return
+        self.is_identity_layer = False
         sample_hidden_size = config.sample_hidden_size
         sample_intermediate_size = config.sample_intermediate_size
 
@@ -620,7 +635,7 @@ class BertDense(nn.Module):
         )
         self.spatial_projection.set_sample_config(sample_intermediate_size)
         self.channel_projection_out.set_sample_config(
-            sample_hidden_size, sample_intermediate_size
+            sample_intermediate_size // 2, sample_hidden_size
         )
 
         if self.attention is not None:
@@ -648,6 +663,10 @@ class BertDense(nn.Module):
         output_attentions=False,
     ):
 
+        if self.is_identity_layer:
+            # print("Returning without any operations")
+            return (hidden_states,)
+
         gate_res = (
             self.attention(
                 hidden_states,
@@ -665,11 +684,11 @@ class BertDense(nn.Module):
         x = self.channel_projection_in(hidden_states)
         outputs = self.spatial_projection(x, gate_res=gate_res)
         # only pass the hidden states to fully connected
-        x = self.channel_projection_out(ouputs[0])
+        x = self.channel_projection_out(outputs[0])
         # add attention scores if we output them
         outputs = (x,) + outputs[1:]
 
-        return x
+        return outputs
 
 
 class BertAttention(nn.Module):
@@ -1078,6 +1097,7 @@ class BertEncoder(nn.Module):
                     output_attentions,
                 )
             hidden_states = layer_outputs[0]
+
             if use_cache:
                 next_decoder_cache += (layer_outputs[-1],)
             if output_attentions:
