@@ -577,6 +577,8 @@ class SpatialUnit(nn.Module):
         sublayer.proj.weight.data.copy_(self.proj.weight)
         sublayer.proj.bias.data.copy_(self.proj.bias)
 
+        return sublayer
+
     def forward(self, hidden_states, gate_res=None):
         device, n = hidden_states.device, hidden_states.shape[1]
 
@@ -659,6 +661,8 @@ class BertDense(nn.Module):
 
         if self.attention is not None:
             sublayer.attention.get_active_subnet(config)
+
+        return sublayer
 
     def forward(
         self,
@@ -1017,7 +1021,7 @@ class BertEncoder(nn.Module):
 
             if i < self.sample_num_hidden_layers:
                 layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
-                layer_config.sample_num_attention_heads = (
+                layer_config.sample_num_attentiont s_heads = (
                     sample_num_attention_heads_list[i]
                 )
                 layer.set_sample_config(layer_config, is_identity_layer=False)
@@ -1044,14 +1048,11 @@ class BertEncoder(nn.Module):
         for i in range(config.sample_num_hidden_layers):
             layer_config = deepcopy(config)
 
-            if i < self.sample_num_hidden_layers:
-                layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
-                layer_config.sample_num_attention_heads = (
-                    sample_num_attention_heads_list[i]
-                )
-                sublayer.layer[i].set_sample_config(
-                    layer_config, is_identity_layer=False
-                )
+            layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
+            layer_config.sample_num_attention_heads = (
+            sample_num_attention_heads_list[i])
+            sublayer.layer[i].set_sample_config(
+            layer_config, is_identity_layer=False)
 
             sublayer.layer[i] = self.layer[i].get_active_subnet(layer_config)
 
@@ -1193,6 +1194,14 @@ class BertPredictionHeadTransform(nn.Module):
         )
         self.LayerNorm.set_sample_config(config.sample_hidden_size)
 
+    def get_active_subnet(self, config): 
+        subnet = BertPredictionHeadTransform(config)
+
+        subnet.dense = self.dense.get_active_subnet()
+        subnet.LayerNorm = self.LayerNorm.get_active_subnet(config)
+
+        return subnet
+
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
@@ -1220,8 +1229,11 @@ class BertLMPredictionHead(nn.Module):
 
     def get_active_subnet(self, config):
         subnet = BertLMPredictionHead(config)
+        subnet.transform = self.transform.get_active_subnet(config)
         subnet.decoder = self.decoder.get_active_subnet()
         subnet.bias.data.copy_(self.bias)
+
+        return subnet
 
 
     def forward(self, hidden_states):
@@ -1241,6 +1253,8 @@ class BertOnlyMLMHead(nn.Module):
     def get_active_subnet(self, config):
         subnet = BertOnlyMLMHead(config)
         subnet.predictions = self.predictions.get_active_subnet(config)
+
+        return subnet
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
