@@ -682,6 +682,7 @@ class BertDense(nn.Module):
         )
 
         x = self.channel_projection_in(hidden_states)
+        x = self.proj_act(x)
         outputs = self.spatial_projection(x, gate_res=gate_res)
         # only pass the hidden states to fully connected
         x = self.channel_projection_out(outputs[0])
