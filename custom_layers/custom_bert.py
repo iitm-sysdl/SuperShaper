@@ -609,7 +609,7 @@ class BertDense(nn.Module):
 
         ### Can we have this as an elasticization parameter ###
         self.attention = BertSelfAttention(config) if attn is not None else None
-
+        self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.channel_projection_in = CustomLinear(
             config.hidden_size, config.intermediate_size
         )
@@ -630,6 +630,8 @@ class BertDense(nn.Module):
         sample_hidden_size = config.sample_hidden_size
         sample_intermediate_size = config.sample_intermediate_size
 
+        self.norm.set_sample_config(sample_hidden_size)
+
         self.channel_projection_in.set_sample_config(
             sample_hidden_size, sample_intermediate_size
         )
@@ -642,7 +644,9 @@ class BertDense(nn.Module):
             self.attention.set_sample_config(config)
 
     def get_active_subnet(self, config):
+
         sublayer = BertDense(config)
+        sublayer.norm = self.norm.get_active_subnet(config.sample_hidden_size)
         sublayer.channel_projection_in = self.channel_projection_in.get_active_subnet()
         sublayer.spatial_projection = self.spatial_projection.get_active_subnet()
         sublayer.channel_projection_out = (
@@ -667,6 +671,9 @@ class BertDense(nn.Module):
             # print("Returning without any operations")
             return (hidden_states,)
 
+        residual = hidden_states
+        hidden_states = self.norm(hidden_states)
+
         gate_res = (
             self.attention(
                 hidden_states,
@@ -687,6 +694,8 @@ class BertDense(nn.Module):
         # only pass the hidden states to fully connected
         x = self.channel_projection_out(outputs[0])
         # add attention scores if we output them
+
+        x += residual
         outputs = (x,) + outputs[1:]
 
         return outputs
