@@ -21,7 +21,7 @@ import math
 import os
 import random
 
-import datetime
+from datetime import datetime
 
 import datasets
 import torch
@@ -48,9 +48,13 @@ from custom_layers import custom_bert
 
 logger = logging.getLogger(__name__)
 
+
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
+def check_path(path, error_message_template="Specified path - {} does not exist"):
+    assert os.path.exists(path), error_message_template.format(path)
 
 
 def validate_subtransformer(
@@ -130,7 +134,7 @@ def validate_subtransformer(
 
 
 def get_current_datetime():
-    return datetime.now().strftime("%d-%m-%Y-%H:%M:%S")
+    return datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
 
 
 def parse_args():
@@ -253,7 +257,10 @@ def parse_args():
         help="Number of steps for the warmup in the lr scheduler.",
     )
     parser.add_argument(
-        "--output_dir", type=str, default=None, help="Where to store the final model."
+        "--output_dir",
+        type=str,
+        default="checkpoints",
+        help="Where to store the final model.",
     )
     parser.add_argument(
         "--seed", type=int, default=42, help="A seed for reproducible training."
@@ -333,6 +340,12 @@ def parse_args():
         help=f"specifies how to mix the tokens in bertlayers",
         choices=["attention", "gmlp", "fnet"],
     )
+    parser.add_argument(
+        "--resume_from_checkpoint_dir",
+        type=str,
+        default=None,
+        help=f"directory that contains checkpoints, optimizer, scheduler to resume training",
+    )
 
     args = parser.parse_args()
 
@@ -360,12 +373,28 @@ def parse_args():
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
 
-    if args.output_dir is not None:
+    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
         dataset_name = args.dataset_name.split("/")[-1].strip()
         args.output_dir += (
-            "_" + args.dataset_name + "_" + args.mixing + "_" + get_current_datetime()
+            "/" + args.dataset_name + "_" + args.mixing + "_" + get_current_datetime()
+        )
+        args.optim_scheduler_states_path = os.path.join(
+            args.output_dir, "optimizer_scheduler.pt"
         )
         os.makedirs(args.output_dir, exist_ok=True)
+
+    if args.resume_from_checkpoint_dir is not None:
+
+        args.optim_scheduler_states_path = os.path.join(
+            args.resume_from_checkpoint_dir, "optimizer_scheduler.pt"
+        )
+        check_path(args.resume_from_checkpoint_dir)
+        check_path(args.optim_scheduler_states_path)
+
+        model_path = os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin")
+        check_path(model_path)
+        # overwrite on the same directory
+        args.output_dir = args.resume_from_checkpoint_dir
 
     return args
 
@@ -427,7 +456,7 @@ def main():
                 split=f"train[{args.validation_split_percentage}%:]",
             )
         # limiting dataset for testing
-        # raw_datasets["train"] = raw_datasets["train"].select(range(100))
+        raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -488,6 +517,10 @@ def main():
     model = custom_bert.BertForMaskedLM(config)
 
     model.resize_token_embeddings(len(tokenizer))
+
+    if args.resume_from_checkpoint_dir is not None:
+        model.from_pretrained(args.resume_from_checkpoint_dir)
+        optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -637,6 +670,9 @@ def main():
     ]
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
+    if args.resume_from_checkpoint_dir is not None:
+        optimizer.load_state_dict(optim_scheduler_states["optimizer"])
+
     # Prepare everything with our `accelerator`.
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
@@ -669,6 +705,20 @@ def main():
         num_warmup_steps=args.num_warmup_steps,
         num_training_steps=args.max_train_steps,
     )
+    if args.resume_from_checkpoint_dir is not None:
+        completed_epochs = optim_scheduler_states["epoch"]
+        completed_steps = optim_scheduler_states["steps"]
+        lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
+
+        logger.info(f"epochs: {completed_epochs}, completed_steps: {completed_steps}")
+
+        assert (completed_epochs < args.num_train_epochs) and (
+            completed_steps < args.max_train_steps
+        ), "model is already trained to specified number of epochs / max steps"
+
+    else:
+        completed_epochs = 0
+        completed_steps = 0
 
     # Train!
     total_batch_size = (
@@ -687,31 +737,32 @@ def main():
         f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}"
     )
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
-    logger.info(f"  Total optimization steps = {args.max_train_steps}")
+    logger.info(
+        f"  Total optimization steps = {args.max_train_steps}, {completed_steps} steps completed so far"
+    )
     # Only show the progress bar once on each machine.
     progress_bar = tqdm(
-        range(args.max_train_steps), disable=not accelerator.is_local_main_process
+        range(completed_steps, args.max_train_steps),
+        disable=not accelerator.is_local_main_process,
     )
-    completed_steps = 0
 
-    for epoch in range(args.num_train_epochs):
-        seed = -1
+    for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
         for step, batch in enumerate(train_dataloader):
-
-            seed += 1
             super_config = sample_subtransformer(
-                limit_subtransformer_choices=False, randomize=True, rand_seed=seed
+                limit_subtransformer_choices=False,
+                randomize=True,
+                rand_seed=completed_steps,
             )
             model.set_sample_config(super_config)
 
-            #super_config.max_seq_length = config.max_seq_length
-            #super_config.mixing = config.mixing
-            #super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-            #subnet = model.get_active_subnet(super_config)
+            # super_config.max_seq_length = config.max_seq_length
+            # super_config.mixing = config.mixing
+            # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
+            # subnet = model.get_active_subnet(super_config)
 
-            #logger.info(subnet)
-            
+            # logger.info(subnet)
+
             outputs = model(**batch)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
@@ -748,11 +799,21 @@ def main():
         logger.info(
             f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
         )
+        completed_epochs += 1
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
         unwrapped_model.save_pretrained(args.output_dir, save_function=accelerator.save)
+        accelerator.save(
+            {
+                "epoch": completed_epochs,
+                "steps": completed_steps,
+                "optimizer": optimizer.state_dict(),
+                "scheduler": lr_scheduler.state_dict(),
+            },
+            args.optim_scheduler_states_path,
+        )
 
 
 if __name__ == "__main__":
