@@ -446,7 +446,7 @@ def main():
                 split=f"train[{args.validation_split_percentage}%:]",
             )
         # limiting dataset for testing
-        raw_datasets["train"] = raw_datasets["train"].select(range(100))
+        # raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
