@@ -21,6 +21,8 @@ import math
 import os
 import random
 
+import datetime
+
 import datasets
 import torch
 from datasets import load_dataset, load_metric
@@ -121,6 +123,10 @@ def validate_subtransformer(
     eval_metric["perplexity"] = perplexity
 
     return eval_metric
+
+
+def get_current_datetime():
+    return datetime.now().strftime("%d-%m-%Y-%H:%M:%S")
 
 
 def parse_args():
@@ -351,6 +357,10 @@ def parse_args():
             ], "`validation_file` should be a csv, json or txt file."
 
     if args.output_dir is not None:
+        dataset_name = args.dataset_name.split("/")[-1].strip()
+        args.output_dir += (
+            "_" + args.dataset_name + "_" + args.mixing + "_" + get_current_datetime()
+        )
         os.makedirs(args.output_dir, exist_ok=True)
 
     return args
