@@ -316,6 +316,13 @@ def parse_args():
     parser.add_argument(
         "--fp16", type=int, default=1, help="If set to 1, will use FP16 training."
     )
+    parser.add_argument(
+        "--mixing",
+        type=str,
+        required=True,
+        help=f"specifies how to mix the tokens in bertlayers",
+        choices=["attention", "gmlp", "fnet"],
+    )
 
     args = parser.parse_args()
 
@@ -462,6 +469,8 @@ def main():
         config.max_seq_length = args.max_seq_length
     else:
         config.max_seq_length = tokenizer.model_max_length
+    # add mixing to the config
+    config.mixing = args.mixing
     model = custom_bert.BertForMaskedLM(config)
 
     model.resize_token_embeddings(len(tokenizer))

@@ -969,8 +969,15 @@ class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
+        if config.mixing == "attention":
+            layer_function = BertLayer
+        elif config.mixing == "gmlp":
+            layer_function = BertDense
+        else:
+            raise NotImplementedError(f"{config.mixing} is currently not implemented")
+
         self.layer = nn.ModuleList(
-            [BertLayer(config) for _ in range(config.num_hidden_layers)]
+            [layer_function(config) for _ in range(config.num_hidden_layers)]
         )
         self.sample_num_hidden_layers = config.num_hidden_layers
 
