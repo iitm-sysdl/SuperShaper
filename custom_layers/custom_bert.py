@@ -568,8 +568,9 @@ class SpatialUnit(nn.Module):
     def set_sample_config(self, sample_intermediate_size):
         self.norm.set_sample_config(sample_intermediate_size // 2)
 
-    def get_active_subnet(self, config):
-        sublayer = SpatialUnit(config)
+    def get_active_subnet(self, config, act):
+        sublayer = SpatialUnit(config.sample_intermediate_size, config.max_seq_length, act,
+        config.layer_norm_eps)
         sublayer.norm = self.norm.get_active_subnet(
             config.sample_intermediate_size // 2
         )
@@ -607,8 +608,11 @@ class BertDense(nn.Module):
     def __init__(self, config, act=nn.Identity(), attn=None):
         super().__init__()
 
-        ### Can we have this as an elasticization parameter ###
+        ### Can we have this as an elasticization parameter ##
         self.attention = BertSelfAttention(config) if attn is not None else None
+
+        self.act = act
+
         self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.channel_projection_in = CustomLinear(
             config.hidden_size, config.intermediate_size
@@ -648,7 +652,7 @@ class BertDense(nn.Module):
         sublayer = BertDense(config)
         sublayer.norm = self.norm.get_active_subnet(config.sample_hidden_size)
         sublayer.channel_projection_in = self.channel_projection_in.get_active_subnet()
-        sublayer.spatial_projection = self.spatial_projection.get_active_subnet()
+        sublayer.spatial_projection = self.spatial_projection.get_active_subnet(config, self.act)
         sublayer.channel_projection_out = (
             self.channel_projection_out.get_active_subnet()
         )
@@ -1214,6 +1218,12 @@ class BertLMPredictionHead(nn.Module):
         self.transform.set_sample_config(config)
         self.decoder.set_sample_config(config.sample_hidden_size, config.vocab_size)
 
+    def get_active_subnet(self, config):
+        subnet = BertLMPredictionHead(config)
+        subnet.decoder = self.decoder.get_active_subnet()
+        subnet.bias.data.copy_(self.bias)
+
+
     def forward(self, hidden_states):
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states)
@@ -1227,6 +1237,10 @@ class BertOnlyMLMHead(nn.Module):
 
     def set_sample_config(self, config):
         self.predictions.set_sample_config(config)
+
+    def get_active_subnet(self, config):
+        subnet = BertOnlyMLMHead(config)
+        subnet.predictions = self.predictions.get_active_subnet(config)
 
     def forward(self, sequence_output):
         prediction_scores = self.predictions(sequence_output)
@@ -1448,7 +1462,8 @@ class BertModel(BertPreTrainedModel):
 
         subnet.embeddings = self.embeddings.get_active_subnet(config)
         subnet.encoder = self.encoder.get_active_subnet(config)
-        subnet.pooler = self.pooler.get_active_subnet(config)
+        if self.pooler is not None:
+            subnet.pooler = self.pooler.get_active_subnet(config)
 
         return subnet
 
@@ -1913,6 +1928,17 @@ class BertForMaskedLM(BertPreTrainedModel):
     def set_sample_config(self, config):
         self.bert.set_sample_config(config)
         self.cls.set_sample_config(config)
+    
+    def get_active_subnet(self, config):
+        subnet = BertForMaskedLM(config)
+        # subnet.set_sample_config(config)
+        subnet.bert = self.bert.get_active_subnet(config)
+        subnet.cls  = self.cls.get_active_subnet(config)
+        #subnet.classifier = self.classifier.get_active_subnet()
+
+        return subnet
+
+
 
     def get_output_embeddings(self):
         return self.cls.predictions.decoder
