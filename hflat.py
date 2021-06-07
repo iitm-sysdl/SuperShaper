@@ -75,7 +75,7 @@ class Net(nn.Module):
 # Predicts latency given a config
 ###################################################################
 class LatencyPredictor(object):
-    def __init__(self, feature_norm=[640, 6, 2048, 6], lat_norm=200, ckpt_path = './latency_dataset/ckpts/lgb_1.txt', lat_dataset_path='./latency_dataset/encoder_latency_1.csv', feature_dim=4, hidden_dim=200, hidden_layer_num=3, train_steps=600, bsz=128, lr=1e-5):
+    def __init__(self, feature_norm=[768, 12, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 70], lat_norm=10, ckpt_path = './latency_dataset/ckpts/lgb_1.txt', lat_dataset_path='./latency_dataset/sst2_gpu_gtx1080_final_1.csv', feature_dim=27, hidden_dim=100, hidden_layer_num=3, train_steps=600, bsz=128, lr=1e-5):
         ###########################################
         # Leave Unchanged
         ###########################################
@@ -194,13 +194,16 @@ class LatencyPredictor(object):
         with open(self.dataset_path, 'r') as fid:
             next(fid) # skip first line of CSV
             for line in fid:
-                features = line.split(',')[:self.feature_dim]
+                split_line = line.split(',')
+                features = split_line[:self.feature_dim-1]+[split_line[-1]]
+                # print(features)
                 features_eval = list(map(eval, features))
                 features_norm = np.array(features_eval) / self.feature_norm
                 features_norm_all.append(features_norm)
 
-                lats = line.split(',')[self.feature_dim:]
-                total_lat = eval(lats[0]) + eval(lats[1])
+                lats = [split_line[-2]]
+                # print(lats)
+                total_lat = eval(lats[0])
                 lats_all.append(total_lat / self.lat_norm)
         tmp = list(zip(features_norm_all, lats_all))
         random.shuffle(tmp)
@@ -220,11 +223,14 @@ class LatencyPredictor(object):
         encoder_layer_num = config['encoder']['encoder_layer_num']
         features.append(encoder_layer_num)
 
-        encoder_ffn_embed_dim_mean = np.mean(config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num])
-        features.append(encoder_ffn_embed_dim_mean)
+        # encoder_ffn_embed_dim_mean = np.mean(config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num])
+        # features.append(encoder_ffn_embed_dim_mean)
+        features += config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num]+[-1]*(12-encoder_layer_num)
+        features += config['encoder']['encoder_self_attention_heads'][:encoder_layer_num]+[-1]*(12-encoder_layer_num)
+        features.append(60)
 
-        encoder_self_attention_heads_mean = np.mean(config['encoder']['encoder_self_attention_heads'][:encoder_layer_num])
-        features.append(encoder_self_attention_heads_mean)
+        # encoder_self_attention_heads_mean = np.mean(config['encoder']['encoder_self_attention_heads'][:encoder_layer_num])
+        # features.append(encoder_self_attention_heads_mean)
 
         return features
 
@@ -271,10 +277,10 @@ if __name__=='__main__':
 
     predictor = LatencyPredictor()
 
-    # predictor.read_dataset()
-    # predictor.split()
-    # predictor.train()
-    # print('Latency predictor training finished')
+    predictor.read_dataset()
+    predictor.split()
+    predictor.train()
+    print('Latency predictor training finished')
 
     predictor.load_ckpt()
     config_example = {
@@ -282,7 +288,7 @@ if __name__=='__main__':
             'encoder_embed_dim': 768,
             'encoder_layer_num': 8,
             'encoder_ffn_embed_dim': [3072, 1024, 3072, 1024, 2048, 2048, 3072, 3072],
-            'encoder_self_attention_heads': [8, 12, 4, 12, 8, 6],
+            'encoder_self_attention_heads': [8, 12, 4, 12, 8, 6, 8, 6],
         }
     }
 
