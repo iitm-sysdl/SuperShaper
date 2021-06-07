@@ -342,6 +342,12 @@ def parse_args():
         default=None,
         help=f"directory that contains checkpoints, optimizer, scheduler to resume training",
     )
+    parser.add_argument(
+        "--tiny_attn",
+        type=int, 
+        default=0,
+        help=f"Choose this if you need Tiny Attention Module along-with gMLP dense block",
+    )
 
     args = parser.parse_args()
 
@@ -368,6 +374,10 @@ def parse_args():
                 "json",
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
+
+    if args.tiny_attn == 1: 
+        assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
+            
 
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
         dataset_name = args.dataset_name.split("/")[-1].strip()
@@ -428,11 +438,13 @@ def main():
     if args.seed is not None:
         set_seed(args.seed)
 
+    str_name = args.mixing + "_tiny_attn" if args.tiny_attn == 1 else args.mixing
+
     if accelerator.is_main_process:
         wandb.init(
             project="super-pretraining",
             entity="efficient-hat",
-            name = args.dataset_name.split("/")[-1].strip() + "_pretraining",
+            name = args.dataset_name.split("/")[-1].strip() + "_" + str_name + "_pretraining",
         )
  
 
@@ -485,7 +497,7 @@ def main():
     # else:
     #     config = CONFIG_MAPPING[args.model_type]()
     #     logger.warning("You are instantiating a new config instance from scratch.")
-    config = get_supertransformer_config(args.model_name_or_path)
+    config = get_supertransformer_config(args.model_name_or_path, tiny_attn=args.tiny_attn)
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -518,6 +530,7 @@ def main():
         config.max_seq_length = tokenizer.model_max_length
     # add mixing to the config
     config.mixing = args.mixing
+    config.tiny_attn = args.tiny_attn
     model = custom_bert.BertForMaskedLM(config)
 
     model.resize_token_embeddings(len(tokenizer))
@@ -787,7 +800,7 @@ def main():
             super_config = sample_subtransformer(
                 limit_subtransformer_choices=False,
                 randomize=True,
-                rand_seed=seed,
+                rand_seed=seed, tiny_attn = args.tiny_attn
             )
             model.set_sample_config(super_config)
 
@@ -818,7 +831,7 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-        config = get_supertransformer_config()
+        config = get_supertransformer_config(tiny_attn=args.tiny_attn)
         model.set_sample_config(config)
 
         eval_metric = validate_subtransformer(
@@ -861,7 +874,7 @@ def main():
                 config = sample_subtransformer(
                 args.limit_subtransformer_choices,
                 randomize=True,
-                rand_seed=random_seed,
+                rand_seed=random_seed, tiny_attn = args.tiny_attn
                 )
 
                 config.random_seed = rand_seed_lst

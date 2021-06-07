@@ -607,11 +607,13 @@ class SpatialUnit(nn.Module):
 
 
 class BertDense(nn.Module):
-    def __init__(self, config, act=nn.Identity(), attn=None):
+    def __init__(self, config, act=nn.Identity()):
         super().__init__()
 
         ### Can we have this as an elasticization parameter ##
-        self.attention = BertSelfAttention(config) if attn is not None else None
+        ### TODO: Figure out if we need to add this as a elasticization/sampling choice in SuperNet ### 
+
+        self.attention = BertSelfAttention(config) if config.tiny_attn is not None else None
 
         self.act = act
 
