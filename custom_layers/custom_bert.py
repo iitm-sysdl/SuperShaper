@@ -605,6 +605,62 @@ class SpatialUnit(nn.Module):
 
         return gate
 
+class BertFNet(nn.Module):
+    def __init__(self, config): 
+        super().__init__()
+
+        self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps) 
+        self.linear = CustomLinear(config.hidden_size, config.intermediate_size)
+        self.is_identity_layer = False
+
+
+    def set_sample_config(self, config, is_identity_layer=False):
+        if is_identity_layer:
+            self.is_identity_layer = True
+            return
+        self.is_identity_layer = False
+        self.norm.set_sample_config(config.hidden_size)
+        #self.linear.set_sample_config(config.sample_hidden_size, config.sample_intermediate_size)
+
+    def get_active_subnet(self, config):
+        subnet = BertFNet(config) 
+        #subnet.norm = self.norm.get_active_subnet(config)
+        #subnet.linear = self.linear.get_active_subnet()
+
+        return subnet
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        past_key_value=None,
+        output_attentions=False,
+        ):
+
+        residual = hidden_states 
+
+        if self.is_identity_layer:
+            return (hidden_states,)
+
+        x = torch.fft.fft(hidden_states, dim=-1) # Applying FFT along the embedding dim 
+        x = torch.fft.fft(x, dim=-2).real # Applying FFT along the token or seq_len dim
+
+        x += residual 
+
+        x = self.norm(x)
+        x_res = x 
+      
+        x = self.linear(x)
+        x += x_res
+
+        x = self.norm(x)
+
+        return (x,)
+
+
 
 class BertDense(nn.Module):
     def __init__(self, config, act=nn.Identity()):
@@ -993,6 +1049,8 @@ class BertEncoder(nn.Module):
             layer_function = BertLayer
         elif config.mixing == "gmlp":
             layer_function = BertDense
+        elif config.mixing == "fnet": 
+            layer_function = BertFNet
         else:
             raise NotImplementedError(f"{config.mixing} is currently not implemented")
 
