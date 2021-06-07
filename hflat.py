@@ -76,7 +76,7 @@ class Net(nn.Module):
 # Predicts latency given a config
 ###################################################################
 class LatencyPredictor(object):
-    def __init__(self, feature_norm, lat_norm, ckpt_path, lat_dataset_path='./latency_dataset/lat.tmp', feature_dim=10, hidden_dim=400, hidden_layer_num=3, train_steps=5000, bsz=128, lr=1e-5):
+    def __init__(self, feature_norm=[640, 6, 2048, 6], lat_norm=200, ckpt_path = './latency_dataset/ckpts/lgb_1.txt', lat_dataset_path='./latency_dataset/encoder_latency_1.csv', feature_dim=4, hidden_dim=200, hidden_layer_num=3, train_steps=600, bsz=128, lr=1e-5):
         ###########################################
         # Leave Unchanged
         ###########################################
@@ -237,51 +237,53 @@ class LatencyPredictor(object):
 # predicts the latency on some example config
 ###################################################################
 if __name__=='__main__':
-    parser = configargparse.ArgumentParser()
-    # ?????CHECKOUT LATER??????
-    # parser.add_argument('--configs', required=True, is_config_file=True)
-    # parser.add_argument('--dataset-path')
+    # parser = configargparse.ArgumentParser()
+    # # ?????CHECKOUT LATER??????
+    # # parser.add_argument('--configs', required=True, is_config_file=True)
+    # # parser.add_argument('--dataset-path')
 
-    parser.add_argument('--lat-dataset-path', type=str, default='./latency_dataset/encoder_latency_1.csv', help='the path to read latency dataset')
-    parser.add_argument('--feature-norm', type=float, nargs='+', default=[640, 6, 2048, 6], help='normalizing factor for each feature')
-    parser.add_argument('--lat-norm', type=float, default=200, help='normalizing factor for latency')
-    # Changed feature_dim to 4 as we use only encoder:
-    parser.add_argument('--feature-dim', type=int, default=4, help='dimension of feature vector')
-    # Changed hidden dim to 200:
-    parser.add_argument('--hidden-dim', type=int, default=200, help='hidden dimension of FC layers in latency predictor')
-    parser.add_argument('--hidden-layer-num', type=int, default=3, help='number of FC layers')
-    parser.add_argument('--ckpt-path', type=str, default='latency_dataset/ckpts/tmp.pt', help='path to save latency predictor weights')
-    # Changed the number of steps to 600:
-    parser.add_argument('--train-steps', type=int, default=600, help='latency predictor training steps')
-    parser.add_argument('--bsz', type=int, default=128, help='latency predictor training batch size')
-    parser.add_argument('--lr', type=float, default=1e-5, help='latency predictor training learning rate')
+    # parser.add_argument('--lat-dataset-path', type=str, default='./latency_dataset/encoder_latency_1.csv', help='the path to read latency dataset')
+    # parser.add_argument('--feature-norm', type=float, nargs='+', default=[640, 6, 2048, 6], help='normalizing factor for each feature')
+    # parser.add_argument('--lat-norm', type=float, default=200, help='normalizing factor for latency')
+    # # Changed feature_dim to 4 as we use only encoder:
+    # parser.add_argument('--feature-dim', type=int, default=4, help='dimension of feature vector')
+    # # Changed hidden dim to 200:
+    # parser.add_argument('--hidden-dim', type=int, default=200, help='hidden dimension of FC layers in latency predictor')
+    # parser.add_argument('--hidden-layer-num', type=int, default=3, help='number of FC layers')
+    # parser.add_argument('--ckpt-path', type=str, default='latency_dataset/ckpts/tmp.pt', help='path to save latency predictor weights')
+    # # Changed the number of steps to 600:
+    # parser.add_argument('--train-steps', type=int, default=600, help='latency predictor training steps')
+    # parser.add_argument('--bsz', type=int, default=128, help='latency predictor training batch size')
+    # parser.add_argument('--lr', type=float, default=1e-5, help='latency predictor training learning rate')
+    # feature-norm =
+    # args = parser.parse_args()
+    # print(args)
 
-    args = parser.parse_args()
-    print(args)
+    # predictor = LatencyPredictor(lat_dataset_path=args.lat_dataset_path,
+    #                        feature_norm=args.feature_norm,
+    #                        lat_norm=args.lat_norm,
+    #                        feature_dim=args.feature_dim,
+    #                        hidden_dim=args.hidden_dim,
+    #                        hidden_layer_num=args.hidden_layer_num,
+    #                        ckpt_path=args.ckpt_path,
+    #                        train_steps=args.train_steps,
+    #                        bsz=args.bsz,
+    #                        lr=args.lr)
 
-    predictor = LatencyPredictor(lat_dataset_path=args.lat_dataset_path,
-                           feature_norm=args.feature_norm,
-                           lat_norm=args.lat_norm,
-                           feature_dim=args.feature_dim,
-                           hidden_dim=args.hidden_dim,
-                           hidden_layer_num=args.hidden_layer_num,
-                           ckpt_path=args.ckpt_path,
-                           train_steps=args.train_steps,
-                           bsz=args.bsz,
-                           lr=args.lr)
+    predictor = LatencyPredictor()
 
-    predictor.read_dataset()
-    predictor.split()
-    predictor.train()
-    print('Latency predictor training finished')
+    # predictor.read_dataset()
+    # predictor.split()
+    # predictor.train()
+    # print('Latency predictor training finished')
 
     predictor.load_ckpt()
     config_example = {
         'encoder': {
-            'encoder_embed_dim': 512,
-            'encoder_layer_num': 6,
-            'encoder_ffn_embed_dim': [1024, 1024, 1024, 1024, 2048, 2048],
-            'encoder_self_attention_heads': [8, 8, 8, 8, 8, 4],
+            'encoder_embed_dim': 768,
+            'encoder_layer_num': 8,
+            'encoder_ffn_embed_dim': [3072, 1024, 3072, 1024, 2048, 2048, 3072, 3072],
+            'encoder_self_attention_heads': [8, 12, 4, 12, 8, 6],
         }
     }
 
