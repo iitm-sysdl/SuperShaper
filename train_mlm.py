@@ -20,9 +20,14 @@ import logging
 import math
 import os
 import random
+import wandb
+
 
 from datetime import datetime
+from collections import defaultdict
 
+
+import numpy as np
 import datasets
 import torch
 from datasets import load_dataset, load_metric
@@ -46,6 +51,7 @@ from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedTy
 from engine import sample_subtransformer, get_supertransformer_config
 from custom_layers import custom_bert
 
+import plotly.graph_objects as go
 from utils import count_parameters, check_path, get_current_datetime
 
 logger = logging.getLogger(__name__)
@@ -366,7 +372,7 @@ def parse_args():
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
         dataset_name = args.dataset_name.split("/")[-1].strip()
         args.output_dir += (
-            "/" + args.dataset_name + "_" + args.mixing + "_" + get_current_datetime()
+            "/" + dataset_name + "_" + args.mixing + "_" + get_current_datetime()
         )
         args.optim_scheduler_states_path = os.path.join(
             args.output_dir, "optimizer_scheduler.pt"
@@ -421,6 +427,14 @@ def main():
     # If passed along, set the training seed now.
     if args.seed is not None:
         set_seed(args.seed)
+
+    if accelerator.is_main_process:
+        wandb.init(
+            project="super-pretraining",
+            entity="efficient-hat",
+            name = args.dataset_name.split("/")[-1].strip() + "_pretraining",
+        )
+ 
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -658,7 +672,7 @@ def main():
 
     if args.resume_from_checkpoint_dir is not None:
         logger.info("Loading model weights from checkpoint ..")
-        # model.from_pretrained(args.resume_from_checkpoint_dir)
+        model.from_pretrained(args.resume_from_checkpoint_dir)
 
         optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
 
@@ -670,10 +684,10 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
-    if args.resume_from_checkpoint_dir is not None:
-        unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
-
+#    if args.resume_from_checkpoint_dir is not None:
+#        unwrapped_model = accelerator.unwrap_model(model)
+#        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
+#
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
         or accelerator.distributed_type == DistributedType.TPU
@@ -744,6 +758,27 @@ def main():
         disable=not accelerator.is_local_main_process,
     )
 
+    if accelerator.is_main_process:
+        wandb.watch(model)
+
+    def get_diverse_seeds(num_subtransformers):
+        diverse_seeds = []
+        num_hidden_layers_seeds = defaultdict(list)
+        for seed in range(num_subtransformers * 4):
+            num_hidden_layers = sample_subtransformer(
+                False, True, seed).sample_num_hidden_layers
+            num_hidden_layers_seeds[num_hidden_layers].append(seed)
+        uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
+        num_per_uniq_layer = (num_subtransformers // uniq_num_hidden_layers) + 1
+        for k, v in num_hidden_layers_seeds.items():
+            diverse_seeds.extend(v[:num_per_uniq_layer])
+        return diverse_seeds[:num_subtransformers]
+
+    logger.info("Generating diverse random seeds..")
+    rand_seed_lst = get_diverse_seeds(25)
+    logger.info(len(rand_seed_lst))
+    logger.info("Random seeds generation done..")
+
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
         seed = -1
@@ -777,6 +812,9 @@ def main():
                 progress_bar.update(1)
                 completed_steps += 1
 
+            if accelerator.is_main_process:
+                wandb.log({"epochs": epoch})
+ 
             if completed_steps >= args.max_train_steps:
                 break
 
@@ -796,10 +834,72 @@ def main():
             eval_metric["val_loss"],
             eval_metric["perplexity"],
         )
+        
+        if accelerator.is_main_process:
+            wandb.log({"SuperTransformer Val Accuracy" : val_accuracy, 
+                       "SuperTransformer Val loss" : val_loss,
+                       "SuperTransformer Perplexity": perplexity
+                       })
+
         logger.info(
             f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
         )
         completed_epochs += 1
+        
+        if args.eval_random_subtransformers and completed_epochs % 30 == 0: 
+            hover_templates = []
+            label_perplex = []
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+                "random_seed",
+            ] 
+            for i in range(25):
+                random_seed = rand_seed_lst[i]
+                config = sample_subtransformer(
+                args.limit_subtransformer_choices,
+                randomize=True,
+                rand_seed=random_seed,
+                )
+
+                config.random_seed = rand_seed_lst
+
+                eval_metric = validate_subtransformer(
+                    model, eval_dataloader, accelerator, len(eval_dataset), args.per_device_eval_batch_size,
+                    args.pad_to_max_length,
+                )
+                    # eval_metric['validation_random_seed'] = random_seed
+                    # label_lst.append([eval_metric['accuracy'], random_seed])
+                    # label_lst.append([random_seed, eval_metric['accuracy']])
+                hover_templates.append(
+                    "<br>".join(
+                        [
+                            f"{key}: {getattr(config, key)}"
+                            for key in sampling_dimensions
+                        ]
+                    )
+                )
+                label_perplex.append(eval_metric["perplexity"])
+                #label_seed.append(random_seed)
+                # accelerator.print(eval_metric)
+                # wandb.log(eval_metric)
+
+            if accelerator.is_main_process:
+                ## If plotting using Custom Plotly
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Bar(x=np.arange(len(rand_seed_lst)), y=label_perplex, hovertext=hover_templates)
+                )
+                fig.update_layout(
+                    title="Relative Performance Order",
+                    xaxis_title="Random Seed",
+                    yaxis_title="Perplexity",
+                )
+                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
