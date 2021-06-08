@@ -348,6 +348,19 @@ def parse_args():
         default=0,
         help=f"Choose this if you need Tiny Attention Module along-with gMLP dense block",
     )
+    parser.add_argument(
+        "--num_subtransformers_monitor",
+        type=int,
+        default=25,
+        help=f"Choose the number of subtransformers whose performance you wish to monitor",
+    )
+
+    parser.add_argument(
+        "--c4_dir", 
+        type=str,
+        default = None,
+        help=f"The directory path for C4",
+    )
 
     args = parser.parse_args()
 
@@ -357,6 +370,7 @@ def parse_args():
         args.dataset_name is None
         and args.train_file is None
         and args.validation_file is None
+        and args.c4_dir is None
     ):
         raise ValueError("Need either a dataset name or a training/validation file.")
     else:
@@ -377,6 +391,18 @@ def parse_args():
 
     if args.tiny_attn == 1: 
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
+
+
+    if args.c4_dir is not None:
+        check_path(args.c4_dir)
+        c4_train_dir = os.path.join(args.c4_dir, 'train')
+        c4_val_dir = os.path.join(args.c4_dir, 'val')
+        check_path(c4_train_dir)
+        check_path(c4_val_dir)
+        
+        args.dataset_name = "c4_realnews"
+        args.c4_train_dir = c4_train_dir
+        args.c4_val_dir = c4_val_dir
             
 
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
@@ -459,20 +485,29 @@ def main():
     # download the dataset.
     if args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
-        raw_datasets = load_dataset(args.dataset_name, args.dataset_config_name)
-        if "validation" not in raw_datasets.keys():
-            raw_datasets["validation"] = load_dataset(
-                args.dataset_name,
-                args.dataset_config_name,
-                split=f"train[:{args.validation_split_percentage}%]",
-            )
-            raw_datasets["train"] = load_dataset(
-                args.dataset_name,
-                args.dataset_config_name,
-                split=f"train[{args.validation_split_percentage}%:]",
-            )
-        # limiting dataset for testing
-        # raw_datasets["train"] = raw_datasets["train"].select(range(100))
+        if args.dataset_name == "c4_realnews":
+            logger.info("Loading C4 Dataset...")
+            train_files = [os.path.join(args.c4_train_dir, file) for file in os.listdir(args.c4_train_dir) if file.endswith('json.gz')]
+            val_files = [os.path.join(args.c4_val_dir, file) for file in os.listdir(args.c4_val_dir) if file.endswith('json.gz')]
+            train_files = sorted(train_files)
+            val_files = sorted(val_files)
+            raw_datasets = load_dataset('json', data_files = {'train': train_files, 'validation': val_files})
+            
+        else:
+            raw_datasets = load_dataset(args.dataset_name, args.dataset_config_name)
+            if "validation" not in raw_datasets.keys():
+                raw_datasets["validation"] = load_dataset(
+                    args.dataset_name,
+                    args.dataset_config_name,
+                    split=f"train[:{args.validation_split_percentage}%]",
+                )
+                raw_datasets["train"] = load_dataset(
+                    args.dataset_name,
+                    args.dataset_config_name,
+                    split=f"train[{args.validation_split_percentage}%:]",
+                )
+            # limiting dataset for testing
+            # raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -788,7 +823,7 @@ def main():
         return diverse_seeds[:num_subtransformers]
 
     logger.info("Generating diverse random seeds..")
-    rand_seed_lst = get_diverse_seeds(25)
+    rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor)
     logger.info(len(rand_seed_lst))
     logger.info("Random seeds generation done..")
 
@@ -869,7 +904,7 @@ def main():
                 "sample_num_hidden_layers",
                 "random_seed",
             ] 
-            for i in range(25):
+            for i in range(args.num_subtransformers_monitor):
                 random_seed = rand_seed_lst[i]
                 config = sample_subtransformer(
                 args.limit_subtransformer_choices,
