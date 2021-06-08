@@ -65,20 +65,26 @@ def show_random_elements(dataset, accelerator, num_examples=10):
     accelerator.print(df)
 
 
-def get_supertransformer_config(model_name_or_path="bert-base-cased", tiny_attn=False):
+def get_supertransformer_config(
+    model_name_or_path="bert-base-cased", tiny_attn=False, gmlp=False
+):
     config = AutoConfig.from_pretrained(model_name_or_path)
+
+    if gmlp:
+        # gmlp needs twice the encoder layers to match bert param size
+        config.num_hidden_layers = config.num_hidden_layers * 2
     config.sample_hidden_size = config.hidden_size
     config.sample_num_hidden_layers = config.num_hidden_layers
-   
-    if not tiny_attn: 
+
+    if not tiny_attn:
         config.sample_num_attention_heads = [
             config.num_attention_heads
-        ] * config.sample_num_hidden_layers 
-    else: 
+        ] * config.sample_num_hidden_layers
+    else:
         config.sample_num_attention_heads = [1] * config.sample_num_hidden_layers
 
     config.num_attention_heads = 1 if tiny_attn else config.num_attention_heads
-    
+
     config.sample_intermediate_size = [
         config.intermediate_size
     ] * config.sample_num_hidden_layers
@@ -101,7 +107,7 @@ def show_args(accelerator, args):
     )
 
 
-def get_choices(limit_subtransformer_choices=False):
+def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12):
     if limit_subtransformer_choices:
         choices = {
             "sample_hidden_size": [600, 768],
@@ -114,18 +120,24 @@ def get_choices(limit_subtransformer_choices=False):
             "sample_hidden_size": [360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
-            "sample_num_hidden_layers": [6, 8, 10, 12],
+            "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
+            + [num_hidden_layers],
         }
     return choices
 
 
 def sample_subtransformer(
-    limit_subtransformer_choices=False, randomize=True, rand_seed=0, tiny_attn=False,
+    limit_subtransformer_choices=False,
+    randomize=True,
+    rand_seed=0,
+    tiny_attn=False,
+    config=None
 ):
     if randomize:
         random.seed(rand_seed)
-    choices = get_choices(limit_subtransformer_choices)
-    config = get_supertransformer_config(tiny_attn=tiny_attn)
+    if config is None:
+        config = get_supertransformer_config(tiny_attn=tiny_attn)
+    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers)
 
     ### Figuring the number of hidden layers
     hidden_layers_list = choices["sample_num_hidden_layers"]
@@ -160,7 +172,7 @@ def sample_subtransformer(
     for key in config_dict.keys():
         setattr(config, key, config_dict[key])
 
-    if tiny_attn: 
+    if tiny_attn:
         setattr(config, "sample_num_attention_heads", 1)
 
     return config

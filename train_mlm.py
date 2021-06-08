@@ -48,11 +48,18 @@ from transformers import (
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
-from engine import sample_subtransformer, get_supertransformer_config
+from engine import (
+    sample_subtransformer,
+    get_supertransformer_config,
+    show_random_elements,
+    show_args,
+)
 from custom_layers import custom_bert
 
 import plotly.graph_objects as go
 from utils import count_parameters, check_path, get_current_datetime
+
+from torchinfo import summary
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +351,7 @@ def parse_args():
     )
     parser.add_argument(
         "--tiny_attn",
-        type=int, 
+        type=int,
         default=0,
         help=f"Choose this if you need Tiny Attention Module along-with gMLP dense block",
     )
@@ -356,9 +363,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--c4_dir", 
+        "--c4_dir",
         type=str,
-        default = None,
+        default=None,
         help=f"The directory path for C4",
     )
 
@@ -389,21 +396,19 @@ def parse_args():
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
 
-    if args.tiny_attn == 1: 
+    if args.tiny_attn == 1:
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
-
 
     if args.c4_dir is not None:
         check_path(args.c4_dir)
-        c4_train_dir = os.path.join(args.c4_dir, 'train')
-        c4_val_dir = os.path.join(args.c4_dir, 'val')
+        c4_train_dir = os.path.join(args.c4_dir, "train")
+        c4_val_dir = os.path.join(args.c4_dir, "val")
         check_path(c4_train_dir)
         check_path(c4_val_dir)
-        
+
         args.dataset_name = "c4_realnews"
         args.c4_train_dir = c4_train_dir
         args.c4_val_dir = c4_val_dir
-            
 
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
         dataset_name = args.dataset_name.split("/")[-1].strip()
@@ -440,6 +445,8 @@ def main():
 
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     accelerator = Accelerator(fp16=args.fp16, kwargs_handlers=[param])
+
+    show_args(accelerator, args)
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -470,9 +477,11 @@ def main():
         wandb.init(
             project="super-pretraining",
             entity="efficient-hat",
-            name = args.dataset_name.split("/")[-1].strip() + "_" + str_name + "_pretraining",
+            name=args.dataset_name.split("/")[-1].strip()
+            + "_"
+            + str_name
+            + "_pretraining",
         )
- 
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -487,12 +496,22 @@ def main():
         # Downloading and loading a dataset from the hub.
         if args.dataset_name == "c4_realnews":
             logger.info("Loading C4 Dataset...")
-            train_files = [os.path.join(args.c4_train_dir, file) for file in os.listdir(args.c4_train_dir) if file.endswith('json.gz')]
-            val_files = [os.path.join(args.c4_val_dir, file) for file in os.listdir(args.c4_val_dir) if file.endswith('json.gz')]
+            train_files = [
+                os.path.join(args.c4_train_dir, file)
+                for file in os.listdir(args.c4_train_dir)
+                if file.endswith("json.gz")
+            ]
+            val_files = [
+                os.path.join(args.c4_val_dir, file)
+                for file in os.listdir(args.c4_val_dir)
+                if file.endswith("json.gz")
+            ]
             train_files = sorted(train_files)
             val_files = sorted(val_files)
-            raw_datasets = load_dataset('json', data_files = {'train': train_files, 'validation': val_files})
-            
+            raw_datasets = load_dataset(
+                "json", data_files={"train": train_files, "validation": val_files}
+            )
+
         else:
             raw_datasets = load_dataset(args.dataset_name, args.dataset_config_name)
             if "validation" not in raw_datasets.keys():
@@ -507,7 +526,7 @@ def main():
                     split=f"train[{args.validation_split_percentage}%:]",
                 )
             # limiting dataset for testing
-            # raw_datasets["train"] = raw_datasets["train"].select(range(100))
+            raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -532,7 +551,11 @@ def main():
     # else:
     #     config = CONFIG_MAPPING[args.model_type]()
     #     logger.warning("You are instantiating a new config instance from scratch.")
-    config = get_supertransformer_config(args.model_name_or_path, tiny_attn=args.tiny_attn)
+    is_gmlp_model = args.mixing == "gmlp"
+
+    global_config = get_supertransformer_config(
+        args.model_name_or_path, tiny_attn=args.tiny_attn, gmlp=is_gmlp_model
+    )
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -560,15 +583,16 @@ def main():
 
     # add max_seq_len or model_max_len to config
     if args.max_seq_length:
-        config.max_seq_length = args.max_seq_length
+        global_config.max_seq_length = args.max_seq_length
     else:
-        config.max_seq_length = tokenizer.model_max_length
+        global_config.max_seq_length = tokenizer.model_max_length
     # add mixing to the config
-    config.mixing = args.mixing
-    config.tiny_attn = args.tiny_attn
-    model = custom_bert.BertForMaskedLM(config)
+    global_config.mixing = args.mixing
+    global_config.tiny_attn = args.tiny_attn
+    model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
+    logger.info(summary(model, depth=4, verbose=0))
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -732,10 +756,10 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
-#    if args.resume_from_checkpoint_dir is not None:
-#        unwrapped_model = accelerator.unwrap_model(model)
-#        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
-#
+    #    if args.resume_from_checkpoint_dir is not None:
+    #        unwrapped_model = accelerator.unwrap_model(model)
+    #        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
+    #
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
         or accelerator.distributed_type == DistributedType.TPU
@@ -809,12 +833,13 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model)
 
-    def get_diverse_seeds(num_subtransformers):
+    def get_diverse_seeds(num_subtransformers, config):
         diverse_seeds = []
         num_hidden_layers_seeds = defaultdict(list)
         for seed in range(num_subtransformers * 4):
             num_hidden_layers = sample_subtransformer(
-                False, True, seed).sample_num_hidden_layers
+                False, True, seed, config=config
+            ).sample_num_hidden_layers
             num_hidden_layers_seeds[num_hidden_layers].append(seed)
         uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
         num_per_uniq_layer = (num_subtransformers // uniq_num_hidden_layers) + 1
@@ -823,7 +848,7 @@ def main():
         return diverse_seeds[:num_subtransformers]
 
     logger.info("Generating diverse random seeds..")
-    rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor)
+    rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
     logger.info(len(rand_seed_lst))
     logger.info("Random seeds generation done..")
 
@@ -835,7 +860,9 @@ def main():
             super_config = sample_subtransformer(
                 limit_subtransformer_choices=False,
                 randomize=True,
-                rand_seed=seed, tiny_attn = args.tiny_attn
+                rand_seed=seed,
+                tiny_attn=args.tiny_attn,
+                config=global_config,
             )
             model.set_sample_config(super_config)
 
@@ -862,12 +889,12 @@ def main():
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
- 
+
             if completed_steps >= args.max_train_steps:
                 break
 
-        config = get_supertransformer_config(tiny_attn=args.tiny_attn)
-        model.set_sample_config(config)
+        # change to supertransformer config
+        model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
             model,
@@ -882,19 +909,22 @@ def main():
             eval_metric["val_loss"],
             eval_metric["perplexity"],
         )
-        
+
         if accelerator.is_main_process:
-            wandb.log({"SuperTransformer Val Accuracy" : val_accuracy, 
-                       "SuperTransformer Val loss" : val_loss,
-                       "SuperTransformer Perplexity": perplexity
-                       })
+            wandb.log(
+                {
+                    "SuperTransformer Val Accuracy": val_accuracy,
+                    "SuperTransformer Val loss": val_loss,
+                    "SuperTransformer Perplexity": perplexity,
+                }
+            )
 
         logger.info(
             f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
         )
         completed_epochs += 1
-        
-        if args.eval_random_subtransformers and completed_epochs % 30 == 0: 
+
+        if args.eval_random_subtransformers and completed_epochs % 30 == 0:
             hover_templates = []
             label_perplex = []
             sampling_dimensions = [
@@ -903,24 +933,30 @@ def main():
                 "sample_intermediate_size",
                 "sample_num_hidden_layers",
                 "random_seed",
-            ] 
+            ]
             for i in range(args.num_subtransformers_monitor):
                 random_seed = rand_seed_lst[i]
                 config = sample_subtransformer(
-                args.limit_subtransformer_choices,
-                randomize=True,
-                rand_seed=random_seed, tiny_attn = args.tiny_attn
+                    args.limit_subtransformer_choices,
+                    randomize=True,
+                    rand_seed=random_seed,
+                    tiny_attn=args.tiny_attn,
+                    config=global_config,
                 )
 
                 config.random_seed = rand_seed_lst
 
                 eval_metric = validate_subtransformer(
-                    model, eval_dataloader, accelerator, len(eval_dataset), args.per_device_eval_batch_size,
+                    model,
+                    eval_dataloader,
+                    accelerator,
+                    len(eval_dataset),
+                    args.per_device_eval_batch_size,
                     args.pad_to_max_length,
                 )
-                    # eval_metric['validation_random_seed'] = random_seed
-                    # label_lst.append([eval_metric['accuracy'], random_seed])
-                    # label_lst.append([random_seed, eval_metric['accuracy']])
+                # eval_metric['validation_random_seed'] = random_seed
+                # label_lst.append([eval_metric['accuracy'], random_seed])
+                # label_lst.append([random_seed, eval_metric['accuracy']])
                 hover_templates.append(
                     "<br>".join(
                         [
@@ -930,7 +966,7 @@ def main():
                     )
                 )
                 label_perplex.append(eval_metric["perplexity"])
-                #label_seed.append(random_seed)
+                # label_seed.append(random_seed)
                 # accelerator.print(eval_metric)
                 # wandb.log(eval_metric)
 
@@ -939,7 +975,11 @@ def main():
                 fig = go.Figure()
 
                 fig.add_trace(
-                    go.Bar(x=np.arange(len(rand_seed_lst)), y=label_perplex, hovertext=hover_templates)
+                    go.Bar(
+                        x=np.arange(len(rand_seed_lst)),
+                        y=label_perplex,
+                        hovertext=hover_templates,
+                    )
                 )
                 fig.update_layout(
                     title="Relative Performance Order",
@@ -947,7 +987,6 @@ def main():
                     yaxis_title="Perplexity",
                 )
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
-
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
