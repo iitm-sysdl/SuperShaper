@@ -644,7 +644,7 @@ def main():
             tokenize_function,
             batched=True,
             num_proc=args.preprocessing_num_workers,
-            remove_columns=[text_column_name],
+            remove_columns=column_names,
             load_from_cache_file=not args.overwrite_cache,
         )
     else:
