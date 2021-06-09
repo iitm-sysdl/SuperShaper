@@ -442,7 +442,7 @@ def training_function(args):
                 best_val_accuracy = super_dict[metric_to_track]
                 # unwrap and save best model so far
                 accelerator.wait_for_everyone()
-                
+
                 unwrapped_model = accelerator.unwrap_model(model)
                 #accelerator.unwrap_model(model).save_pretrained(args.output_dir)
                 accelerator.save(unwrapped_model.state_dict(), args.output_dir+'/pytorch_model.bin')
@@ -458,150 +458,150 @@ def training_function(args):
                 metric_not_improved_count += 1
                 if metric_not_improved_count >= args.early_stopping_patience:
                     break
-        accelerator.print()
-        accelerator.print("Evaluating subtransformer training")
-        accelerator.print()
+        # accelerator.print()
+        # accelerator.print("Evaluating subtransformer training")
+        # accelerator.print()
 
 
         ## for finetuning, we load the best model, optimizer and scheduler
         # states. Naively loading them is causing OOM issue. Hence we first
         # clear torch cuda memory
 
-        print(
-            "===========================Wiping memory================================================="
-        )
-        # GR: suspecting that memory is not fully cleared here
-        # based on some testing, the supertrasnformer training on mrpc with batchsize of 32
-        # used around 3921 MB on gpu. After wiping mem, we are still left with aronud 1.6 GB
-        # Have to check if there is a leak
-        # TODO: revisit this and modify utils.wipe_memory
+        # print(
+        #     "===========================Wiping memory================================================="
+        # )
+        # # GR: suspecting that memory is not fully cleared here
+        # # based on some testing, the supertrasnformer training on mrpc with batchsize of 32
+        # # used around 3921 MB on gpu. After wiping mem, we are still left with aronud 1.6 GB
+        # # Have to check if there is a leak
+        # # TODO: revisit this and modify utils.wipe_memory
 
-        unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
+        # unwrapped_model = accelerator.unwrap_model(model)
+        # unwrapped_model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
 
-        #wipe_memory(optimizer)
+        # #wipe_memory(optimizer)
 
-        ## we will finetune 3 random subtransformers
-        num_subtransformers_for_finetuning = 10
-        fine_tuning_epochs = 10
+        # ## we will finetune 3 random subtransformers
+        # num_subtransformers_for_finetuning = 10
+        # fine_tuning_epochs = 10
 
-        ## initialize the model to the best pretrained checkpoint
-        #model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
-        #
-        ##model = accelerator.unwrap_model(model)
-        #model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
-        #
-        ## it is important to send the model to device before sampling.
-        ## Else we would get an error that weights are in cpu (not fullly sure why)
-        #model = model.to(accelerator.device)
+        # ## initialize the model to the best pretrained checkpoint
+        # #model = BertForSequenceClassification.from_pretrained('bert-base-uncased')
+        # #
+        # ##model = accelerator.unwrap_model(model)
+        # #model.load_state_dict(torch.load(args.output_dir+'/pytorch_model.bin'))
+        # #
+        # ## it is important to send the model to device before sampling.
+        # ## Else we would get an error that weights are in cpu (not fullly sure why)
+        # #model = model.to(accelerator.device)
 
-        #optimizer = AdamW(
-        #    params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
-        #)
-
-
-        #lr_scheduler = get_linear_schedule_with_warmup(
-        #    optimizer=optimizer,
-        #    num_warmup_steps=100,
-        #    num_training_steps=len(train_dataloader)
-        #    * fine_tuning_epochs,
-        #)
-        #model, optimizer = accelerator.prepare(model, optimizer)
-
-        #model = ModuleProxyWrapper(model)
-        
-        for idx in range(num_subtransformers_for_finetuning):
-            
-            metric_to_track = "finetuned_subtransformer_" + str(idx) + "_accuracy"
-
-            subtransformer_output_dir = os.path.join(
-                args.output_dir, f"finetune_subtransformer_{str(idx)}"
-            )
+        # #optimizer = AdamW(
+        # #    params=model.parameters(), lr=args.learning_rate, correct_bias=correct_bias
+        # #)
 
 
-            best_val_accuracy = 0
-            # sample one random subtransformer
-            random_subtransformer_seed = idx * 1000
+        # #lr_scheduler = get_linear_schedule_with_warmup(
+        # #    optimizer=optimizer,
+        # #    num_warmup_steps=100,
+        # #    num_training_steps=len(train_dataloader)
+        # #    * fine_tuning_epochs,
+        # #)
+        # #model, optimizer = accelerator.prepare(model, optimizer)
 
-            ## initialize subtransformer
-            super_config = sample_subtransformer(
-                args.limit_subtransformer_choices,
-                randomize=True,
-                rand_seed=random_subtransformer_seed,
-            )
-            model.set_sample_config(super_config)
+        # #model = ModuleProxyWrapper(model)
 
-            # uncomment this block to use subtransformer from get_active_subnet
-            # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-            # model = model.get_active_subnet(super_config)
-            # model = model.to(accelerator.device)
+        # for idx in range(num_subtransformers_for_finetuning):
 
-            accelerator.print(
-                "Finetuning subtransformer with config: ",
-                print_subtransformer_config(super_config, accelerator),
-            )
+        #     metric_to_track = "finetuned_subtransformer_" + str(idx) + "_accuracy"
 
-            optim_scheduler_states = torch.load(optim_scheduler_states_path)
-            optimizer.load_state_dict(optim_scheduler_states["optimizer"])
-            lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
+        #     subtransformer_output_dir = os.path.join(
+        #         args.output_dir, f"finetune_subtransformer_{str(idx)}"
+        #     )
 
-            for epoch in range(fine_tuning_epochs):
 
-                train_transformer_one_epoch(
-                    args,
-                    model,
-                    optimizer,
-                    lr_scheduler,
-                    gradient_accumulation_steps,
-                    train_dataloader,
-                    accelerator,
-                    train_subtransformer=True,
-                    subtransformer_seed=random_subtransformer_seed,
-                )
-                # no need to sample config while validating in this case
-                # hence setting the sample to False
-                eval_metric = validate_subtransformer(
-                    model,
-                    super_config,
-                    eval_dataloader,
-                    accelerator,
-                    metric,
-                    task,
-                    sample=False,
-                )
+        #     best_val_accuracy = 0
+        #     # sample one random subtransformer
+        #     random_subtransformer_seed = idx * 1000
 
-                accelerator.print(f"Epoch {epoch + 1}:", end=" ")
+        #     ## initialize subtransformer
+        #     super_config = sample_subtransformer(
+        #         args.limit_subtransformer_choices,
+        #         randomize=True,
+        #         rand_seed=random_subtransformer_seed,
+        #     )
+        #     model.set_sample_config(super_config)
 
-                accelerator.print(eval_metric)
-                
-                if accelerator.is_main_process:
-                    wandb.log({"finetuning_epochs": epoch})
+        #     # uncomment this block to use subtransformer from get_active_subnet
+        #     # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
+        #     # model = model.get_active_subnet(super_config)
+        #     # model = model.to(accelerator.device)
 
-                sub_dict = {}
-                for key in eval_metric:
-                    sub_key = "finetuned_subtransformer_" + str(idx) + "_" + key
-                    sub_dict[sub_key] = eval_metric[key]
+        #     accelerator.print(
+        #         "Finetuning subtransformer with config: ",
+        #         print_subtransformer_config(super_config, accelerator),
+        #     )
 
-                accelerator.print(sub_dict)
+        #     optim_scheduler_states = torch.load(optim_scheduler_states_path)
+        #     optimizer.load_state_dict(optim_scheduler_states["optimizer"])
+        #     lr_scheduler.load_state_dict(optim_scheduler_states["scheduler"])
 
-                if accelerator.is_main_process:
-                    wandb.log(sub_dict)
+        #     for epoch in range(fine_tuning_epochs):
 
-               # early stopping
-                if eval_metric[metric_to_track] > best_val_accuracy:
-                    metric_not_improved_count = 0
-                    best_val_accuracy = eval_metric[metric_to_track]
-                    
-                    accelerator.wait_for_everyone()
-                    unwrapped_model = accelerator.unwrap_model(model)
-                    accelerator.save(unwrapped_model.state_dict(), subtransformer_output_dir)
-                    #accelerator.unwrap_model(model).save_pretrained(
-                    #    subtransformer_output_dir
-                    #)
-                else:
-                    metric_not_improved_count += 1
-                    if metric_not_improved_count >= args.early_stopping_patience:
-                        break
+        #         train_transformer_one_epoch(
+        #             args,
+        #             model,
+        #             optimizer,
+        #             lr_scheduler,
+        #             gradient_accumulation_steps,
+        #             train_dataloader,
+        #             accelerator,
+        #             train_subtransformer=True,
+        #             subtransformer_seed=random_subtransformer_seed,
+        #         )
+        #         # no need to sample config while validating in this case
+        #         # hence setting the sample to False
+        #         eval_metric = validate_subtransformer(
+        #             model,
+        #             super_config,
+        #             eval_dataloader,
+        #             accelerator,
+        #             metric,
+        #             task,
+        #             sample=False,
+        #         )
+
+        #         accelerator.print(f"Epoch {epoch + 1}:", end=" ")
+
+        #         accelerator.print(eval_metric)
+
+        #         if accelerator.is_main_process:
+        #             wandb.log({"finetuning_epochs": epoch})
+
+        #         sub_dict = {}
+        #         for key in eval_metric:
+        #             sub_key = "finetuned_subtransformer_" + str(idx) + "_" + key
+        #             sub_dict[sub_key] = eval_metric[key]
+
+        #         accelerator.print(sub_dict)
+
+        #         if accelerator.is_main_process:
+        #             wandb.log(sub_dict)
+
+        #        # early stopping
+        #         if eval_metric[metric_to_track] > best_val_accuracy:
+        #             metric_not_improved_count = 0
+        #             best_val_accuracy = eval_metric[metric_to_track]
+
+        #             accelerator.wait_for_everyone()
+        #             unwrapped_model = accelerator.unwrap_model(model)
+        #             accelerator.save(unwrapped_model.state_dict(), subtransformer_output_dir)
+        #             #accelerator.unwrap_model(model).save_pretrained(
+        #             #    subtransformer_output_dir
+        #             #)
+        #         else:
+        #             metric_not_improved_count += 1
+        #             if metric_not_improved_count >= args.early_stopping_patience:
+        #                 break
     else:
         ## train subtransformers from scratch
 
@@ -623,7 +623,7 @@ def training_function(args):
             )
 
             model = BertForSequenceClassification.from_pretrained(args.model_name_or_path)
-            
+
             model = model.to(accelerator.device)
             super_config.num_hidden_layers = super_config.sample_num_hidden_layers
             model.set_sample_config(super_config)
