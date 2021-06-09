@@ -295,10 +295,10 @@ if __name__=='__main__':
 
     predictor = LatencyPredictor()
 
-    # predictor.load_ckpt()
-    predictor.read_dataset()
-    predictor.split()
-    predictor.train()
+    # # predictor.load_ckpt()
+    # predictor.read_dataset()
+    # predictor.split()
+    # predictor.train()
     print('Latency predictor training finished')
 
     predictor.load_ckpt()

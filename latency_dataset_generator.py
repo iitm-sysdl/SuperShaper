@@ -23,8 +23,8 @@ import pandas as pd
 from tester import Tester
 
 class LatencyDatasetGenerator():
-    def __init__(self, path='./latency_dataset/sst2_gpu_gtx1080_tmp.csv', data_size=1000):
-        self.tester = Tester()
+    def __init__(self, path='./latency_dataset/sst2_gpu_gtx1080_tmp.csv', data_size=1000, cpu=False, fp16=True):
+        self.tester = Tester(cpu=cpu, fp16=fp16)
         self.num_sub = data_size
         self.num_supertransformer_layers = self.tester.get_supertransformer_config().sample_num_hidden_layers
 
@@ -52,7 +52,7 @@ class LatencyDatasetGenerator():
     # Function to generate a latency dataset:
     def generate(self):
         # Measure Average Latency for different sub-transformers:
-        avg_iter = 30
+        avg_iter = 5
         for subNo in range(self.num_sub):
             print(f'Evaluating subtransformer number {subNo}')
             lat_list = []
@@ -107,5 +107,5 @@ class LatencyDatasetGenerator():
 
 if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"]='false'
-    ldg = LatencyDatasetGenerator(path = './latency_dataset/dummy.csv', data_size=700)
+    ldg = LatencyDatasetGenerator(path = './latency_dataset/sst2_cpu.csv', data_size=1000, cpu=True, fp16=False)
     ldg.generate()

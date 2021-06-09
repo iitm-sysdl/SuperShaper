@@ -759,7 +759,7 @@ def main():
     )
     parser.add_argument(
         "--eval_random_subtransformers",
-        default=1,
+        default=0,
         type=int,
         help="If set to 1, this will evaluate 25 random subtransformers after every training epoch when training a supertransformer",
     )

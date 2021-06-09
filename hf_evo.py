@@ -121,6 +121,7 @@ class Evosearch:
         population = []
         cnt = 0
         total = 0
+        print(f"Random sampling beginning...")
         while cnt < self.population_size:
             candidate_gene = []
             for i in range(self.gene_len):
@@ -242,7 +243,7 @@ if __name__ == "__main__":
         2,
         2,
         search_space_example,
-        6.2,
+        2.1,
         # "checkpoints/mrpc/pytorch_model.bin",
         "mrpc",
         0.5,

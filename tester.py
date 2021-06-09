@@ -24,18 +24,7 @@ import os
 from pprint import pprint
 import pandas as pd
 import time
-
-def get_gpu_temperature():
-    if 'CUDA_VISIBLE_DEVICES' not in os.environ:
-        raise ValueError("Explicitly run script with cuda visible devices using: CUDA_VISIBLE_DEICES=<> python <> ...")
-    tempstr = os.popen("nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader").read().strip()
-    templst = [float(temp) for temp in tempstr.split('\n')]
-    devices = [int(deviceNo) for deviceNo in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
-    avg_temp = 0
-    for device in devices:
-        avg_temp += templst[device]
-    avg_temp /= len(devices)
-    return avg_temp
+import psutil
     
 
 class Tester:
@@ -55,6 +44,7 @@ class Tester:
     ):
 
         # Initialize accelerator
+        self.cpu = cpu
         accelerator = Accelerator(fp16=fp16, cpu=cpu)
 
         print("Running on: ", accelerator.device)
@@ -123,6 +113,20 @@ class Tester:
 
         # FINISH USING ckpt:
         self.ckpt_path = ckpt_path
+
+    def get_gpu_temperature(self):
+        if self.cpu:
+            return max([x[1] for x in psutil.sensors_temperatures()['coretemp'] if x[0][:4] == 'Core'])
+        if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+            raise ValueError("Explicitly run script with cuda visible devices using: CUDA_VISIBLE_DEICES=<> python <> ...")
+        tempstr = os.popen("nvidia-smi --query-gpu=temperature.gpu --format=csv,noheader").read().strip()
+        templst = [float(temp) for temp in tempstr.split('\n')]
+        devices = [int(deviceNo) for deviceNo in os.environ['CUDA_VISIBLE_DEVICES'].split(',')]
+        avg_temp = 0
+        for device in devices:
+            avg_temp += templst[device]
+        avg_temp /= len(devices)
+        return avg_temp
 
     # Returns the search space from which
     # sub-transformers are sampled:
@@ -200,10 +204,10 @@ class Tester:
     ):
         # Check temperature. Data points generated within [45, 70] C range
         # Data points will include temperature as a feature
-        if check_temp and get_gpu_temperature() >= 70:
-            while get_gpu_temperature() >= 55:
+        if check_temp and self.get_gpu_temperature() >= 70:
+            while self.get_gpu_temperature() >= 55:
                 time.sleep(60)
-        temp = get_gpu_temperature()
+        temp = self.get_gpu_temperature()
 
         # Set the subtransformer configuration:
         model.set_sample_config(config=config)
