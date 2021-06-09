@@ -283,8 +283,11 @@ def parse_args():
     parser.add_argument(
         "--line_by_line",
         type=bool,
-        default=False,
-        help="Whether distinct lines of text in the dataset are to be handled as distinct sequences.",
+        default=True,
+        help="""
+        Whether distinct lines of text in the dataset are to be handled as
+        distinct sequences. This is deafult for bert/electra models and should
+        be set to False for gpt/gpt2 type models""",
     )
     parser.add_argument(
         "--preprocessing_num_workers",
