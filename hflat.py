@@ -5,6 +5,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from sklearn.metrics import r2_score
+from sklearn.metrics import mean_squared_error
+
 ###################################################################
 # This latency predictor is taken and modified from the 
 # HAT implementation of the same. 
@@ -75,7 +78,19 @@ class Net(nn.Module):
 # Predicts latency given a config
 ###################################################################
 class LatencyPredictor(object):
-    def __init__(self, feature_norm=[768, 12, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 70], lat_norm=10, ckpt_path = './latency_dataset/ckpts/lgb_1.txt', lat_dataset_path='./latency_dataset/sst2_gpu_gtx1080_final_1.csv', feature_dim=27, hidden_dim=100, hidden_layer_num=3, train_steps=600, bsz=128, lr=1e-5):
+    def __init__(
+            self, 
+            feature_norm=[768, 12, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 70], 
+            lat_norm=4, 
+            ckpt_path = './latency_dataset/ckpts/nnlatcpkt.txt', 
+            lat_dataset_path='./latency_dataset/sst2_gpu_gtx1080_final.csv', 
+            feature_dim=27, 
+            hidden_dim=200, 
+            hidden_layer_num=3, 
+            train_steps=3500, 
+            bsz=128, 
+            lr=1e-4 
+        ):
         ###########################################
         # Leave Unchanged
         ###########################################
@@ -140,12 +155,15 @@ class LatencyPredictor(object):
             sample_y_tensor = torch.Tensor(self.test_y)
             prediction = self.model(sample_x_tensor).squeeze()
             loss = self.criterion(prediction, sample_y_tensor)
-            print(f"Predicted latency: {prediction}")
-            print(f"Real latency: {self.test_y}")
+            # print(f"Predicted latency: {prediction}")
+            # print(f"Real latency: {self.test_y}")
+            print('Testing...')
             print(f"Loss: {loss}")
 
-            print(f"RMSE: {np.sqrt(self.criterion(self.lat_norm*sample_y_tensor, self.lat_norm*prediction))}")
-            print(f"MAPD: {torch.mean(torch.abs((sample_y_tensor - prediction) / sample_y_tensor))}")
+            # print(f"RMSE: {np.sqrt(self.criterion(self.lat_norm*sample_y_tensor, self.lat_norm*prediction))}")
+            # print(f"MAPD: {torch.mean(torch.abs((sample_y_tensor - prediction) / sample_y_tensor))}")
+            print("R2 score val : ",r2_score(sample_y_tensor*self.lat_norm, prediction*self.lat_norm))
+            print("MSE score val: ", mean_squared_error(sample_y_tensor*self.lat_norm, prediction*self.lat_norm))
 
         torch.save(self.model.state_dict(), self.ckpt_path)
 
@@ -277,6 +295,7 @@ if __name__=='__main__':
 
     predictor = LatencyPredictor()
 
+    # predictor.load_ckpt()
     predictor.read_dataset()
     predictor.split()
     predictor.train()

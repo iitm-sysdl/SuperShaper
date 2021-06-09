@@ -107,5 +107,5 @@ class LatencyDatasetGenerator():
 
 if __name__ == "__main__":
     os.environ["TOKENIZERS_PARALLELISM"]='false'
-    ldg = LatencyDatasetGenerator(path = './latency_dataset/dummy.csv', data_size=1)
+    ldg = LatencyDatasetGenerator(path = './latency_dataset/dummy.csv', data_size=700)
     ldg.generate()

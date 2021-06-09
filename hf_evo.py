@@ -1,6 +1,10 @@
 import random
 from tqdm import tqdm
-from hflat import LatencyPredictor
+
+
+# from hflat import LatencyPredictor
+from hf_lat_lgbm import LatencyPredictor
+
 import numpy as np
 import matplotlib.pyplot as plt
 import random
@@ -61,7 +65,7 @@ class Evosearch:
             self.gene_choice.append(search_space["encoder_self_attention_heads"])
 
         self.latency_cap = latency_cap
-        self.predictor = LatencyPredictor()
+        self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_7225.txt')
         self.predictor.load_ckpt()
 
         self.tester = Tester(ckpt_path=ckpt_path, task=task)

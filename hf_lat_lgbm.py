@@ -31,7 +31,16 @@ class LatencyPredictor(object):
     # TODO: 
     # 1. add lgbm hyperparameters as cli
     #########################################
-    def __init__(self, feature_norm=[640, 6, 2048, 6], lat_norm=200, ckpt_path = './latency_dataset/ckpts/lgb_1.txt', lat_dataset_path='./latency_dataset/encoder_latency_1.csv', feature_dim=4):
+    def __init__(
+            self, 
+            # feature_norm=[640, 6, 2048, 6],
+            feature_norm = [768, 12, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 3072, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 70],
+            #  lat_norm=200, 
+            lat_norm = 4,
+             ckpt_path = './latency_dataset/ckpts/lgb_1.txt', 
+             lat_dataset_path='./latency_dataset/sst2_gpu_gtx1080_final.csv', 
+             feature_dim=27
+        ):
         self.dataset_path = lat_dataset_path
         self.feature_norm = np.array(feature_norm)
         self.lat_norm = lat_norm
@@ -65,15 +74,19 @@ class LatencyPredictor(object):
             'feature_fraction': 0.9,
             'bagging_fraction': 0.8,
             'bagging_freq': 5,
-            'verbose': 0
+            'verbose': 0,
+            # 'n_estimators': 1000,
         }
-        self.model = lgb.train(params= params,train_set= self.lgb_train_data, num_boost_round=100)
+        # params = {
+        #     'n_estimators': 500
+        # }
+        self.model = lgb.train(params= params,train_set= self.lgb_train_data, valid_sets=[self.lgb_test_data], num_boost_round=3000)
         print('Training of LightGBM finished...')
         # Test:
         print('Testing...')
         test_results = self.model.predict(self.test_x)
-        print("R2 score val : ",r2_score(self.test_y ,test_results))
-        print("MSE score val: ", mean_squared_error(self.test_y, test_results))
+        print("R2 score val : ",r2_score(self.test_y*self.lat_norm ,test_results*self.lat_norm))
+        print("MSE score val: ", mean_squared_error(self.test_y*self.lat_norm ,test_results*self.lat_norm))
         self.model.save_model(self.ckpt_path)
 
     def predict_lat(self, config):
@@ -126,18 +139,38 @@ class LatencyPredictor(object):
         with open(self.dataset_path, 'r') as fid:
             next(fid) # skip first line of CSV
             for line in fid:
-                features = line.split(',')[:self.feature_dim]
+                split_line = line.split(',')
+                features = split_line[:self.feature_dim-1]+[split_line[-1]]
+                # print(features)
                 features_eval = list(map(eval, features))
                 features_norm = np.array(features_eval) / self.feature_norm
                 features_norm_all.append(features_norm)
 
-                lats = line.split(',')[self.feature_dim:]
-                total_lat = eval(lats[0]) + eval(lats[1])
+                lats = [split_line[-2]]
+                # print(lats)
+                total_lat = eval(lats[0])
                 lats_all.append(total_lat / self.lat_norm)
         tmp = list(zip(features_norm_all, lats_all))
         random.shuffle(tmp)
         features_norm_all, lats_all = zip(*tmp)
         self.dataset = {'x': features_norm_all, 'y': lats_all}
+        # features_norm_all = []
+        # lats_all = []
+        # with open(self.dataset_path, 'r') as fid:
+        #     next(fid) # skip first line of CSV
+        #     for line in fid:
+        #         features = line.split(',')[:self.feature_dim]
+        #         features_eval = list(map(eval, features))
+        #         features_norm = np.array(features_eval) / self.feature_norm
+        #         features_norm_all.append(features_norm)
+
+        #         lats = line.split(',')[self.feature_dim:]
+        #         total_lat = eval(lats[0]) + eval(lats[1])
+        #         lats_all.append(total_lat / self.lat_norm)
+        # tmp = list(zip(features_norm_all, lats_all))
+        # random.shuffle(tmp)
+        # features_norm_all, lats_all = zip(*tmp)
+        # self.dataset = {'x': features_norm_all, 'y': lats_all}
     
     def get_config_features(self, config):
         ###########################################
@@ -152,12 +185,15 @@ class LatencyPredictor(object):
 
         encoder_layer_num = config['encoder']['encoder_layer_num']
         features.append(encoder_layer_num)
+        features += config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num]+[-1]*(12-encoder_layer_num)
+        features += config['encoder']['encoder_self_attention_heads'][:encoder_layer_num]+[-1]*(12-encoder_layer_num)
+        features.append(60)
 
-        encoder_ffn_embed_dim_mean = np.mean(config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num])
-        features.append(encoder_ffn_embed_dim_mean)
+        # encoder_ffn_embed_dim_mean = np.mean(config['encoder']['encoder_ffn_embed_dim'][:encoder_layer_num])
+        # features.append(encoder_ffn_embed_dim_mean)
 
-        encoder_self_attention_heads_mean = np.mean(config['encoder']['encoder_self_attention_heads'][:encoder_layer_num])
-        features.append(encoder_self_attention_heads_mean)
+        # encoder_self_attention_heads_mean = np.mean(config['encoder']['encoder_self_attention_heads'][:encoder_layer_num])
+        # features.append(encoder_self_attention_heads_mean)
 
         return features
 
