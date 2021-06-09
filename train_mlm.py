@@ -404,14 +404,14 @@ def parse_args():
 
     if args.c4_dir is not None:
         check_path(args.c4_dir)
-        #c4_train_dir = os.path.join(args.c4_dir, "train")
-        #c4_val_dir = os.path.join(args.c4_dir, "val")
-        #check_path(c4_train_dir)
-        #check_path(c4_val_dir)
+        # c4_train_dir = os.path.join(args.c4_dir, "train")
+        # c4_val_dir = os.path.join(args.c4_dir, "val")
+        # check_path(c4_train_dir)
+        # check_path(c4_val_dir)
 
         args.dataset_name = "c4_realnews"
-        #args.c4_train_dir = c4_train_dir
-        #args.c4_val_dir = c4_val_dir
+        # args.c4_train_dir = c4_train_dir
+        # args.c4_val_dir = c4_val_dir
 
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
         dataset_name = args.dataset_name.split("/")[-1].strip()
@@ -464,7 +464,7 @@ def main():
         logging.INFO if accelerator.is_local_main_process else logging.ERROR
     )
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_error()
+        datasets.utils.logging.set_verbosity_info()
         transformers.utils.logging.set_verbosity_error()
     else:
         datasets.utils.logging.set_verbosity_error()
@@ -500,21 +500,21 @@ def main():
         if args.dataset_name == "c4_realnews":
             logger.info("Loading C4 Dataset...")
             raw_datasets = datasets.load_from_disk(args.c4_dir)
-            #train_files = [
+            # train_files = [
             #    os.path.join(args.c4_train_dir, file)
             #    for file in os.listdir(args.c4_train_dir)
             #    if file.endswith("json.gz")
-            #]
-            #val_files = [
+            # ]
+            # val_files = [
             #    os.path.join(args.c4_val_dir, file)
             #    for file in os.listdir(args.c4_val_dir)
             #    if file.endswith("json.gz")
-            #]
-            #train_files = sorted(train_files)
-            #val_files = sorted(val_files)
-            #raw_datasets = load_dataset(
+            # ]
+            # train_files = sorted(train_files)
+            # val_files = sorted(val_files)
+            # raw_datasets = load_dataset(
             #    "json", data_files={"train": train_files, "validation": val_files}
-            #)
+            # )
 
         else:
             raw_datasets = load_dataset(args.dataset_name, args.dataset_config_name)
@@ -530,7 +530,7 @@ def main():
                     split=f"train[{args.validation_split_percentage}%:]",
                 )
             # limiting dataset for testing
-            raw_datasets["train"] = raw_datasets["train"].select(range(100))
+            # raw_datasets["train"] = raw_datasets["train"].select(range(100))
     else:
         data_files = {}
         if args.train_file is not None:
@@ -696,8 +696,8 @@ def main():
             num_proc=args.preprocessing_num_workers,
             load_from_cache_file=not args.overwrite_cache,
         )
-    
-    tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, '../c4-tokenized'))
+
+    # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
 
