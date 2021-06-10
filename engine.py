@@ -108,7 +108,7 @@ def show_args(accelerator, args):
     )
 
 
-def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12):
+def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12, gmlp=False):
     if limit_subtransformer_choices:
         choices = {
             "sample_hidden_size": [600, 768],
@@ -124,6 +124,7 @@ def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12):
             "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
             + [num_hidden_layers],
         }
+        choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if gmlp else choices["sample_hidden_size"]
     return choices
 
 
@@ -138,7 +139,7 @@ def sample_subtransformer(
         random.seed(rand_seed)
     if config is None:
         config = get_supertransformer_config(tiny_attn=tiny_attn)
-    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers)
+    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers, gmlp = (config.mixing == "gmlp"))
 
     ### Figuring the number of hidden layers
     hidden_layers_list = choices["sample_num_hidden_layers"]
