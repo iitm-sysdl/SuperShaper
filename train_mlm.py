@@ -215,11 +215,11 @@ def parse_args():
     parser.add_argument(
         "--learning_rate",
         type=float,
-        default=5e-5,
+        default=7e-4,
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
-        "--weight_decay", type=float, default=0.0, help="Weight decay to use."
+        "--weight_decay", type=float, default=0.01, help="Weight decay to use."
     )
     parser.add_argument(
         "--num_train_epochs",
@@ -593,6 +593,7 @@ def main():
     # add mixing to the config
     global_config.mixing = args.mixing
     global_config.tiny_attn = args.tiny_attn
+    global_config.hidden_dropout_prob = 0
     model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
@@ -644,7 +645,8 @@ def main():
             tokenize_function,
             batched=True,
             num_proc=args.preprocessing_num_workers,
-            remove_columns=column_names,
+            #remove_columns=column_names,
+            remove_columns = [text_column_name],
             load_from_cache_file=not args.overwrite_cache,
         )
     else:
@@ -698,6 +700,7 @@ def main():
         )
 
     # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
+    tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
 
@@ -929,7 +932,7 @@ def main():
         )
         completed_epochs += 1
 
-        if args.eval_random_subtransformers and completed_epochs % 30 == 0:
+        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
             hover_templates = []
             label_perplex = []
             sampling_dimensions = [

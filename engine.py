@@ -72,7 +72,8 @@ def get_supertransformer_config(
 
     if gmlp:
         # gmlp needs twice the encoder layers to match bert param size
-        config.num_hidden_layers = config.num_hidden_layers * 2
+        config.num_hidden_layers = 36
+        config.hidden_size = 512
     config.sample_hidden_size = config.hidden_size
     config.sample_num_hidden_layers = config.num_hidden_layers
 
