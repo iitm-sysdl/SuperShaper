@@ -860,6 +860,8 @@ def main():
     logger.info(len(rand_seed_lst))
     logger.info("Random seeds generation done..")
 
+    best_val_perplexity = 0
+
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
         seed = -1
@@ -932,6 +934,24 @@ def main():
         )
         completed_epochs += 1
 
+        if args.output_dir is not None:
+            accelerator.wait_for_everyone()
+            unwrapped_model = accelerator.unwrap_model(model)
+            unwrapped_model.save_pretrained(os.path.join(args.output_dir, 'best_model'), save_function=accelerator.save)
+            if best_val_perplexity >= eval_metric["perplexity"]:  ## Saving the best model
+                best_val_perplexity = eval_metric["perplexity"]
+                accelerator.save(
+                    {
+                        "epoch": completed_epochs,
+                        "steps": completed_steps,
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": lr_scheduler.state_dict(),
+                        "scaler": accelerator.scaler.state_dict(),
+                    },
+                    args.optim_scheduler_states_path,
+                )
+
+
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
             hover_templates = []
             label_perplex = []
@@ -996,10 +1016,13 @@ def main():
                 )
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
+
+
+
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained(args.output_dir, save_function=accelerator.save)
+        unwrapped_model.save_pretrained(os.path.join(args.output_dir,'last_model'), save_function=accelerator.save)
         accelerator.save(
             {
                 "epoch": completed_epochs,
