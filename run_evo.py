@@ -57,7 +57,7 @@ if __name__ == "__main__":
     accel.print(f'Min latency = {min_latency}\nMax latency = {max_latency}\nlatency thresholds = {latency_thresholds}')
 
     # Setup tasks and evosearch params:
-    tasks = ['qnli', 'rte', 'mrpc', 'qqp']
+    tasks = ['sst2']
     pop_sizes = {'qnli':24, 'sst2':30, 'rte': 30, 'mrpc': 30, 'qqp':24}
     par_sizes = {'qnli':8, 'sst2':10, 'rte': 10, 'mrpc': 10, 'qqp': 8}
     mut_sizes = {'qnli': 8, 'sst2': 10, 'rte': 10, 'mrpc': 10, 'qqp': 8}
