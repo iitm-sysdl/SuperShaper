@@ -5,6 +5,7 @@ import lightgbm as lgb
 from scipy import stats
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error
+from matplotlib import pyplot as plt
 
 ###################################################################
 # This latency predictor is taken and modified from the 
@@ -64,24 +65,25 @@ class LatencyPredictor(object):
         self.model = lgb.Booster(model_file=self.ckpt_path)
     
     def train(self):
-        print('Training...')
-        params = {
-            'boosting_type': 'gbdt',
-            'objective': 'regression',
-            'metric': {'l2'},
-            'num_leaves': 31,
-            'learning_rate': 0.05,
-            'feature_fraction': 0.9,
-            'bagging_fraction': 0.8,
-            'bagging_freq': 5,
-            'verbose': 0,
-            # 'n_estimators': 1000,
-        }
+        # print('Training...')
         # params = {
-        #     'n_estimators': 500
+        #     'boosting_type': 'gbdt',
+        #     'objective': 'regression',
+        #     'metric': {'l2'},
+        #     'num_leaves': 31,
+        #     'learning_rate': 0.05,
+        #     'feature_fraction': 0.9,
+        #     'bagging_fraction': 0.8,
+        #     'bagging_freq': 5,
+        #     'verbose': 0,
+        #     # 'n_estimators': 1000,
         # }
-        self.model = lgb.train(params= params,train_set= self.lgb_train_data, valid_sets=[self.lgb_test_data], num_boost_round=3000)
-        print('Training of LightGBM finished...')
+        # # params = {
+        # #     'n_estimators': 500
+        # # }
+        # self.model = lgb.train(params= params,train_set= self.lgb_train_data, valid_sets=[self.lgb_test_data], num_boost_round=3000)
+        # print('Training of LightGBM finished...')
+
         # Test:
         print('Testing...')
         test_results = self.model.predict(self.test_x)
@@ -89,16 +91,28 @@ class LatencyPredictor(object):
         print("MSE score val: ", mean_squared_error(self.test_y*self.lat_norm ,test_results*self.lat_norm))
         self.model.save_model(self.ckpt_path)
 
+
+        for i in range(100):
+            if self.test_y[i]*self.lat_norm < 2.0:
+                print(f'predicted = {test_results[i]*self.lat_norm} and actual = {self.test_y[i]*self.lat_norm}')
+        
+
+        #plot predicted vs actual:
+        plt.scatter(x=self.test_y*self.lat_norm, y=test_results*self.lat_norm, c='blue')
+        plt.xlabel('actual(s)')
+        plt.ylabel('predicted(s)')
+        plt.savefig('lgb_pred_vs_act.jpg')
+
     def predict_lat(self, config):
         ###########################################
         # Predict using trained LightGBM
         # de-normalize and return
         ###########################################        
-        features = [self.get_config_features(config)]
-        features_norm = np.array(features) / self.feature_norm
+        features = [np.array(self.get_config_features(config)) / self.feature_norm]
+        features_norm = np.array(features)
 
-        prediction = self.model.predict(features) * self.lat_norm
-        return prediction[0]
+        prediction = self.model.predict(features)
+        return prediction[0]*self.lat_norm
 
     def split(self):
         ###########################################
@@ -199,22 +213,34 @@ class LatencyPredictor(object):
 
 
 if __name__=='__main__':
-    predictor = LatencyPredictor()
-    predictor.read_dataset()
-    predictor.split()
-    predictor.train()
+    predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_724.txt')
+    # predictor.load_ckpt()
+    # predictor.read_dataset()
+    # predictor.split()
+    # predictor.train()
     print('Latency predictor training finished...')
 
     predictor.load_ckpt()
     config_example = {
         'encoder': {
-            'encoder_embed_dim': 512,
-            'encoder_layer_num': 6,
-            'encoder_ffn_embed_dim': [1024, 1024, 1024, 1024, 2048, 2048],
-            'encoder_self_attention_heads': [8, 8, 8, 8, 8, 4],
+            'encoder_embed_dim': 768,
+            'encoder_layer_num': 12,
+            'encoder_ffn_embed_dim': [3072]*12,
+            'encoder_self_attention_heads': [12]*12,
         }
     }
-
+    predict = predictor.predict_lat(config_example)
+    print(f'Example config: {config_example}')
+    print(f'Example latency: {predict}')
+    config_example = {
+        'encoder': {
+            'encoder_embed_dim': 360,
+            'encoder_layer_num': 2,
+            'encoder_ffn_embed_dim': [512]*2,
+            'encoder_self_attention_heads': [6]*2,
+        }
+    }
+    # print(predictor.get_config_features(config_example))
     predict = predictor.predict_lat(config_example)
     print(f'Example config: {config_example}')
     print(f'Example latency: {predict}')

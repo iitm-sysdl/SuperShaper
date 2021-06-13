@@ -8,6 +8,8 @@ import torch.nn.functional as F
 from sklearn.metrics import r2_score
 from sklearn.metrics import mean_squared_error
 
+from matplotlib import pyplot as plt
+
 ###################################################################
 # This latency predictor is taken and modified from the 
 # HAT implementation of the same. 
@@ -89,7 +91,7 @@ class LatencyPredictor(object):
             hidden_layer_num=3, 
             train_steps=3500, 
             bsz=128, 
-            lr=1e-4 
+            lr=5e-5 
         ):
         ###########################################
         # Leave Unchanged
@@ -164,6 +166,12 @@ class LatencyPredictor(object):
             # print(f"MAPD: {torch.mean(torch.abs((sample_y_tensor - prediction) / sample_y_tensor))}")
             print("R2 score val : ",r2_score(sample_y_tensor*self.lat_norm, prediction*self.lat_norm))
             print("MSE score val: ", mean_squared_error(sample_y_tensor*self.lat_norm, prediction*self.lat_norm))
+
+            #plot predicted vs actual:
+            plt.scatter(x=sample_y_tensor*self.lat_norm, y=prediction*self.lat_norm, c='blue')
+            plt.xlabel('actual (sec)')
+            plt.ylabel('predicted (sec)')
+            plt.savefig('nn_pred_vs_act.jpg')
 
         torch.save(self.model.state_dict(), self.ckpt_path)
 
@@ -296,18 +304,29 @@ if __name__=='__main__':
     predictor = LatencyPredictor()
 
     # # predictor.load_ckpt()
-    # predictor.read_dataset()
-    # predictor.split()
-    # predictor.train()
+    predictor.read_dataset()
+    predictor.split()
+    predictor.train()
     print('Latency predictor training finished')
 
     predictor.load_ckpt()
     config_example = {
         'encoder': {
             'encoder_embed_dim': 768,
-            'encoder_layer_num': 8,
-            'encoder_ffn_embed_dim': [3072, 1024, 3072, 1024, 2048, 2048, 3072, 3072],
-            'encoder_self_attention_heads': [8, 12, 4, 12, 8, 6, 8, 6],
+            'encoder_layer_num': 12,
+            'encoder_ffn_embed_dim': [3072]*12,
+            'encoder_self_attention_heads': [12]*12,
+        }
+    }
+    predict = predictor.predict_lat(config_example)
+    print(f'Example config: {config_example}')
+    print(f'Example latency: {predict}')
+    config_example = {
+        'encoder': {
+            'encoder_embed_dim': 360,
+            'encoder_layer_num': 2,
+            'encoder_ffn_embed_dim': [512]*2,
+            'encoder_self_attention_heads': [6]*2,
         }
     }
 

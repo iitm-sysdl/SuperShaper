@@ -41,11 +41,16 @@ class Tester:
         fp16=True,
         cpu=False,
         seed=42,
+        accel=None
     ):
 
         # Initialize accelerator
         self.cpu = cpu
-        accelerator = Accelerator(fp16=fp16, cpu=cpu)
+        self.accel = accel
+        accelerator = accel
+        if accel is None:
+            accelerator = Accelerator(fp16=fp16, cpu=cpu)
+            self.accel = accelerator
 
         print("Running on: ", accelerator.device)
 
@@ -89,12 +94,21 @@ class Tester:
             )
 
         # Instantiate dataloader
-        eval_dataloader = DataLoader(
-            glue_task.eval_dataset,
-            shuffle=False,
-            collate_fn=collate_fn,
-            batch_size=per_gpu_eval_batch_size,
-        )
+        eval_dataloader = None
+        if task == 'qqp' or task == 'qnli':
+            eval_dataloader = DataLoader(
+                glue_task.eval_dataset.shuffle(seed=seed).select(range(1000)),
+                shuffle=False,
+                collate_fn=collate_fn,
+                batch_size=per_gpu_eval_batch_size,
+            )
+        else:
+            eval_dataloader = DataLoader(
+                glue_task.eval_dataset,
+                shuffle=False,
+                collate_fn=collate_fn,
+                batch_size=per_gpu_eval_batch_size,
+            )
 
         model = glue_task.model
         metric = glue_task.metric

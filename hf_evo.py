@@ -45,6 +45,7 @@ class Evosearch:
         mutation_prob,
         evo_iter,
         ckpt_path=None,  # Trained supertransformer model
+        accel=None
         # Figure this out as we go
     ):
         self.super_num_layers = super_num_layers
@@ -65,10 +66,11 @@ class Evosearch:
             self.gene_choice.append(search_space["encoder_self_attention_heads"])
 
         self.latency_cap = latency_cap
-        self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_7225.txt')
+        self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_724.txt')
         self.predictor.load_ckpt()
 
-        self.tester = Tester(ckpt_path=ckpt_path, task=task)
+        self.tester = Tester(ckpt_path=ckpt_path, task=task, accel=accel)
+        self.accelerator = self.tester.accel
 
     def config2gene(self, config):
         gene = []
@@ -121,7 +123,7 @@ class Evosearch:
         population = []
         cnt = 0
         total = 0
-        print(f"Random sampling beginning...")
+        self.accelerator.print(f"Random sampling beginning...")
         while cnt < self.population_size:
             candidate_gene = []
             for i in range(self.gene_len):
@@ -130,7 +132,7 @@ class Evosearch:
                 population.append(candidate_gene)
                 cnt += 1
             total += 1
-        print(
+        self.accelerator.print(
             f"Only {cnt} out of {total} total generated samples were under latency cap."
         )
         return population
@@ -184,20 +186,21 @@ class Evosearch:
 
     def run_evo_search(self):
         popu = self.random_sample()
-
         all_scores_list = []
 
         for i in range(self.evo_iter):
-            print(f"| Start Iteration {i}:")
+            self.accelerator.print(f"| Start Iteration {i}:")
             popu_scores = self.get_scores(popu)
-            print(f"| Iteration {i}, Highest Accuracy: {max(popu_scores)}")
+            self.max_acc = max(popu_scores)
+            self.accelerator.print(f"| Iteration {i}, Highest Accuracy: {self.max_acc}")
 
             sorted_ind = np.array(popu_scores).argsort()[::-1][: self.parent_size]
 
             self.best_config = self.gene2config(popu[sorted_ind[0]])
-            print(f"| Config for highest accuracy model: {self.best_config}")
-            print(
-                f"| Predicted latency for highest accuracy model: {self.predictor.predict_lat(self.gene2config(popu[sorted_ind[0]]))}"
+            self.accelerator.print(f"| Config for highest accuracy model: {self.best_config}")
+            self.config_latency = self.predictor.predict_lat(self.gene2config(popu[sorted_ind[0]]))
+            self.accelerator.print(
+                f"| Predicted latency for highest accuracy model: {self.config_latency}"
             )
 
             parents_popu = [popu[m] for m in sorted_ind]
@@ -224,8 +227,7 @@ class Evosearch:
                     k += 1
 
             popu = parents_popu + mutate_popu + crossover_popu
-
-        return self.best_config
+        return self.best_config, self.max_acc, self.config_latency
 
 
 if __name__ == "__main__":
@@ -236,17 +238,20 @@ if __name__ == "__main__":
         "encoder_ffn_embed_dim": [512, 1024, 2048, 3072],
         "encoder_self_attention_heads": [6, 8, 10, 12],
     }
+    
+    # for 
     runner = Evosearch(
         12,
-        6,
-        2,
-        2,
-        2,
-        search_space_example,
-        2.1,
-        # "checkpoints/mrpc/pytorch_model.bin",
-        "mrpc",
-        0.5,
+        10,
         3,
+        4,
+        3,
+        search_space_example,
+        2.5,
+        "mrpc",
+        0.4,
+        1,
+        "checkpoints/qqp/pytorch_model.bin",
     )
-    best_config = runner.run_evo_search()
+    best_config, _, _ = runner.run_evo_search()
+
