@@ -13,6 +13,8 @@ for task in tasks:
         plt.ylabel('accuracy')
         x = []
         y = []
+
+        # Get all points from the evosearch dump:
         for i in range(5):
             filename = f'{dirname}{device}/{task}/evo_dump_lat_{i}.txt'
             file = open(filename, 'r')
@@ -21,6 +23,8 @@ for task in tasks:
             latency = float(lines[2].strip())
             x.append(latency)
             y.append(accuracy)
+
+        # removing interior points of the pareto:
         ind = np.argsort(np.array(x))
         x = list(np.array(x)[ind])
         y = list(np.array(y)[ind])
@@ -30,6 +34,8 @@ for task in tasks:
             if yn[-1] < y[i]:
                 xn.append(x[i])
                 yn.append(y[i])
+        
+        # Plot all the points according to device:
         plt.plot(
             xn,
             yn,
