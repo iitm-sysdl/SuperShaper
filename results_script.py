@@ -21,12 +21,18 @@ for task in tasks:
             latency = float(lines[2].strip())
             x.append(latency)
             y.append(accuracy)
-        # ind = np.argsort(np.array(x))
-        # x = list(np.array(x)[ind])
-        # y = list(np.array(y)[ind])
+        ind = np.argsort(np.array(x))
+        x = list(np.array(x)[ind])
+        y = list(np.array(y)[ind])
+        xn = [x[0]]
+        yn = [y[0]]
+        for i in range(1, 5):
+            if yn[-1] < y[i]:
+                xn.append(x[i])
+                yn.append(y[i])
         plt.plot(
-            x, 
-            y, 
+            xn,
+            yn,
             color=col[device], 
             linestyle='dashed', 
             linewidth = 3, 
