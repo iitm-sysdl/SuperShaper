@@ -66,7 +66,8 @@ class Evosearch:
             self.gene_choice.append(search_space["encoder_self_attention_heads"])
 
         self.latency_cap = latency_cap
-        self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_724.txt')
+        self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_cpu_985.txt')
+        # self.predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_724.txt')
         self.predictor.load_ckpt()
 
         self.tester = Tester(ckpt_path=ckpt_path, task=task, accel=accel)

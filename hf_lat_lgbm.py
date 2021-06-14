@@ -65,24 +65,24 @@ class LatencyPredictor(object):
         self.model = lgb.Booster(model_file=self.ckpt_path)
     
     def train(self):
-        # print('Training...')
+        print('Training...')
+        params = {
+            'boosting_type': 'gbdt',
+            'objective': 'regression',
+            'metric': {'l2'},
+            'num_leaves': 31,
+            'learning_rate': 0.05,
+            'feature_fraction': 0.9,
+            'bagging_fraction': 0.8,
+            'bagging_freq': 5,
+            'verbose': 0,
+            # 'n_estimators': 1000,
+        }
         # params = {
-        #     'boosting_type': 'gbdt',
-        #     'objective': 'regression',
-        #     'metric': {'l2'},
-        #     'num_leaves': 31,
-        #     'learning_rate': 0.05,
-        #     'feature_fraction': 0.9,
-        #     'bagging_fraction': 0.8,
-        #     'bagging_freq': 5,
-        #     'verbose': 0,
-        #     # 'n_estimators': 1000,
+        #     'n_estimators': 500
         # }
-        # # params = {
-        # #     'n_estimators': 500
-        # # }
-        # self.model = lgb.train(params= params,train_set= self.lgb_train_data, valid_sets=[self.lgb_test_data], num_boost_round=3000)
-        # print('Training of LightGBM finished...')
+        self.model = lgb.train(params= params,train_set= self.lgb_train_data, valid_sets=[self.lgb_test_data], num_boost_round=3000)
+        print('Training of LightGBM finished...')
 
         # Test:
         print('Testing...')
@@ -213,11 +213,11 @@ class LatencyPredictor(object):
 
 
 if __name__=='__main__':
-    predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_724.txt')
+    predictor = LatencyPredictor(ckpt_path='./latency_dataset/ckpts/lgb_cpu_1.txt', lat_dataset_path='./latency_dataset/sst2_cpu.csv')
     # predictor.load_ckpt()
-    # predictor.read_dataset()
-    # predictor.split()
-    # predictor.train()
+    predictor.read_dataset()
+    predictor.split()
+    predictor.train()
     print('Latency predictor training finished...')
 
     predictor.load_ckpt()

@@ -1,4 +1,4 @@
 {'encoder': {'encoder_embed_dim': 768, 'encoder_layer_num': 10, 'encoder_ffn_embed_dim': [3072, 3072, 3072, 3072, 1024, 512, 512, 3072, 1024, 1024], 'encoder_self_attention_heads': [8, 6, 12, 8, 12, 10, 12, 12, 10, 8]}}
 0.8795871559633027
-1.998108455817403
+11.241361608686
 53477376
