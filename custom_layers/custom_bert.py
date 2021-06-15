@@ -625,7 +625,11 @@ class BertFNet(nn.Module):
         super().__init__()
 
         self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.linear = CustomLinear(config.hidden_size, config.intermediate_size)
+        self.linear_inter = CustomLinear(config.hidden_size, config.intermediate_size)
+        self.linear_final = CustomLinear(config.intermediate_size, config.hidden_size)
+        self.dropout_inter = nn.Dropout(config.hidden_dropout_prob)
+        self.dropout_final = nn.Dropout(config.hidden_dropout_prob)
+        self.act = nn.GELU()
         self.is_identity_layer = False
 
     def set_sample_config(self, config, is_identity_layer=False):
@@ -633,13 +637,30 @@ class BertFNet(nn.Module):
             self.is_identity_layer = True
             return
         self.is_identity_layer = False
-        self.norm.set_sample_config(config.hidden_size)
-        # self.linear.set_sample_config(config.sample_hidden_size, config.sample_intermediate_size)
+        self.norm.set_sample_config(config.sample_hidden_size)
+        self.linear_inter.set_sample_config(config.sample_hidden_size, config.sample_intermediate_size)
+        self.linear_final.set_sample_config(config.sample_intermediate_size, config.sample_hidden_size)
+
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.intermediate_size,
+            sample_hidden_size=config.sample_intermediate_size,
+        )
+        self.dropout_inter = nn.Dropout(sample_hidden_dropout_prob)
+
+        sample_hidden_dropout_prob = calc_dropout(
+            config.hidden_dropout_prob,
+            super_hidden_size=config.hidden_size,
+            sample_hidden_size=config.sample_hidden_size,
+        )
+        self.dropout_final = nn.Dropout(sample_hidden_dropout_prob)
 
     def get_active_subnet(self, config):
         subnet = BertFNet(config)
-        # subnet.norm = self.norm.get_active_subnet(config)
-        # subnet.linear = self.linear.get_active_subnet()
+        subnet.norm = self.norm.get_active_subnet(config)
+
+        subnet.linear_inter = self.linear_inter.get_active_subnet()
+        subnet.linear_final = self.linear_final.get_active_subnet()
 
         return subnet
 
@@ -653,7 +674,6 @@ class BertFNet(nn.Module):
         past_key_value=None,
         output_attentions=False,
     ):
-
         residual = hidden_states
 
         if self.is_identity_layer:
@@ -661,13 +681,17 @@ class BertFNet(nn.Module):
 
         x = torch.fft.fft(hidden_states, dim=-1)  # Applying FFT along the embedding dim
         x = torch.fft.fft(x, dim=-2).real  # Applying FFT along the token or seq_len dim
-
         x += residual
-
+        
         x = self.norm(x)
         x_res = x
 
-        x = self.linear(x)
+        x = self.linear_inter(x)
+        x = self.act(x)
+        x = self.dropout_inter(x)
+        x = self.linear_final(x)
+        x = self.dropout_final(x)
+        
         x += x_res
 
         x = self.norm(x)

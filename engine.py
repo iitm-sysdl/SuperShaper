@@ -25,6 +25,7 @@ from tasks.glue.prepare_task import GlueTask
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from utils.wipe_memory import free_memory, get_gpu_memory
 from utils.early_stopping import EarlyStopping
+import copy 
 
 GLUE_TASKS = [
     "cola",
@@ -139,6 +140,7 @@ def sample_subtransformer(
         random.seed(rand_seed)
     if config is None:
         config = get_supertransformer_config(tiny_attn=tiny_attn)
+    config = copy.deepcopy(config)
     choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers, gmlp = (config.mixing == "gmlp"))
 
     ### Figuring the number of hidden layers
