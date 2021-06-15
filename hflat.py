@@ -89,9 +89,9 @@ class LatencyPredictor(object):
             feature_dim=27, 
             hidden_dim=200, 
             hidden_layer_num=3, 
-            train_steps=3500, 
+            train_steps=5000, 
             bsz=128, 
-            lr=5e-5 
+            lr=1e-4 
         ):
         ###########################################
         # Leave Unchanged
