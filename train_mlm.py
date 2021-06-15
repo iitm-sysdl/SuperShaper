@@ -938,7 +938,7 @@ def main():
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
             unwrapped_model.save_pretrained(os.path.join(args.output_dir, 'best_model'), save_function=accelerator.save)
-            if best_val_perplexity >= eval_metric["perplexity"]:  ## Saving the best model
+            if best_val_perplexity <= eval_metric["perplexity"]:  ## Saving the best model
                 best_val_perplexity = eval_metric["perplexity"]
                 accelerator.save(
                     {
