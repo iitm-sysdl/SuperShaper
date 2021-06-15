@@ -67,14 +67,15 @@ def show_random_elements(dataset, accelerator, num_examples=10):
 
 
 def get_supertransformer_config(
-    model_name_or_path="bert-base-cased", tiny_attn=False, gmlp=False
+    model_name_or_path="bert-base-cased", tiny_attn=False, mixing = 'attention'
 ):
     config = AutoConfig.from_pretrained(model_name_or_path)
 
-    if gmlp:
+    if mixing == 'gmlp':
         # gmlp needs twice the encoder layers to match bert param size
         config.num_hidden_layers = 36
         config.hidden_size = 512
+
     config.sample_hidden_size = config.hidden_size
     config.sample_num_hidden_layers = config.num_hidden_layers
 
@@ -109,7 +110,7 @@ def show_args(accelerator, args):
     )
 
 
-def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12, gmlp=False):
+def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12, mixing='attention'):
     if limit_subtransformer_choices:
         choices = {
             "sample_hidden_size": [600, 768],
@@ -125,7 +126,7 @@ def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12, gmlp=F
             "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
             + [num_hidden_layers],
         }
-        choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if gmlp else choices["sample_hidden_size"]
+        choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if mixing == 'gmlp' else choices["sample_hidden_size"]
     return choices
 
 
@@ -139,9 +140,9 @@ def sample_subtransformer(
     if randomize:
         random.seed(rand_seed)
     if config is None:
-        config = get_supertransformer_config(tiny_attn=tiny_attn)
+        config = get_supertransformer_config(mixing = config.mixing)
     config = copy.deepcopy(config)
-    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers, gmlp = (config.mixing == "gmlp"))
+    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers, mixing=config.mixing)
 
     ### Figuring the number of hidden layers
     hidden_layers_list = choices["sample_num_hidden_layers"]

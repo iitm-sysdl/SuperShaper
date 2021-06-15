@@ -555,10 +555,9 @@ def main():
     # else:
     #     config = CONFIG_MAPPING[args.model_type]()
     #     logger.warning("You are instantiating a new config instance from scratch.")
-    is_gmlp_model = args.mixing == "gmlp"
 
     global_config = get_supertransformer_config(
-        args.model_name_or_path, tiny_attn=args.tiny_attn, gmlp=is_gmlp_model
+        args.model_name_or_path, tiny_attn=args.tiny_attn, mixing=args.mixing
     )
 
     if args.tokenizer_name:
