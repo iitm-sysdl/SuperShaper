@@ -588,6 +588,9 @@ def main():
     if args.max_seq_length:
         global_config.max_seq_length = args.max_seq_length
     else:
+        logger.warning(
+                f"The max_seq_length is not defined!! Setting it to max length in tokenizer"
+            )
         global_config.max_seq_length = tokenizer.model_max_length
     # add mixing to the config
     global_config.mixing = args.mixing
