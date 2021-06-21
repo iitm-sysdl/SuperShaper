@@ -142,7 +142,7 @@ def validate_subtransformer(
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Finetune a transformers model on a Masked Language Modeling task"
+        description="Pretrain/Finetune a transformers model on a Masked Language Modeling task"
     )
     parser.add_argument(
         "--dataset_name",
@@ -315,12 +315,12 @@ def parse_args():
         type=int,
         help="Patience for early stopping to stop training if val_acc doesnt converge",
     )
-    parser.add_argument(
-        "--limit_subtransformer_choices",
-        default=0,
-        type=int,
-        help="If set to 1, it will limit the hidden_size and number of encoder layers of the subtransformer choices",
-    )
+    # parser.add_argument(
+    #     "--limit_subtransformer_choices",
+    #     default=0,
+    #     type=int,
+    #     help="If set to 1, it will limit the hidden_size and number of encoder layers of the subtransformer choices",
+    # )
     parser.add_argument(
         "--eval_random_subtransformers",
         default=1,
@@ -374,7 +374,7 @@ def parse_args():
 
     args = parser.parse_args()
 
-    args.model_name_or_path = "bert-base-cased"
+    # args.model_name_or_path = "bert-base-cased"
     # Sanity checks
     if (
         args.dataset_name is None
@@ -589,8 +589,8 @@ def main():
         global_config.max_seq_length = args.max_seq_length
     else:
         logger.warning(
-                f"The max_seq_length is not defined!! Setting it to max length in tokenizer"
-            )
+            f"The max_seq_length is not defined!! Setting it to max length in tokenizer"
+        )
         global_config.max_seq_length = tokenizer.model_max_length
     # add mixing to the config
     global_config.mixing = args.mixing
@@ -647,8 +647,8 @@ def main():
             tokenize_function,
             batched=True,
             num_proc=args.preprocessing_num_workers,
-            #remove_columns=column_names,
-            remove_columns = [text_column_name],
+            # remove_columns=column_names,
+            remove_columns=[text_column_name],
             load_from_cache_file=not args.overwrite_cache,
         )
     else:
@@ -754,6 +754,8 @@ def main():
 
     if args.resume_from_checkpoint_dir is not None:
         logger.info("Loading model weights from checkpoint ..")
+        # we load the model before preparing
+        # see this for details: https://github.com/huggingface/accelerate/issues/95
         model.from_pretrained(args.resume_from_checkpoint_dir)
 
         optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
@@ -862,7 +864,7 @@ def main():
     logger.info(len(rand_seed_lst))
     logger.info("Random seeds generation done..")
 
-    best_val_perplexity = 0
+    best_val_perplexity = 1000000
 
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
@@ -939,8 +941,13 @@ def main():
         if args.output_dir is not None:
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(os.path.join(args.output_dir, 'best_model'), save_function=accelerator.save)
-            if best_val_perplexity <= eval_metric["perplexity"]:  ## Saving the best model
+            unwrapped_model.save_pretrained(
+                os.path.join(args.output_dir, "best_model"),
+                save_function=accelerator.save,
+            )
+            if (
+                best_val_perplexity >= eval_metric["perplexity"]
+            ):  ## Saving the best model
                 best_val_perplexity = eval_metric["perplexity"]
                 accelerator.save(
                     {
@@ -952,7 +959,6 @@ def main():
                     },
                     args.optim_scheduler_states_path,
                 )
-
 
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
             hover_templates = []
@@ -967,14 +973,15 @@ def main():
             for i in range(args.num_subtransformers_monitor):
                 random_seed = rand_seed_lst[i]
                 config = sample_subtransformer(
-                    args.limit_subtransformer_choices,
+                    False,
                     randomize=True,
                     rand_seed=random_seed,
                     tiny_attn=args.tiny_attn,
                     config=global_config,
                 )
 
-                config.random_seed = rand_seed_lst
+                config.random_seed = random_seed
+                model.set_sample_config(config)
 
                 eval_metric = validate_subtransformer(
                     model,
@@ -1018,13 +1025,12 @@ def main():
                 )
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
-
-
-
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
         unwrapped_model = accelerator.unwrap_model(model)
-        unwrapped_model.save_pretrained(os.path.join(args.output_dir,'last_model'), save_function=accelerator.save)
+        unwrapped_model.save_pretrained(
+            os.path.join(args.output_dir, "last_model"), save_function=accelerator.save
+        )
         accelerator.save(
             {
                 "epoch": completed_epochs,
