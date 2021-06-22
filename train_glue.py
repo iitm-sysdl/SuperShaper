@@ -820,7 +820,7 @@ def main():
 
         early_stopping(eval_metric)
 
-        if early_stopping.counter is 0:
+        if early_stopping.counter == 0:
             # if counter is 0, it means the metric has improved
             accelerator.wait_for_everyone()
             unwrapped_model = accelerator.unwrap_model(model)
