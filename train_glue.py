@@ -817,96 +817,100 @@ def main():
             wandb.log(eval_metric)
         completed_epochs += 1
 
-    if args.output_dir is not None:
+        if args.output_dir is not None:
 
-        early_stopping(eval_metric)
+            early_stopping(eval_metric)
 
-        if early_stopping.counter == 0:
-            # if counter is 0, it means the metric has improved
-            accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(
-                os.path.join(args.output_dir, "best_model"),
-                save_function=accelerator.save,
-            )
-            accelerator.save(
-                {
-                    "epoch": completed_epochs,
-                    "steps": completed_steps,
-                    "optimizer": optimizer.state_dict(),
-                    "scheduler": lr_scheduler.state_dict(),
-                    "scaler": accelerator.scaler.state_dict(),
-                    "accuracy": early_stopping.best_score,
-                },
-                args.optim_scheduler_states_path,
-            )
-        if early_stopping.early_stop:
-            logger.info(
-                "==========================================================================="
-            )
-            logger.info(
-                f"Early Stopping !!! {metric} hasnt improved for {args.early_stopping_patience} epochs"
-            )
-            logger.info(
-                "==========================================================================="
-            )
-
-    if args.eval_random_subtransformers and completed_epochs % 1 == 0:
-        hover_templates = []
-        label_acc = []
-        sampling_dimensions = [
-            "sample_hidden_size",
-            "sample_num_attention_heads",
-            "sample_intermediate_size",
-            "sample_num_hidden_layers",
-            "random_seed",
-        ]
-        for i in range(args.num_subtransformers_monitor):
-            random_seed = rand_seed_lst[i]
-            config = sample_subtransformer(
-                False,
-                randomize=True,
-                rand_seed=random_seed,
-                tiny_attn=args.tiny_attn,
-                config=global_config,
-            )
-
-            config.random_seed = random_seed
-            model.set_sample_config(config)
-
-            eval_metric = validate_subtransformer(
-                model, args.task_name, eval_dataloader, accelerator
-            )
-            # eval_metric['validation_random_seed'] = random_seed
-            # label_lst.append([eval_metric['accuracy'], random_seed])
-            # label_lst.append([random_seed, eval_metric['accuracy']])
-            hover_templates.append(
-                "<br>".join(
-                    [f"{key}: {getattr(config, key)}" for key in sampling_dimensions]
+            if early_stopping.counter == 0:
+                # if counter is 0, it means the metric has improved
+                accelerator.wait_for_everyone()
+                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_model.save_pretrained(
+                    os.path.join(args.output_dir, "best_model"),
+                    save_function=accelerator.save,
                 )
-            )
-            label_acc.append(eval_metric["accuracy"])
-            # label_seed.append(random_seed)
-            # accelerator.print(eval_metric)
-            # wandb.log(eval_metric)
-
-        if accelerator.is_main_process:
-            ## If plotting using Custom Plotly
-            fig = go.Figure()
-
-            fig.add_trace(
-                go.Bar(
-                    x=np.arange(len(rand_seed_lst)),
-                    y=label_acc,
-                    hovertext=hover_templates,
+                accelerator.save(
+                    {
+                        "epoch": completed_epochs,
+                        "steps": completed_steps,
+                        "optimizer": optimizer.state_dict(),
+                        "scheduler": lr_scheduler.state_dict(),
+                        "scaler": accelerator.scaler.state_dict(),
+                        "accuracy": early_stopping.best_score,
+                    },
+                    args.optim_scheduler_states_path,
                 )
-            )
-            fig.update_layout(
-                title="Relative Performance Order",
-                xaxis_title="Random Seed",
-                yaxis_title="Accuracy",
-            )
-            wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+            if early_stopping.early_stop:
+                logger.info(
+                    "==========================================================================="
+                )
+                logger.info(
+                    f"Early Stopping !!! {metric} hasnt improved for {args.early_stopping_patience} epochs"
+                )
+                logger.info(
+                    "==========================================================================="
+                )
+                break
+
+        if args.eval_random_subtransformers and completed_epochs % 5 == 0:
+            hover_templates = []
+            label_acc = []
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+                "random_seed",
+            ]
+            for i in range(args.num_subtransformers_monitor):
+                random_seed = rand_seed_lst[i]
+                config = sample_subtransformer(
+                    False,
+                    randomize=True,
+                    rand_seed=random_seed,
+                    tiny_attn=args.tiny_attn,
+                    config=global_config,
+                )
+
+                config.random_seed = random_seed
+                model.set_sample_config(config)
+
+                eval_metric = validate_subtransformer(
+                    model, args.task_name, eval_dataloader, accelerator
+                )
+                # eval_metric['validation_random_seed'] = random_seed
+                # label_lst.append([eval_metric['accuracy'], random_seed])
+                # label_lst.append([random_seed, eval_metric['accuracy']])
+                hover_templates.append(
+                    "<br>".join(
+                        [
+                            f"{key}: {getattr(config, key)}"
+                            for key in sampling_dimensions
+                        ]
+                    )
+                )
+                label_acc.append(eval_metric["accuracy"])
+                # label_seed.append(random_seed)
+                # accelerator.print(eval_metric)
+                # wandb.log(eval_metric)
+
+            if accelerator.is_main_process:
+                ## If plotting using Custom Plotly
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Bar(
+                        x=np.arange(len(rand_seed_lst)),
+                        y=label_acc,
+                        hovertext=hover_templates,
+                    )
+                )
+                fig.update_layout(
+                    title="Relative Performance Order",
+                    xaxis_title="Random Seed",
+                    yaxis_title="Accuracy",
+                )
+                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set
