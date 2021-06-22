@@ -501,7 +501,7 @@ def main():
     # add mixing to the config
     global_config.mixing = args.mixing
     global_config.tiny_attn = args.tiny_attn
-    global_config.num_labels = args.num_labels
+    global_config.num_labels = num_labels
     # global_config.hidden_dropout_prob = 0
 
     model = custom_bert.BertForSequenceClassification.from_pretrained(
