@@ -29,6 +29,9 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
+
+# https://discuss.pytorch.org/t/attributeerror-builtin-function-or-method-object-has-no-attribute-fftn/109744
+import torch.fft
 import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
@@ -638,8 +641,12 @@ class BertFNet(nn.Module):
             return
         self.is_identity_layer = False
         self.norm.set_sample_config(config.sample_hidden_size)
-        self.linear_inter.set_sample_config(config.sample_hidden_size, config.sample_intermediate_size)
-        self.linear_final.set_sample_config(config.sample_intermediate_size, config.sample_hidden_size)
+        self.linear_inter.set_sample_config(
+            config.sample_hidden_size, config.sample_intermediate_size
+        )
+        self.linear_final.set_sample_config(
+            config.sample_intermediate_size, config.sample_hidden_size
+        )
 
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
@@ -682,7 +689,7 @@ class BertFNet(nn.Module):
         x = torch.fft.fft(hidden_states, dim=-1)  # Applying FFT along the embedding dim
         x = torch.fft.fft(x, dim=-2).real  # Applying FFT along the token or seq_len dim
         x += residual
-        
+
         x = self.norm(x)
         x_res = x
 
@@ -691,7 +698,7 @@ class BertFNet(nn.Module):
         x = self.dropout_inter(x)
         x = self.linear_final(x)
         x = self.dropout_final(x)
-        
+
         x += x_res
 
         x = self.norm(x)
