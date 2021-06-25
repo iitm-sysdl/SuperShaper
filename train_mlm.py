@@ -865,10 +865,10 @@ def main():
     logger.info("Random seeds generation done..")
 
     best_val_perplexity = 1000000
-
+    seed = -1
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
-        seed = -1
+        #seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
         for step, batch in enumerate(train_dataloader):
             seed += 1
             super_config = sample_subtransformer(
@@ -900,9 +900,14 @@ def main():
                 optimizer.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
+                
+                ### Plot the high-res step-loss ### 
+                wandb.log({"Supertransformer Train loss": loss,})
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
+
+            
 
             if completed_steps >= args.max_train_steps:
                 break
