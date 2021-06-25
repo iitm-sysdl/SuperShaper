@@ -374,7 +374,7 @@ def parse_args():
 
     args = parser.parse_args()
 
-    # args.model_name_or_path = "bert-base-cased"
+    args.model_name_or_path = "bert-base-cased"
     # Sanity checks
     if (
         args.dataset_name is None
