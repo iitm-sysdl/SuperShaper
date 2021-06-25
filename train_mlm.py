@@ -902,7 +902,8 @@ def main():
                 completed_steps += 1
                 
                 ### Plot the high-res step-loss ### 
-                wandb.log({"Supertransformer Train loss": loss,})
+                if accelerator.is_main_process:
+                    wandb.log({"Supertransformer Train loss": loss,})
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
