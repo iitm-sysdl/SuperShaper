@@ -857,7 +857,7 @@ def main():
         num_hidden_layers_seeds = defaultdict(list)
         for seed in range(num_subtransformers * 4):
             num_hidden_layers = sample_subtransformer(
-                False, True, seed, config=config
+                    True, seed, config=config
             ).sample_num_hidden_layers
             num_hidden_layers_seeds[num_hidden_layers].append(seed)
         uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
