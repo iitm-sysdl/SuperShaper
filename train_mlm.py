@@ -878,25 +878,43 @@ def main():
         #seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            super_config = sample_subtransformer(
-                limit_subtransformer_choices=False,
+            super_config, super_config_small = sample_subtransformer(
                 randomize=True,
                 rand_seed=seed,
                 tiny_attn=args.tiny_attn,
                 config=global_config,
                 sampling_type=args.sampling_type,
             )
-            model.set_sample_config(super_config)
 
-            # super_config.max_seq_length = config.max_seq_length
-            # super_config.mixing = config.mixing
-            # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-            # subnet = model.get_active_subnet(super_config)
+            if args.sampling_type == 'sandwich':
 
-            # logger.info(subnet)
+                model.set_sample_config(super_config_small)
+                outputs = model(**batch)
+                loss_small = outputs.loss
 
-            outputs = model(**batch)
-            loss = outputs.loss
+                model.set_sample_config(super_config)
+                outputs = model(**batch)
+                loss_nl = outputs.loss
+
+                model.set_sample_config(global_config)
+                outputs = model(**batch)
+                loss_big = outputs.loss 
+ 
+                loss = (loss_big + loss_small + loss_nl) / 3
+
+            else: # Other means of sampling
+                model.set_sample_config(super_config)
+
+                # super_config.max_seq_length = config.max_seq_length
+                # super_config.mixing = config.mixing
+                # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
+                # subnet = model.get_active_subnet(super_config)
+
+                # logger.info(subnet)
+
+                outputs = model(**batch)
+                loss = outputs.loss
+
             loss = loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
             if (

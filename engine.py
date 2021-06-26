@@ -188,6 +188,47 @@ def naive_params_sampling(config, tiny_attn=False, population_size=30):
 
     return best_config
 
+def get_small_config(config):
+   choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
+
+   hidden_layers_list = choices["sample_num_hidden_layers"]
+   hidden_size_embeddings_list = choices["sample_hidden_size"]
+
+   ## Choosing the small network
+   num_hidden_layers = hidden_layers_list[0]
+   setattr(config, "sample_num_hidden_layers", num_hidden_layers)
+   hidden_size = hidden_size_embeddings_list[0]
+   setattr(config, "sample_hidden_size", hidden_size)
+
+   config_dict = {
+       "sample_num_attention_heads": [],
+       "sample_intermediate_size": [],
+   }
+
+   for i in range(num_hidden_layers):
+       while True:
+           for key in config_dict.keys():
+
+               choice_list = choices[key]
+               choice = choice_list[0]
+               config_dict[key].append(choice)
+
+           if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+               for key in config_dict.keys():
+                   config_dict[key] = config_dict[key][:-1]
+               continue
+           else:
+               break
+
+    return config   
+
+## Population size will be implemented later
+def sandwich_sampling(config, tiny_attn=False, pop_size=1):
+    small_config = get_small_config(config)
+    random_config = random_sampling(config)
+
+    return random_config, small_config
+
 
 def sample_subtransformer(
     randomize=True,
@@ -201,13 +242,19 @@ def sample_subtransformer(
     if config is None:
         config = get_supertransformer_config(mixing = config.mixing)
     config = copy.deepcopy(config)
+    
+    config_big = None
+    config_small = None
 
     if sampling_type == 'random':
         config = random_sampling(config, tiny_attn)
     elif sampling_type == 'params':
         config = naive_params_sampling(config, tiny_attn)
+    elif sampling_type == 'sandwich':
+    elif: 
+        raise NotImplementedError
 
-    return config
+    return config, config_big, config_small
 
 
 def validate_subtransformer(
