@@ -372,6 +372,13 @@ def parse_args():
         help=f"The directory path for C4",
     )
 
+    parser.add_argument(
+        "--sampling_type",
+        type=str,
+        default='random',
+        help=f"The sampling type for super-transformer",
+    )
+
     args = parser.parse_args()
 
     args.model_name_or_path = "bert-base-cased"
@@ -877,6 +884,7 @@ def main():
                 rand_seed=seed,
                 tiny_attn=args.tiny_attn,
                 config=global_config,
+                sampling_type=args.sampling_type,
             )
             model.set_sample_config(super_config)
 

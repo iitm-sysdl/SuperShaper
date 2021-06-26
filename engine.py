@@ -21,10 +21,12 @@ from transformers import (
 
 import wandb
 from custom_layers.custom_bert import BertForSequenceClassification
+from custom_layers.custom_bert import BertForMaskedLM
 from tasks.glue.prepare_task import GlueTask
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from utils.wipe_memory import free_memory, get_gpu_memory
 from utils.early_stopping import EarlyStopping
+from utils import count_parameters
 import copy 
 
 GLUE_TASKS = [
@@ -110,39 +112,19 @@ def show_args(accelerator, args):
     )
 
 
-def get_choices(limit_subtransformer_choices=False, num_hidden_layers=12, mixing='attention'):
-    if limit_subtransformer_choices:
-        choices = {
-            "sample_hidden_size": [600, 768],
-            "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-            "sample_intermediate_size": [512, 1024, 2048, 3072],
-            "sample_num_hidden_layers": [8, 10, 12],
-        }
-    else:
-        choices = {
-            "sample_hidden_size": [360, 480, 540, 600, 768],
-            "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-            "sample_intermediate_size": [512, 1024, 2048, 3072],
-            "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
-            + [num_hidden_layers],
-        }
-        choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if mixing == 'gmlp' else choices["sample_hidden_size"]
+def get_choices(num_hidden_layers=12, mixing='attention'):
+    choices = {
+         "sample_hidden_size": [360, 480, 540, 600, 768],
+         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+         "sample_intermediate_size": [512, 1024, 2048, 3072],
+         "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
+         + [num_hidden_layers],
+     }
+    choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if mixing == 'gmlp' else choices["sample_hidden_size"]
     return choices
 
-
-def sample_subtransformer(
-    limit_subtransformer_choices=False,
-    randomize=True,
-    rand_seed=0,
-    tiny_attn=False,
-    config=None
-):
-    if randomize:
-        random.seed(rand_seed)
-    if config is None:
-        config = get_supertransformer_config(mixing = config.mixing)
-    config = copy.deepcopy(config)
-    choices = get_choices(limit_subtransformer_choices, config.num_hidden_layers, mixing=config.mixing)
+def random_sampling(config, tiny_attn=False): 
+    choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
 
     ### Figuring the number of hidden layers
     hidden_layers_list = choices["sample_num_hidden_layers"]
@@ -179,6 +161,51 @@ def sample_subtransformer(
 
     if tiny_attn:
         setattr(config, "sample_num_attention_heads", 1)
+
+    return config
+
+def naive_params_sampling(config, tiny_attn=False, population_size=30):
+    choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
+
+    max_params = 0 
+    best_config = None
+    
+    assert(population_size > 0)
+
+    ## We can replace this with a simple mathematical function to compute params given a config and a maximizing
+    ## function to give precedence for params! That might be faster
+    ## For now implemented as using the best params from a randomly sampled population!
+
+    for i in range(population_size): 
+        config = random_sampling(config, tiny_attn)
+        model = BertForMaskedLM(config)
+        params = count_parameters(model)
+
+        if max_params < params: 
+            max_params = params 
+            best_config = config
+
+
+    return best_config
+
+
+def sample_subtransformer(
+    randomize=True,
+    rand_seed=0,
+    tiny_attn=False,
+    config=None,
+    sampling_type = 'random'
+):
+    if randomize:
+        random.seed(rand_seed)
+    if config is None:
+        config = get_supertransformer_config(mixing = config.mixing)
+    config = copy.deepcopy(config)
+
+    if sampling_type == 'random':
+        config = random_sampling(config, tiny_attn)
+    elif sampling_type == 'params':
+        config = naive_params_sampling(config, tiny_attn)
 
     return config
 
