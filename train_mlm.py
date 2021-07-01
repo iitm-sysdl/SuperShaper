@@ -856,9 +856,12 @@ def main():
         diverse_seeds = []
         num_hidden_layers_seeds = defaultdict(list)
         for seed in range(num_subtransformers * 4):
-            num_hidden_layers = sample_subtransformer(
-                    True, seed, config=config
-            ).sample_num_hidden_layers
+            #num_hidden_layers = sample_subtransformer(
+            #        True, seed, config=config
+            #).sample_num_hidden_layers
+            super_config, _ = sample_subtransformer(
+                    True, seed, config=config)
+            num_hidden_layers = super_config.sample_num_hidden_layers
             num_hidden_layers_seeds[num_hidden_layers].append(seed)
         uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
         num_per_uniq_layer = (num_subtransformers // uniq_num_hidden_layers) + 1
@@ -890,17 +893,23 @@ def main():
 
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch)
-                loss_small = outputs.loss
+                loss = outputs.loss
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
 
                 model.set_sample_config(super_config)
                 outputs = model(**batch)
-                loss_nl = outputs.loss
+                loss = outputs.loss
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
 
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
-                loss_big = outputs.loss 
+                loss = outputs.loss 
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
  
-                loss = (loss_big + loss_small + loss_nl) / 3
+                #loss = (loss_big + loss_small + loss_nl) / 3
 
             else: # Other means of sampling
                 model.set_sample_config(super_config)
@@ -914,9 +923,11 @@ def main():
 
                 outputs = model(**batch)
                 loss = outputs.loss
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
 
-            loss = loss / args.gradient_accumulation_steps
-            accelerator.backward(loss)
+            #loss = loss / args.gradient_accumulation_steps
+            #accelerator.backward(loss)
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1

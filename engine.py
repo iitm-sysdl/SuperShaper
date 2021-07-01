@@ -251,11 +251,12 @@ def sample_subtransformer(
     elif sampling_type == 'params':
         config = naive_params_sampling(config, tiny_attn)
     elif sampling_type == 'sandwich':
-        config = sandwich_sampling(config, False, 1)
+        config, config_small = sandwich_sampling(config, False, 1)
+        assert(config_small is not None)
     else: 
         raise NotImplementedError
 
-    return config, config_big, config_small
+    return config, config_small
 
 
 def validate_subtransformer(
