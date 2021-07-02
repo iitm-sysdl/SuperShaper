@@ -375,8 +375,9 @@ def parse_args():
     parser.add_argument(
         "--sampling_type",
         type=str,
-        default='random',
+        default="random",
         help=f"The sampling type for super-transformer",
+        choices=["naive_params", "biased_params", "random", "sandwich"],
     )
 
     args = parser.parse_args()
@@ -481,7 +482,11 @@ def main():
     if args.seed is not None:
         set_seed(args.seed)
 
-    str_name = args.mixing + "_tiny_attn" if args.tiny_attn == 1 else args.mixing
+    str_name = (
+        args.mixing + "_tiny_attn"
+        if args.tiny_attn == 1
+        else args.mixing + "_" + args.sampling_type
+    )
 
     if accelerator.is_main_process:
         wandb.init(
@@ -856,11 +861,10 @@ def main():
         diverse_seeds = []
         num_hidden_layers_seeds = defaultdict(list)
         for seed in range(num_subtransformers * 4):
-            #num_hidden_layers = sample_subtransformer(
+            # num_hidden_layers = sample_subtransformer(
             #        True, seed, config=config
-            #).sample_num_hidden_layers
-            super_config, _ = sample_subtransformer(
-                    True, seed, config=config)
+            # ).sample_num_hidden_layers
+            super_config, _ = sample_subtransformer(True, seed, config=config)
             num_hidden_layers = super_config.sample_num_hidden_layers
             num_hidden_layers_seeds[num_hidden_layers].append(seed)
         uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
@@ -878,7 +882,7 @@ def main():
     seed = -1
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
-        #seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
+        # seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
         for step, batch in enumerate(train_dataloader):
             seed += 1
             super_config, super_config_small = sample_subtransformer(
@@ -889,7 +893,7 @@ def main():
                 sampling_type=args.sampling_type,
             )
 
-            if args.sampling_type == 'sandwich':
+            if args.sampling_type == "sandwich":
 
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch)
@@ -905,13 +909,13 @@ def main():
 
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
-                loss = outputs.loss 
+                loss = outputs.loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
- 
-                #loss = (loss_big + loss_small + loss_nl) / 3
 
-            else: # Other means of sampling
+                # loss = (loss_big + loss_small + loss_nl) / 3
+
+            else:  # Other means of sampling
                 model.set_sample_config(super_config)
 
                 # super_config.max_seq_length = config.max_seq_length
@@ -926,8 +930,8 @@ def main():
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
-            #loss = loss / args.gradient_accumulation_steps
-            #accelerator.backward(loss)
+            # loss = loss / args.gradient_accumulation_steps
+            # accelerator.backward(loss)
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1
@@ -937,15 +941,17 @@ def main():
                 optimizer.zero_grad()
                 progress_bar.update(1)
                 completed_steps += 1
-                
-                ### Plot the high-res step-loss ### 
+
+                ### Plot the high-res step-loss ###
                 if accelerator.is_main_process:
-                    wandb.log({"Supertransformer Train loss": loss,})
+                    wandb.log(
+                        {
+                            "Supertransformer Train loss": loss,
+                        }
+                    )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
-
-            
 
             if completed_steps >= args.max_train_steps:
                 break

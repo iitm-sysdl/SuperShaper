@@ -27,7 +27,7 @@ from utils.module_proxy_wrapper import ModuleProxyWrapper
 from utils.wipe_memory import free_memory, get_gpu_memory
 from utils.early_stopping import EarlyStopping
 from utils import count_parameters
-import copy 
+import copy
 
 GLUE_TASKS = [
     "cola",
@@ -50,6 +50,17 @@ def get_task(task_name):
         return GlueTask
 
 
+def calc_probs(choices_dictionary):
+    normalized_probs = {}
+    for choice, v in choices_dictionary.items():
+        _v = []
+        _sum = sum(v)
+        for i in v:
+            _v.append(i / _sum)
+        normalized_probs[k] = _v
+    return normalized_probs
+
+
 def show_random_elements(dataset, accelerator, num_examples=10):
     assert num_examples <= len(
         dataset
@@ -69,11 +80,11 @@ def show_random_elements(dataset, accelerator, num_examples=10):
 
 
 def get_supertransformer_config(
-    model_name_or_path="bert-base-cased", tiny_attn=False, mixing = 'attention'
+    model_name_or_path="bert-base-cased", tiny_attn=False, mixing="attention"
 ):
     config = AutoConfig.from_pretrained(model_name_or_path)
 
-    if mixing == 'gmlp':
+    if mixing == "gmlp":
         # gmlp needs twice the encoder layers to match bert param size
         config.num_hidden_layers = 36
         config.hidden_size = 512
@@ -112,18 +123,21 @@ def show_args(accelerator, args):
     )
 
 
-def get_choices(num_hidden_layers=12, mixing='attention'):
+def get_choices(num_hidden_layers=12, mixing="attention"):
     choices = {
-         "sample_hidden_size": [360, 480, 540, 600, 768],
-         "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
-         "sample_intermediate_size": [512, 1024, 2048, 3072],
-         "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
-         + [num_hidden_layers],
-     }
-    choices["sample_hidden_size"] = [120, 240, 360, 480, 512] if mixing == 'gmlp' else choices["sample_hidden_size"]
+        "sample_hidden_size": [360, 480, 540, 600, 768],
+        "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+        "sample_intermediate_size": [512, 1024, 2048, 3072],
+        "sample_num_hidden_layers": list(range(6, num_hidden_layers, 2))
+        + [num_hidden_layers],
+    }
+    choices["sample_hidden_size"] = (
+        [120, 240, 360, 480, 512] if mixing == "gmlp" else choices["sample_hidden_size"]
+    )
     return choices
 
-def random_sampling(config, tiny_attn=False): 
+
+def random_sampling(config, tiny_attn=False):
     choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
 
     ### Figuring the number of hidden layers
@@ -164,29 +178,77 @@ def random_sampling(config, tiny_attn=False):
 
     return config
 
+
 def naive_params_sampling(config, tiny_attn=False, population_size=30):
     choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
 
-    max_params = 0 
+    max_params = 0
     best_config = None
-    
-    assert(population_size > 0)
+
+    assert population_size > 0
 
     ## We can replace this with a simple mathematical function to compute params given a config and a maximizing
     ## function to give precedence for params! That might be faster
     ## For now implemented as using the best params from a randomly sampled population!
 
-    for i in range(population_size): 
+    for i in range(population_size):
         config = random_sampling(config, tiny_attn)
         model = BertForMaskedLM(config)
         params = count_parameters(model)
 
-        if max_params < params: 
-            max_params = params 
+        if max_params < params:
+            max_params = params
             best_config = config
 
-
     return best_config
+
+
+def biased_params_sampling(config, tiny_attn=False):
+    choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
+    normalized_probs = calc_probs(choices)
+
+    ### Figuring the number of hidden layers
+    hidden_layers_list = choices["sample_num_hidden_layers"]
+    num_hidden_layers = random.choices(
+        hidden_layers_list, k=1, weights=normalized_probs["sample_num_hidden_layers"]
+    )
+    setattr(config, "sample_num_hidden_layers", num_hidden_layers)
+
+    ## Figuring the hidden size for BERT embeddings
+    hidden_size_embeddings_list = choices["sample_hidden_size"]
+    num_hidden_size = random.choices(
+        hidden_size_embeddings_list, k=1, weights=normalized_probs["sample_hidden_size"]
+    )
+    setattr(config, "sample_hidden_size", num_hidden_size)
+
+    config_dict = {
+        "sample_num_attention_heads": [],
+        "sample_intermediate_size": [],
+    }
+
+    for i in range(num_hidden_layers):
+        while True:
+            for key in config_dict.keys():
+
+                choice_list = choices[key]
+                choice = random.choices(choice_list, k=1, weights=normalized_probs[key])
+                config_dict[key].append(choice)
+
+            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+                for key in config_dict.keys():
+                    config_dict[key] = config_dict[key][:-1]
+                continue
+            else:
+                break
+
+    for key in config_dict.keys():
+        setattr(config, key, config_dict[key])
+
+    if tiny_attn:
+        setattr(config, "sample_num_attention_heads", 1)
+
+    return config
+
 
 def get_small_config(config):
     choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
@@ -220,7 +282,8 @@ def get_small_config(config):
             else:
                 break
 
-    return config   
+    return config
+
 
 ## Population size will be implemented later
 def sandwich_sampling(config, tiny_attn=False, pop_size=1):
@@ -231,29 +294,25 @@ def sandwich_sampling(config, tiny_attn=False, pop_size=1):
 
 
 def sample_subtransformer(
-    randomize=True,
-    rand_seed=0,
-    tiny_attn=False,
-    config=None,
-    sampling_type = 'random'
+    randomize=True, rand_seed=0, tiny_attn=False, config=None, sampling_type="random"
 ):
     if randomize:
         random.seed(rand_seed)
     if config is None:
-        config = get_supertransformer_config(mixing = config.mixing)
+        config = get_supertransformer_config(mixing=config.mixing)
     config = copy.deepcopy(config)
-    
+
     config_big = None
     config_small = None
 
-    if sampling_type == 'random':
+    if sampling_type == "random":
         config = random_sampling(config, tiny_attn)
-    elif sampling_type == 'params':
+    elif sampling_type == "params":
         config = naive_params_sampling(config, tiny_attn)
-    elif sampling_type == 'sandwich':
+    elif sampling_type == "sandwich":
         config, config_small = sandwich_sampling(config, False, 1)
-        assert(config_small is not None)
-    else: 
+        assert config_small is not None
+    else:
         raise NotImplementedError
 
     return config, config_small
