@@ -864,7 +864,9 @@ def main():
             # num_hidden_layers = sample_subtransformer(
             #        True, seed, config=config
             # ).sample_num_hidden_layers
-            super_config, _ = sample_subtransformer(True, seed, config=config)
+            super_config, _ = sample_subtransformer(
+                True, seed, config=config, sampling_type=args.sampling_type
+            )
             num_hidden_layers = super_config.sample_num_hidden_layers
             num_hidden_layers_seeds[num_hidden_layers].append(seed)
         uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
@@ -1021,12 +1023,13 @@ def main():
             ]
             for i in range(args.num_subtransformers_monitor):
                 random_seed = rand_seed_lst[i]
-                config = sample_subtransformer(
+                config, _ = sample_subtransformer(
                     False,
                     randomize=True,
                     rand_seed=random_seed,
                     tiny_attn=args.tiny_attn,
                     config=global_config,
+                    sampling_type=args.sampling_type,
                 )
 
                 config.random_seed = random_seed

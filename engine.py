@@ -307,9 +307,12 @@ def sample_subtransformer(
 
     if sampling_type == "random":
         config = random_sampling(config, tiny_attn)
-    elif sampling_type == "params":
+    elif sampling_type == "naive_params":
         config = naive_params_sampling(config, tiny_attn)
     elif sampling_type == "sandwich":
+        config, config_small = sandwich_sampling(config, False, 1)
+        assert config_small is not None
+    elif sampling_type == "biased_params":
         config, config_small = sandwich_sampling(config, False, 1)
         assert config_small is not None
     else:
