@@ -1024,7 +1024,6 @@ def main():
             for i in range(args.num_subtransformers_monitor):
                 random_seed = rand_seed_lst[i]
                 config, _ = sample_subtransformer(
-                    False,
                     randomize=True,
                     rand_seed=random_seed,
                     tiny_attn=args.tiny_attn,
