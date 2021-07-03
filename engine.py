@@ -313,8 +313,7 @@ def sample_subtransformer(
         config, config_small = sandwich_sampling(config, False, 1)
         assert config_small is not None
     elif sampling_type == "biased_params":
-        config, config_small = sandwich_sampling(config, False, 1)
-        assert config_small is not None
+        config, config_small = biased_params_sampling(config, tiny_attn=tiny_attn)
     else:
         raise NotImplementedError
 
