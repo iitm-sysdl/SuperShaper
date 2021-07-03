@@ -211,14 +211,14 @@ def biased_params_sampling(config, tiny_attn=False):
     hidden_layers_list = choices["sample_num_hidden_layers"]
     num_hidden_layers = random.choices(
         hidden_layers_list, k=1, weights=normalized_probs["sample_num_hidden_layers"]
-    )
+    )[0]
     setattr(config, "sample_num_hidden_layers", num_hidden_layers)
 
     ## Figuring the hidden size for BERT embeddings
     hidden_size_embeddings_list = choices["sample_hidden_size"]
     num_hidden_size = random.choices(
         hidden_size_embeddings_list, k=1, weights=normalized_probs["sample_hidden_size"]
-    )
+    )[0]
     setattr(config, "sample_hidden_size", num_hidden_size)
 
     config_dict = {
@@ -231,7 +231,9 @@ def biased_params_sampling(config, tiny_attn=False):
             for key in config_dict.keys():
 
                 choice_list = choices[key]
-                choice = random.choices(choice_list, k=1, weights=normalized_probs[key])
+                choice = random.choices(
+                    choice_list, k=1, weights=normalized_probs[key]
+                )[0]
                 config_dict[key].append(choice)
 
             if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
