@@ -249,7 +249,7 @@ def biased_params_sampling(config, tiny_attn=False):
     if tiny_attn:
         setattr(config, "sample_num_attention_heads", 1)
 
-    return config
+    return config, None
 
 
 def get_small_config(config):

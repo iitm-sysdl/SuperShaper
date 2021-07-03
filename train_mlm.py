@@ -472,7 +472,7 @@ def main():
         logging.INFO if accelerator.is_local_main_process else logging.ERROR
     )
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_info()
+        datasets.utils.logging.set_verbosity_error()
         transformers.utils.logging.set_verbosity_error()
     else:
         datasets.utils.logging.set_verbosity_error()
@@ -713,8 +713,9 @@ def main():
             load_from_cache_file=not args.overwrite_cache,
         )
 
-    # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
-    tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
+    if args.c4_dir is not None:
+        # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
+        tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
 
