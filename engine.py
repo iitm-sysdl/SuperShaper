@@ -57,7 +57,7 @@ def calc_probs(choices_dictionary):
         _sum = sum(v)
         for i in v:
             _v.append(i / _sum)
-        normalized_probs[k] = _v
+        normalized_probs[choice] = _v
     return normalized_probs
 
 
