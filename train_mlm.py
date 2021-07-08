@@ -509,7 +509,10 @@ def main():
         if args.tiny_attn == 1
         else args.mixing + "_" + args.sampling_type + "_K=" + str(args.k_sampling)
     )
-
+    if args.inplace_distillation:
+        str_name += "_ip_distill"
+    else:
+        str_name += "_pretraining"
     if accelerator.is_main_process:
         wandb.init(
             project="super-pretraining",
@@ -517,7 +520,6 @@ def main():
             name=args.dataset_name.split("/")[-1].strip()
             + "_"
             + str_name
-            + "_pretraining",
         )
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
@@ -633,7 +635,7 @@ def main():
 
     if args.inplace_distillation:
         # initialize with pretrained model if we are using inplace distillation
-        model = custom_bert.BertForMaskedLM.from_pretrained(args.model_name_or_path)
+        model = custom_bert.BertForMaskedLM.from_pretrained(args.model_name_or_path, config=global_config)
     else:
         model = custom_bert.BertForMaskedLM(global_config)
 
