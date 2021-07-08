@@ -382,8 +382,15 @@ def parse_args():
 
     parser.add_argument(
         "--k_sampling",
-        type=int, 
-        required=True, 
+        type=int,
+        required=True,
+        help=f"The step frequency of sampling a sub-transformers",
+    )
+
+    parser.add_argument(
+        "--inplace_distillation",
+        type=int,
+        default=0,
         help=f"The step frequency of sampling a sub-transformers",
     )
 
@@ -391,6 +398,12 @@ def parse_args():
 
     args.model_name_or_path = "bert-base-cased"
     # Sanity checks
+
+    if args.inplace_distillation == 1:
+        # hard setting this for now
+        args.sampling_type = "sandwich"
+        args.mixing = "attention"
+
     if (
         args.dataset_name is None
         and args.train_file is None
@@ -450,8 +463,8 @@ def parse_args():
         check_path(model_path)
         # overwrite on the same directory
         args.output_dir = args.resume_from_checkpoint_dir
-    
-    assert(args.k_sampling > 0)
+
+    assert args.k_sampling > 0
 
     return args
 
@@ -617,10 +630,18 @@ def main():
     global_config.mixing = args.mixing
     global_config.tiny_attn = args.tiny_attn
     global_config.hidden_dropout_prob = 0
-    model = custom_bert.BertForMaskedLM(global_config)
+
+    if args.inplace_distillation:
+        # initialize with pretrained model if we are using inplace distillation
+        model = custom_bert.BertForMaskedLM.from_pretrained(args.model_name_or_path)
+    else:
+        model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
+
+    # maybe not required but doing it just to be sure
+    model.set_sample_config(global_config)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -780,7 +801,9 @@ def main():
         # see this for details: https://github.com/huggingface/accelerate/issues/95
         model.from_pretrained(args.resume_from_checkpoint_dir)
 
-        optim_scheduler_states = torch.load(args.optim_scheduler_states_path, map_location='cpu')
+        optim_scheduler_states = torch.load(
+            args.optim_scheduler_states_path, map_location="cpu"
+        )
 
         logger.info("Loading optimizer states from checkpoint dir ..")
         accelerator.scaler.load_state_dict(optim_scheduler_states["scaler"])
@@ -790,7 +813,7 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
-    #if args.resume_from_checkpoint_dir is not None:
+    # if args.resume_from_checkpoint_dir is not None:
     #    unwrapped_model = accelerator.unwrap_model(model)
     #    unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
     #
@@ -830,14 +853,13 @@ def main():
 
         logger.info(f"epochs: {completed_epochs}, completed_steps: {completed_steps}")
 
-        assert ( completed_steps < args.max_train_steps
+        assert (
+            completed_steps < args.max_train_steps
         ), "model is already trained to specified number of epochs or max steps"
-        
+
     else:
         completed_epochs = 0
         completed_steps = 0
-
-
 
     # Train!
     total_batch_size = (
@@ -899,12 +921,12 @@ def main():
     logger.info("=============================")
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
-        k_count = args.k_sampling - 1 
+        k_count = args.k_sampling - 1
         # seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
         for step, batch in enumerate(train_dataloader):
             seed += 1
             k_count += 1
-            if k_count == args.k_sampling: 
+            if k_count == args.k_sampling:
                 super_config, super_config_small = sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
@@ -915,7 +937,21 @@ def main():
                 k_count = 0
                 model.set_sample_config(super_config)
 
-            if args.sampling_type == "sandwich":
+            if args.inplace_distillation:
+
+                model.set_sample_config(global_config)
+                outputs = model(**batch)
+                loss = outputs.loss
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
+                # logits are of shape batch_size, sequence_length, config.vocab_size
+                # hence applying softmanx to last dim
+                soft_targets = torch.nn.functional.softmax(
+                    outputs.logits, dim=-1
+                ).detach()
+
+                # replace the labels in our batch to soft_targets
+                batch["labels"] = soft_targets
 
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch)
@@ -929,16 +965,10 @@ def main():
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
-                model.set_sample_config(global_config)
-                outputs = model(**batch)
-                loss = outputs.loss
-                loss /= args.gradient_accumulation_steps
-                accelerator.backward(loss)
-
                 # loss = (loss_big + loss_small + loss_nl) / 3
 
             else:  # Other means of sampling
-                #model.set_sample_config(super_config)
+                # model.set_sample_config(super_config)
 
                 # super_config.max_seq_length = config.max_seq_length
                 # super_config.mixing = config.mixing
