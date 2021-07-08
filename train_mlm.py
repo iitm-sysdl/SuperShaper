@@ -380,6 +380,13 @@ def parse_args():
         choices=["naive_params", "biased_params", "random", "sandwich"],
     )
 
+    parser.add_argument(
+        "--k_sampling",
+        type=int, 
+        required=True, 
+        help=f"The step frequency of sampling a sub-transformers",
+    )
+
     args = parser.parse_args()
 
     args.model_name_or_path = "bert-base-cased"
@@ -443,6 +450,8 @@ def parse_args():
         check_path(model_path)
         # overwrite on the same directory
         args.output_dir = args.resume_from_checkpoint_dir
+    
+    assert(args.k_sampling > 0)
 
     return args
 
@@ -485,7 +494,7 @@ def main():
     str_name = (
         args.mixing + "_tiny_attn"
         if args.tiny_attn == 1
-        else args.mixing + "_" + args.sampling_type
+        else args.mixing + "_" + args.sampling_type + "_K=" + str(args.k_sampling)
     )
 
     if accelerator.is_main_process:
@@ -771,7 +780,7 @@ def main():
         # see this for details: https://github.com/huggingface/accelerate/issues/95
         model.from_pretrained(args.resume_from_checkpoint_dir)
 
-        optim_scheduler_states = torch.load(args.optim_scheduler_states_path)
+        optim_scheduler_states = torch.load(args.optim_scheduler_states_path, map_location='cpu')
 
         logger.info("Loading optimizer states from checkpoint dir ..")
         accelerator.scaler.load_state_dict(optim_scheduler_states["scaler"])
@@ -781,9 +790,9 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
-    #    if args.resume_from_checkpoint_dir is not None:
-    #        unwrapped_model = accelerator.unwrap_model(model)
-    #        unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
+    #if args.resume_from_checkpoint_dir is not None:
+    #    unwrapped_model = accelerator.unwrap_model(model)
+    #    unwrapped_model.from_pretrained(args.resume_from_checkpoint_dir)
     #
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
@@ -821,13 +830,14 @@ def main():
 
         logger.info(f"epochs: {completed_epochs}, completed_steps: {completed_steps}")
 
-        assert (completed_epochs < args.num_train_epochs) and (
-            completed_steps < args.max_train_steps
+        assert ( completed_steps < args.max_train_steps
         ), "model is already trained to specified number of epochs or max steps"
-
+        
     else:
         completed_epochs = 0
         completed_steps = 0
+
+
 
     # Train!
     total_batch_size = (
@@ -883,18 +893,27 @@ def main():
 
     best_val_perplexity = 1000000
     seed = -1
+    logger.info("=============================")
+    logger.info(completed_epochs)
+    logger.info(args.num_train_epochs)
+    logger.info("=============================")
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
+        k_count = args.k_sampling - 1 
         # seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            super_config, super_config_small = sample_subtransformer(
-                randomize=True,
-                rand_seed=seed,
-                tiny_attn=args.tiny_attn,
-                config=global_config,
-                sampling_type=args.sampling_type,
-            )
+            k_count += 1
+            if k_count == args.k_sampling: 
+                super_config, super_config_small = sample_subtransformer(
+                    randomize=True,
+                    rand_seed=seed,
+                    tiny_attn=args.tiny_attn,
+                    config=global_config,
+                    sampling_type=args.sampling_type,
+                )
+                k_count = 0
+                model.set_sample_config(super_config)
 
             if args.sampling_type == "sandwich":
 
@@ -919,7 +938,7 @@ def main():
                 # loss = (loss_big + loss_small + loss_nl) / 3
 
             else:  # Other means of sampling
-                model.set_sample_config(super_config)
+                #model.set_sample_config(super_config)
 
                 # super_config.max_seq_length = config.max_seq_length
                 # super_config.mixing = config.mixing
@@ -984,7 +1003,6 @@ def main():
                     "SuperTransformer Perplexity": perplexity,
                 }
             )
-
         logger.info(
             f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
         )
