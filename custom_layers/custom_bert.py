@@ -550,11 +550,140 @@ class BertSelfOutput(nn.Module):
         return hidden_states
 
 
+class BertMobile(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.chunk_size_feed_forward = config.chunk_size_feed_forward
+        self.seq_len_dim = 1
+        self.attention = BertAttention(config)
+        self.is_decoder = config.is_decoder
+        self.add_cross_attention = config.add_cross_attention
+        if self.add_cross_attention:
+            assert (
+                self.is_decoder
+            ), f"{self} should be used as a decoder model if cross attention is added"
+            self.crossattention = BertAttention(config)
+        self.intermediate = BertIntermediate(config)
+        self.output = BertOutput(config)
+        self.is_identity_layer = False
+
+    def set_sample_config(self, config, is_identity_layer=False):
+        if is_identity_layer:
+            self.is_identity_layer = True
+            return
+        self.is_identity_layer = False
+        self.attention.set_sample_config(config)
+        if hasattr(self, "crossattention"):
+            self.crossattention.set_sample_config(config)
+        self.intermediate.set_sample_config(config)
+        self.output.set_sample_config(config)
+
+    def get_active_subnet(self, config):
+        sublayer = BertLayer(config)
+
+        sublayer.attention.self.set_sample_config(
+            config
+        )  ## Just to access those variables
+
+        sublayer.attention = self.attention.get_active_subnet(config)
+
+        #### Building the intermediate layer
+        sublayer.intermediate.dense = self.intermediate.dense.get_active_subnet()
+
+        #### Building the output layer
+        sublayer.output.dense = self.output.dense.get_active_subnet()
+        sublayer.output.LayerNorm = self.output.LayerNorm.get_active_subnet()
+
+        return sublayer
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        past_key_value=None,
+        output_attentions=False,
+    ):
+        if self.is_identity_layer:
+            # print("Returning without any operations")
+            return (hidden_states,)
+
+        # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
+        self_attn_past_key_value = (
+            past_key_value[:2] if past_key_value is not None else None
+        )
+        self_attention_outputs = self.attention(
+            hidden_states,
+            attention_mask,
+            head_mask,
+            output_attentions=output_attentions,
+            past_key_value=self_attn_past_key_value,
+        )
+        attention_output = self_attention_outputs[0]
+
+        # if decoder, the last output is tuple of self-attn cache
+        if self.is_decoder:
+            outputs = self_attention_outputs[1:-1]
+            present_key_value = self_attention_outputs[-1]
+        else:
+            outputs = self_attention_outputs[
+                1:
+            ]  # add self attentions if we output attention weights
+
+        cross_attn_present_key_value = None
+        if self.is_decoder and encoder_hidden_states is not None:
+            assert hasattr(
+                self, "crossattention"
+            ), f"If `encoder_hidden_states` are passed, {self} has to be instantiated with cross-attention layers by setting `config.add_cross_attention=True`"
+
+            # cross_attn cached key/values tuple is at positions 3,4 of past_key_value tuple
+            cross_attn_past_key_value = (
+                past_key_value[-2:] if past_key_value is not None else None
+            )
+            cross_attention_outputs = self.crossattention(
+                attention_output,
+                attention_mask,
+                head_mask,
+                encoder_hidden_states,
+                encoder_attention_mask,
+                cross_attn_past_key_value,
+                output_attentions,
+            )
+            attention_output = cross_attention_outputs[0]
+            outputs = (
+                outputs + cross_attention_outputs[1:-1]
+            )  # add cross attentions if we output attention weights
+
+            # add cross-attn cache to positions 3,4 of present_key_value tuple
+            cross_attn_present_key_value = cross_attention_outputs[-1]
+            present_key_value = present_key_value + cross_attn_present_key_value
+
+        layer_output = apply_chunking_to_forward(
+            self.feed_forward_chunk,
+            self.chunk_size_feed_forward,
+            self.seq_len_dim,
+            attention_output,
+        )
+        outputs = (layer_output,) + outputs
+
+        # if decoder, return the attn key/values as the last output
+        if self.is_decoder:
+            outputs = outputs + (present_key_value,)
+
+        return outputs
+
+    def feed_forward_chunk(self, attention_output):
+        intermediate_output = self.intermediate(attention_output)
+        layer_output = self.output(intermediate_output, attention_output)
+        return layer_output
+
+
+
 """
 Implementation for Spatial Unit and Dense layers inspired from https://github.com/lucidrains/g-mlp-pytorch
 """
-
-
 class SpatialUnit(nn.Module):
     def __init__(
         self,
@@ -979,31 +1108,6 @@ class BertLayer(nn.Module):
         )  ## Just to access those variables
 
         sublayer.attention = self.attention.get_active_subnet(config)
-
-        # sublayer.attention.self.query = self.attention.self.query.get_active_subnet()
-        # sublayer.attention.self.key   = self.attention.self.query.get_active_subnet()
-        # sublayer.attention.self.value = self.attention.self.query.get_active_subnet()
-
-        # sublayer.attention.output = self.attention.output.get_active_subnet(config)
-
-        ### Building the attention layer
-        # if self.attention.qkv_same_dim:
-        #    sublayer.attention.in_proj_weight.weight.data.copy_(self.attention.in_proj_weight.weight)
-        # else:
-        #    sublayer.attention.k_proj_weight.weight.data.copy_(self.attention.k_proj_weight.weight)
-        #    sublayer.attention.v_proj_weight.weight.data.copy_(self.attention.v_proj_weight.weight)
-        #    sublayer.attention.q_proj_weight.weight.data.copy_(self.attention.q_proj_weight.weight)
-
-        # if self.attention.bias:
-        #    sublayer.attention.in_proj_bias.weight.data.copy_(self.attention.in_proj_bias.weight)
-
-        # if self.attention.out_dim is None:
-        #    sublayer.out_proj = self.atttention.out_proj.get_active_subnet()
-
-        # if self.attention.add_bias_kv:
-        #    # TODO: have super_k and super_v dimension and def bias
-        #    sublayer.attention.bias_k.weight.data.copy_(self.attention.bias_k.weight)
-        #    sublayer.attention.bias_v.weight.data.copy_(self.attention.bias_v.weight)
 
         #### Building the intermediate layer
         sublayer.intermediate.dense = self.intermediate.dense.get_active_subnet()
