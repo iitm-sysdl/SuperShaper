@@ -23,6 +23,7 @@ import random
 import wandb
 
 
+import plotly.express as px
 from datetime import datetime
 from collections import defaultdict
 
@@ -53,6 +54,7 @@ from engine import (
     get_supertransformer_config,
     show_random_elements,
     show_args,
+    get_diverse_subtransformers,
 )
 from custom_layers import custom_bert
 
@@ -917,10 +919,38 @@ def main():
             diverse_seeds.extend(v[:num_per_uniq_layer])
         return diverse_seeds[:num_subtransformers]
 
-    logger.info("Generating diverse random seeds..")
-    rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
-    logger.info(len(rand_seed_lst))
-    logger.info("Random seeds generation done..")
+    # logger.info("Generating diverse random seeds..")
+    # rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
+    # logger.info(len(rand_seed_lst))
+    # logger.info("Random seeds generation done..")
+
+    diverse_hidden_state_subs = get_diverse_subtransformers(
+        "sample_hidden_size", global_config
+    )
+    diverse_attention_subs = get_diverse_subtransformers(
+        "sample_num_attention_heads", global_config
+    )
+    diverse_intermediate_state_subs = get_diverse_subtransformers(
+        "sample_intermediate_size", global_config
+    )
+    diverse_num_hidden_subs = get_diverse_subtransformers(
+        "sample_num_hidden_layers", global_config
+    )
+
+    diverse_subtransformers = (
+        diverse_hidden_state_subs
+        + diverse_attention_subs
+        + diverse_intermediate_state_subs
+        + diverse_num_hidden_subs
+    )
+
+    colors = px.colors.sequential.Viridis
+    marker_colors = (
+        ["yellow"] * len(diverse_hidden_state_subs)
+        + ["green"] * len(diverse_attention_subs)
+        + ["blue"] * len(diverse_intermediate_state_subs)
+        + ["red"] * len(diverse_num_hidden_subs)
+    )
 
     best_val_perplexity = 1000000
     seed = -1
@@ -929,6 +959,62 @@ def main():
     logger.info(args.num_train_epochs)
     logger.info("=============================")
     for epoch in range(completed_epochs, args.num_train_epochs):
+        # first evaluate random subtransformers before starting training
+        if args.eval_random_subtransformers and completed_epochs % 3 == 0:
+            hover_templates = []
+            label_perplex = []
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+            for i, config in enumerate(tqdm(diverse_subtransformers)):
+                model.set_sample_config(config)
+
+                eval_metric = validate_subtransformer(
+                    model,
+                    eval_dataloader,
+                    accelerator,
+                    len(eval_dataset),
+                    args.per_device_eval_batch_size,
+                    args.pad_to_max_length,
+                )
+                # eval_metric['validation_random_seed'] = random_seed
+                # label_lst.append([eval_metric['accuracy'], random_seed])
+                # label_lst.append([random_seed, eval_metric['accuracy']])
+                hover_templates.append(
+                    "<br>".join(
+                        [
+                            f"{key}: {getattr(config, key)}"
+                            for key in sampling_dimensions
+                        ]
+                    )
+                )
+                label_perplex.append(eval_metric["perplexity"])
+                # label_seed.append(random_seed)
+                # accelerator.print(eval_metric)
+                # wandb.log(eval_metric)
+
+            if accelerator.is_main_process:
+                ## If plotting using Custom Plotly
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Bar(
+                        x=np.arange(len(diverse_subtransformers)),
+                        y=label_perplex,
+                        hovertext=hover_templates,
+                        marker_color=marker_colors[i],
+                    )
+                )
+                fig.update_layout(
+                    title="Relative Performance Order",
+                    xaxis_title="Random Seed",
+                    yaxis_title="Perplexity",
+                )
+                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+
         model.train()
         k_count = args.k_sampling - 1
         # seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
@@ -1071,71 +1157,6 @@ def main():
                     },
                     args.optim_scheduler_states_path,
                 )
-
-        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
-            hover_templates = []
-            label_perplex = []
-            sampling_dimensions = [
-                "sample_hidden_size",
-                "sample_num_attention_heads",
-                "sample_intermediate_size",
-                "sample_num_hidden_layers",
-                "random_seed",
-            ]
-            for i in range(args.num_subtransformers_monitor):
-                random_seed = rand_seed_lst[i]
-                config, _ = sample_subtransformer(
-                    randomize=True,
-                    rand_seed=random_seed,
-                    tiny_attn=args.tiny_attn,
-                    config=global_config,
-                    sampling_type=args.sampling_type,
-                )
-
-                config.random_seed = random_seed
-                model.set_sample_config(config)
-
-                eval_metric = validate_subtransformer(
-                    model,
-                    eval_dataloader,
-                    accelerator,
-                    len(eval_dataset),
-                    args.per_device_eval_batch_size,
-                    args.pad_to_max_length,
-                )
-                # eval_metric['validation_random_seed'] = random_seed
-                # label_lst.append([eval_metric['accuracy'], random_seed])
-                # label_lst.append([random_seed, eval_metric['accuracy']])
-                hover_templates.append(
-                    "<br>".join(
-                        [
-                            f"{key}: {getattr(config, key)}"
-                            for key in sampling_dimensions
-                        ]
-                    )
-                )
-                label_perplex.append(eval_metric["perplexity"])
-                # label_seed.append(random_seed)
-                # accelerator.print(eval_metric)
-                # wandb.log(eval_metric)
-
-            if accelerator.is_main_process:
-                ## If plotting using Custom Plotly
-                fig = go.Figure()
-
-                fig.add_trace(
-                    go.Bar(
-                        x=np.arange(len(rand_seed_lst)),
-                        y=label_perplex,
-                        hovertext=hover_templates,
-                    )
-                )
-                fig.update_layout(
-                    title="Relative Performance Order",
-                    xaxis_title="Random Seed",
-                    yaxis_title="Perplexity",
-                )
-                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
