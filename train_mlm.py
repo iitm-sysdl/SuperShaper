@@ -1005,7 +1005,7 @@ def main():
                         x=np.arange(len(diverse_subtransformers)),
                         y=label_perplex,
                         hovertext=hover_templates,
-                        marker_color=marker_colors[i],
+                        marker_color=marker_colors,
                     )
                 )
                 fig.update_layout(
