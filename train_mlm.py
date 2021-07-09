@@ -391,7 +391,7 @@ def parse_args():
         "--inplace_distillation",
         type=int,
         default=0,
-        help=f"The step frequency of sampling a sub-transformers",
+        help=f"Whether to use inplace distillation",
     )
 
     parser.add_argument(
@@ -524,9 +524,7 @@ def main():
         wandb.init(
             project="super-pretraining",
             entity="efficient-hat",
-            name=args.dataset_name.split("/")[-1].strip()
-            + "_"
-            + str_name
+            name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
@@ -642,7 +640,9 @@ def main():
 
     if args.inplace_distillation:
         # initialize with pretrained model if we are using inplace distillation
-        model = custom_bert.BertForMaskedLM.from_pretrained(args.model_name_or_path, config=global_config)
+        model = custom_bert.BertForMaskedLM.from_pretrained(
+            args.model_name_or_path, config=global_config
+        )
     else:
         model = custom_bert.BertForMaskedLM(global_config)
 
@@ -951,38 +951,29 @@ def main():
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
-                #loss /= args.gradient_accumulation_steps
-                #accelerator.backward(loss)
+                loss /= args.gradient_accumulation_steps
+                accelerator.backward(loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
                 # hence applying softmanx to last dim
-                with torch.no_grad():
-                    soft_targets = torch.nn.functional.softmax(
-                        outputs.logits.detach(), dim=-1
-                    )
-
-                #soft_targets = torch.nn.functional.softmax(
-                #    outputs.logits, dim=-1
-                #).detach()
-
+                soft_targets = torch.nn.functional.softmax(
+                    outputs.logits.detach(), dim=-1
+                )
 
                 # replace the labels in our batch to soft_targets
                 batch["labels"] = soft_targets
 
                 model.set_sample_config(super_config_small)
-                outputs = model(**batch)
+                outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
-                
-                kd_loss = ce_soft(outputs.logits, soft_targets)
-                loss = loss + args.kd_ratio * kd_loss
+                loss = loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
                 model.set_sample_config(super_config)
-                outputs = model(**batch)
+                outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
 
-                kd_loss = ce_soft(outputs.logits, soft_targets)
-                loss = loss + args.kd_ratio * kd_loss
+                loss = loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
