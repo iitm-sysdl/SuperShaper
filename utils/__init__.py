@@ -2,6 +2,9 @@
 import os
 from datetime import datetime
 from copy import deepcopy
+import torch
+import torch.nn as nn
+
 
 
 def flatten_list(nested_list):
@@ -33,3 +36,8 @@ def check_path(path, error_message_template="Specified path - {} does not exist"
 
 def get_current_datetime():
     return datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+
+def ce_soft(pred, soft_target):
+    logsoftmax = nn.LogSoftmax()
+    return torch.mean(torch.sum(- soft_target * logsoftmax(pred), 1))
+

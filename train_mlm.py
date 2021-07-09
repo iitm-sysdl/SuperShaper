@@ -394,6 +394,13 @@ def parse_args():
         help=f"The step frequency of sampling a sub-transformers",
     )
 
+    parser.add_argument(
+        "--kd_ratio",
+        type=float,
+        default=1,
+        help=f"Sensitizes the amount of KD-loss that needs to be added with existing loss",
+    )
+
     args = parser.parse_args()
 
     args.model_name_or_path = "bert-base-cased"
@@ -958,12 +965,18 @@ def main():
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch)
                 loss = outputs.loss
+                
+                kd_loss = ce_soft(outputs.logits, soft_targets)
+                loss = loss + args.kd_ratio * kd_loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
                 model.set_sample_config(super_config)
                 outputs = model(**batch)
                 loss = outputs.loss
+
+                kd_loss = ce_soft(outputs.logits, soft_targets)
+                loss = loss + args.kd_ratio * kd_loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
