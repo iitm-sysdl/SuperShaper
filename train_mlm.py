@@ -951,13 +951,19 @@ def main():
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
-                loss /= args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                #loss /= args.gradient_accumulation_steps
+                #accelerator.backward(loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
                 # hence applying softmanx to last dim
-                soft_targets = torch.nn.functional.softmax(
-                    outputs.logits, dim=-1
-                ).detach()
+                with torch.no_grad():
+                    soft_targets = torch.nn.functional.softmax(
+                        outputs.logits.detach(), dim=-1
+                    )
+
+                #soft_targets = torch.nn.functional.softmax(
+                #    outputs.logits, dim=-1
+                #).detach()
+
 
                 # replace the labels in our batch to soft_targets
                 batch["labels"] = soft_targets
