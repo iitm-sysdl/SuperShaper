@@ -137,6 +137,57 @@ def get_choices(num_hidden_layers=12, mixing="attention"):
     return choices
 
 
+def get_diverse_subtransformers(elastic_variable, config):
+    diverse_configs = []
+    all_choices = get_choices(config.num_hidden_layers, config.mixing)
+
+    num_hidden_layers = int(config.num_hidden_layers)
+
+    elastic_variable_choices = all_choices[elastic_variable]
+
+    diverse_config = copy.deepcopy(config)
+    choices1_keys = ["sample_hidden_size", "sample_num_hidden_layers"]
+    choices2_keys = ["sample_num_attention_heads", "sample_intermediate_size"]
+
+    for key in choices1_keys:
+        if key == elastic_variable:
+            continue
+        value = max(all_choices[key])
+        setattr(diverse_config, key, value)
+
+    for key in choices2_keys:
+        if key == elastic_variable:
+            continue
+        value = [max(all_choices[key])] * num_hidden_layers
+        setattr(diverse_config, key, value)
+
+    for choice in elastic_variable_choices:
+        if elastic_variable in choices1_keys:
+            value = choice
+            setattr(diverse_config, elastic_variable, value)
+        else:
+            value = [choice] * num_hidden_layers
+            setattr(diverse_config, elastic_variable, value)
+
+        if (
+            getattr(diverse_config, "sample_hidden_size")
+            % getattr(diverse_config, "sample_num_attention_heads")[0]
+        ):
+            continue
+        diverse_configs.append(copy.deepcopy(diverse_config))
+
+    def sorter(x):
+        value = getattr(x, elastic_variable)
+        if isinstance(value, list):
+            return value[0]
+        else:
+            return value
+
+    diverse_configs = sorted(diverse_configs, key=sorter)
+
+    return diverse_configs
+
+
 def random_sampling(config, tiny_attn=False):
     choices = get_choices(config.num_hidden_layers, mixing=config.mixing)
 
@@ -290,7 +341,7 @@ def get_small_config(config):
 ## Population size will be implemented later
 def sandwich_sampling(config, tiny_attn=False, pop_size=1):
     small_config = get_small_config(config)
-    random_config = random_sampling(config)
+    random_config, _ = biased_params_sampling(config, tiny_attn)
 
     return random_config, small_config
 
