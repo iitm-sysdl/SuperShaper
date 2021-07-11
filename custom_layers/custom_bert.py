@@ -68,7 +68,7 @@ import torch.nn.functional as F
 
 from custom_layers.custom_embedding import CustomEmbedding
 from custom_layers.custom_linear import CustomLinear
-from custom_layers.custom_layernorm import CustomLayerNorm
+from custom_layers.custom_layernorm import CustomLayerNorm, CustomNoNorm
 from copy import deepcopy
 from utils import CrossEntropyLossSoft
 
@@ -103,6 +103,9 @@ BERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
     "wietsedv/bert-base-dutch-cased",
     # See all BERT models at https://huggingface.co/models?filter=bert
 ]
+
+
+NORM2FN = {"layer_norm": CustomLayerNorm, "no_norm": CustomNoNorm}
 
 
 def load_tf_weights_in_bert(model, config, tf_checkpoint_path):
@@ -212,7 +215,9 @@ class BertEmbeddings(nn.Module):
 
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
-        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
@@ -518,7 +523,9 @@ class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = CustomLinear(config.hidden_size, config.hidden_size)
-        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def set_sample_config(self, config):
@@ -628,7 +635,9 @@ class BertFNet(nn.Module):
     def __init__(self, config):
         super().__init__()
 
-        self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.norm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.linear_inter = CustomLinear(config.hidden_size, config.intermediate_size)
         self.linear_final = CustomLinear(config.intermediate_size, config.hidden_size)
         self.dropout_inter = nn.Dropout(config.hidden_dropout_prob)
@@ -722,7 +731,9 @@ class BertDense(nn.Module):
         self.act = act
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
-        self.norm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.norm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.channel_projection_in = CustomLinear(
             config.hidden_size, config.intermediate_size
         )
@@ -918,7 +929,9 @@ class BertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = CustomLinear(config.intermediate_size, config.hidden_size)
-        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def set_sample_config(self, config):
@@ -1302,7 +1315,9 @@ class BertPredictionHeadTransform(nn.Module):
             self.transform_act_fn = ACT2FN[config.hidden_act]
         else:
             self.transform_act_fn = config.hidden_act
-        self.LayerNorm = CustomLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
 
     def set_sample_config(self, config):
         self.dense.set_sample_config(

@@ -433,6 +433,7 @@ def main():
 
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
+    global_config.mixing = args.mixing
 
     if args.mixing == "mobilebert":
         # for mobilebert, dont use layernorm
@@ -443,13 +444,7 @@ def main():
         global_config.normalization_type = "layer_norm"
         global_config.num_feedforward_networks = 1
 
-    if args.inplace_distillation:
-        # initialize with pretrained model if we are using inplace distillation
-        model = custom_bert.BertForMaskedLM.from_pretrained(
-            args.model_name_or_path, config=global_config
-        )
-    else:
-        model = custom_bert.BertForMaskedLM(global_config)
+    model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))

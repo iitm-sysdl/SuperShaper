@@ -59,7 +59,7 @@ from engine import (
 from custom_layers import custom_bert
 
 import plotly.graph_objects as go
-from utils import count_parameters, check_path, get_current_datetime
+from utils import count_parameters, check_path, get_current_datetime, unique_everseen
 
 from torchinfo import summary
 
@@ -346,7 +346,7 @@ def parse_args():
         type=str,
         required=True,
         help=f"specifies how to mix the tokens in bertlayers",
-        choices=["attention", "gmlp", "fnet"],
+        choices=["attention", "gmlp", "fnet", "mobilebert"],
     )
     parser.add_argument(
         "--resume_from_checkpoint_dir",
@@ -450,16 +450,6 @@ def parse_args():
         # args.c4_train_dir = c4_train_dir
         # args.c4_val_dir = c4_val_dir
 
-    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
-        dataset_name = args.dataset_name.split("/")[-1].strip()
-        args.output_dir += (
-            "/" + dataset_name + "_" + args.mixing + "_" + get_current_datetime()
-        )
-        args.optim_scheduler_states_path = os.path.join(
-            args.output_dir, "optimizer_scheduler.pt"
-        )
-        os.makedirs(args.output_dir, exist_ok=True)
-
     if args.resume_from_checkpoint_dir is not None:
 
         args.optim_scheduler_states_path = os.path.join(
@@ -528,6 +518,16 @@ def main():
             entity="efficient-hat",
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
+
+    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
+        dataset_name = args.dataset_name.split("/")[-1].strip()
+        args.output_dir += (
+            "/" + dataset_name + "_" + str_name + "_" + get_current_datetime()
+        )
+        args.optim_scheduler_states_path = os.path.join(
+            args.output_dir, "{}/optimizer_scheduler.pt"
+        )
+        os.makedirs(args.output_dir, exist_ok=True)
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -635,10 +635,18 @@ def main():
             f"The max_seq_length is not defined!! Setting it to max length in tokenizer"
         )
         global_config.max_seq_length = tokenizer.model_max_length
-    # add mixing to the config
-    global_config.mixing = args.mixing
-    global_config.tiny_attn = args.tiny_attn
+
+    # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
+
+    if args.mixing == "mobilebert":
+        # for mobilebert, dont use layernorm
+        global_config.normalization_type = "no_norm"
+        # number of ffn blocks
+        global_config.num_feedforward_networks = 4
+    else:
+        global_config.normalization_type = "layer_norm"
+        global_config.num_feedforward_networks = 1
 
     if args.inplace_distillation:
         # initialize with pretrained model if we are using inplace distillation
@@ -943,8 +951,10 @@ def main():
         + diverse_intermediate_state_subs
         + diverse_num_hidden_subs
     )
+    # get unique subtransformers
+    diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
 
-    colors = px.colors.sequential.Viridis
+    # colors = px.colors.sequential.Viridis
     marker_colors = (
         ["yellow"] * len(diverse_hidden_state_subs)
         + ["green"] * len(diverse_attention_subs)
@@ -969,7 +979,7 @@ def main():
                 "sample_intermediate_size",
                 "sample_num_hidden_layers",
             ]
-            for i, config in enumerate(tqdm(diverse_subtransformers)):
+            for i, config in enumerate(diverse_subtransformers):
                 model.set_sample_config(config)
 
                 eval_metric = validate_subtransformer(
@@ -989,6 +999,8 @@ def main():
                             f"{key}: {getattr(config, key)}"
                             for key in sampling_dimensions
                         ]
+                        # adding the evaluation metrics to print
+                        + [f"{key}: {getattr(config, key)}" for key in eval_metric]
                     )
                 )
                 label_perplex.append(eval_metric["perplexity"])
@@ -1030,7 +1042,6 @@ def main():
                     sampling_type=args.sampling_type,
                 )
                 k_count = 0
-                model.set_sample_config(super_config)
 
             if args.inplace_distillation:
 
@@ -1074,6 +1085,8 @@ def main():
                 # subnet = model.get_active_subnet(super_config)
 
                 # logger.info(subnet)
+
+                model.set_sample_config(super_config)
 
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1155,7 +1168,7 @@ def main():
                         "scheduler": lr_scheduler.state_dict(),
                         "scaler": accelerator.scaler.state_dict(),
                     },
-                    args.optim_scheduler_states_path,
+                    args.optim_scheduler_states_path.format("best_model"),
                 )
 
     if args.output_dir is not None:
@@ -1172,7 +1185,7 @@ def main():
                 "scheduler": lr_scheduler.state_dict(),
                 "scaler": accelerator.scaler.state_dict(),
             },
-            args.optim_scheduler_states_path,
+            args.optim_scheduler_states_path.format("last_model"),
         )
 
 

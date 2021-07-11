@@ -105,6 +105,8 @@ def get_supertransformer_config(
         config.intermediate_size
     ] * config.sample_num_hidden_layers
 
+    config.mixing = mixing
+    config.tiny_attn = tiny_attn
     return config
 
 
