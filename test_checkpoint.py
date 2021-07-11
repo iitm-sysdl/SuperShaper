@@ -617,8 +617,8 @@ def main():
     # this is already set by set_seed function which we call above
     # but doing this again just to be sure
     random.seed(args.seed)
-    # sample 1000 random seeds from 1e6
-    random_seeds = random.choices(np.arange(1e6), k=1000)
+    # sample args.num_subtransformers_eval random seeds from 1e6
+    random_seeds = random.choices(np.arange(1e6), k=args.num_subtransformers_eval)
 
     subtranformer_peplexities = []
     subtranformer_accuracies = []
