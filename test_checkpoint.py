@@ -39,7 +39,7 @@ from custom_layers import custom_bert
 
 import plotly.graph_objects as go
 from utils import check_path
-
+from tqdm import tqdm
 from torchinfo import summary
 
 logger = logging.getLogger(__name__)
@@ -434,7 +434,6 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
     global_config.mixing = args.mixing
-
     if args.mixing == "mobilebert":
         # for mobilebert, dont use layernorm
         global_config.normalization_type = "no_norm"
@@ -560,7 +559,7 @@ def main():
     # Data collator
     # This one will take care of randomly masking the tokens.
     data_collator = DataCollatorForLanguageModeling(
-        tokenizer=tokenizer, mlm_probability=args.mlm_probability
+        tokenizer=tokenizer, mlm_probability=0.15
     )
 
     eval_dataloader = DataLoader(
@@ -572,11 +571,13 @@ def main():
     logger.info("Loading model weights from checkpoint ..")
     # we load the model before preparing
     # see this for details: https://github.com/huggingface/accelerate/issues/95
-    model.from_pretrained(args.checkpoint_dir)
+    # model.from_pretrained(args.checkpoint_dir)
+    model.load_state_dict(
+        torch.load(os.path.join(args.checkpoint_dir, "pytorch_model.bin"))
+    )
 
     # Prepare everything with our `accelerator`.
     model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
-
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
         or accelerator.distributed_type == DistributedType.TPU
@@ -604,7 +605,13 @@ def main():
         eval_metric["perplexity"],
     )
     logger.info(
+        "==============================================================================================\n"
+    )
+    logger.info(
         f"Supertransformer stats: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
+    )
+    logger.info(
+        "\n=============================================================================================="
     )
 
     # this is already set by set_seed function which we call above
@@ -615,11 +622,11 @@ def main():
 
     subtranformer_peplexities = []
     subtranformer_accuracies = []
-    subtranformer_loss = []
+    subtranformer_losses = []
     subtranformer_configs = []
 
-    for idx, _seed in enumerate(random_seeds):
-        subtransformer_config = sample_subtransformer(
+    for idx, _seed in enumerate(tqdm(random_seeds)):
+        subtransformer_config, _ = sample_subtransformer(
             randomize=True,
             rand_seed=_seed,
             tiny_attn=False,
@@ -642,24 +649,23 @@ def main():
         )
         subtranformer_peplexities.append(perplexity)
         subtranformer_accuracies.append(val_accuracy)
-        subtranformer_loss.append(val_loss)
+        subtranformer_losses.append(val_loss.item())
         subtranformer_configs.append(subtransformer_config)
-
     logger.info(
-        f"Subtransformer average stats: val_perplexity: {mean(subtranformer_peplexities):.2f}, val_loss: {mean(subtranformer_loss):.2f}, val_accuracy:  {mean(subtranformer_accuracies):.2f}"
+        f"Subtransformer average stats: val_perplexity: {mean(subtranformer_peplexities):.2f}, val_loss: {mean(subtranformer_losses):.2f}, val_accuracy:  {mean(subtranformer_accuracies):.2f}"
     )
 
     # dictionary of lists
     dict = {
         "config": subtranformer_configs,
-        "loss": subtranformer_loss,
+        "loss": subtranformer_losses,
         "perplexity": subtranformer_peplexities,
         "accuracy": subtranformer_accuracies,
     }
 
     df = pd.DataFrame(dict)
     csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
-    df.to_csv(csv_path, df, index=False)
+    df.to_csv(csv_path, index=False)
 
 
 if __name__ == "__main__":

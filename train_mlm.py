@@ -818,7 +818,11 @@ def main():
         logger.info("Loading model weights from checkpoint ..")
         # we load the model before preparing
         # see this for details: https://github.com/huggingface/accelerate/issues/95
-        model.from_pretrained(args.resume_from_checkpoint_dir)
+        model.load_state_dict(
+            torch.load(
+                os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin")
+            )
+        )
 
         optim_scheduler_states = torch.load(
             args.optim_scheduler_states_path, map_location="cpu"
