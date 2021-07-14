@@ -373,6 +373,12 @@ def parse_args():
         default=None,
         help=f"The directory path for C4",
     )
+    parser.add_argument(
+        "--no_sampling",
+        type=int,
+        default=0,
+        help=f"If set to 1, there will be no sampling. This is useful for training/testing pretrained or whole models",
+    )
 
     parser.add_argument(
         "--sampling_type",
@@ -438,6 +444,10 @@ def parse_args():
 
     if args.tiny_attn == 1:
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
+
+    if args.no_sampling == 1:
+        # if we are not sampling, dont test random subtransformers every n epochs
+        args.eval_random_subtransformers = False
 
     if args.c4_dir is not None:
         check_path(args.c4_dir)
@@ -640,6 +650,13 @@ def main():
     global_config.hidden_dropout_prob = 0
 
     if args.mixing == "mobilebert":
+        # config.sample_hidden_size
+        # config.sample_intermediate_size
+        # config.sample_intra_bottleneck_size
+        # config.sample_num_attention_heads
+        # config.sample_num_hidden_layers
+        # config.sample_true_hidden_size
+
         # for mobilebert, dont use layernorm
         global_config.normalization_type = "no_norm"
         # number of ffn blocks
@@ -648,8 +665,8 @@ def main():
         global_config.normalization_type = "layer_norm"
         global_config.num_feedforward_networks = 1
 
-    if args.inplace_distillation:
-        # initialize with pretrained model if we are using inplace distillation
+    if args.inplace_distillation or args.no_sampling:
+        # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
         )
@@ -935,36 +952,36 @@ def main():
     # rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
     # logger.info(len(rand_seed_lst))
     # logger.info("Random seeds generation done..")
+    if args.eval_random_subtransformers:
+        diverse_hidden_state_subs = get_diverse_subtransformers(
+            "sample_hidden_size", global_config
+        )
+        diverse_attention_subs = get_diverse_subtransformers(
+            "sample_num_attention_heads", global_config
+        )
+        diverse_intermediate_state_subs = get_diverse_subtransformers(
+            "sample_intermediate_size", global_config
+        )
+        diverse_num_hidden_subs = get_diverse_subtransformers(
+            "sample_num_hidden_layers", global_config
+        )
 
-    diverse_hidden_state_subs = get_diverse_subtransformers(
-        "sample_hidden_size", global_config
-    )
-    diverse_attention_subs = get_diverse_subtransformers(
-        "sample_num_attention_heads", global_config
-    )
-    diverse_intermediate_state_subs = get_diverse_subtransformers(
-        "sample_intermediate_size", global_config
-    )
-    diverse_num_hidden_subs = get_diverse_subtransformers(
-        "sample_num_hidden_layers", global_config
-    )
+        diverse_subtransformers = (
+            diverse_hidden_state_subs
+            + diverse_attention_subs
+            + diverse_intermediate_state_subs
+            + diverse_num_hidden_subs
+        )
+        # get unique subtransformers
+        diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
 
-    diverse_subtransformers = (
-        diverse_hidden_state_subs
-        + diverse_attention_subs
-        + diverse_intermediate_state_subs
-        + diverse_num_hidden_subs
-    )
-    # get unique subtransformers
-    diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
-
-    # colors = px.colors.sequential.Viridis
-    marker_colors = (
-        ["yellow"] * len(diverse_hidden_state_subs)
-        + ["green"] * len(diverse_attention_subs)
-        + ["blue"] * len(diverse_intermediate_state_subs)
-        + ["red"] * len(diverse_num_hidden_subs)
-    )
+        # colors = px.colors.sequential.Viridis
+        marker_colors = (
+            ["yellow"] * len(diverse_hidden_state_subs)
+            + ["green"] * len(diverse_attention_subs)
+            + ["blue"] * len(diverse_intermediate_state_subs)
+            + ["red"] * len(diverse_num_hidden_subs)
+        )
 
     best_val_perplexity = 1000000
     seed = -1
@@ -1037,7 +1054,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             seed += 1
             k_count += 1
-            if k_count == args.k_sampling:
+            if k_count == args.k_sampling and args.no_sampling != 1:
                 super_config, super_config_small = sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
@@ -1089,8 +1106,8 @@ def main():
                 # subnet = model.get_active_subnet(super_config)
 
                 # logger.info(subnet)
-
-                model.set_sample_config(super_config)
+                if args.no_sampling != 1:
+                    model.set_sample_config(super_config)
 
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1124,7 +1141,8 @@ def main():
                 break
 
         # change to supertransformer config
-        model.set_sample_config(global_config)
+        if args.no_sampling != 1:
+            model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
             model,
