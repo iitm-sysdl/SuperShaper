@@ -59,7 +59,7 @@ from engine import (
 from custom_layers import custom_bert
 
 import plotly.graph_objects as go
-from utils import count_parameters, check_path, get_current_datetime
+from utils import count_parameters, check_path, get_current_datetime, unique_everseen
 
 from torchinfo import summary
 
@@ -346,7 +346,7 @@ def parse_args():
         type=str,
         required=True,
         help=f"specifies how to mix the tokens in bertlayers",
-        choices=["attention", "gmlp", "fnet"],
+        choices=["attention", "gmlp", "fnet", "mobilebert"],
     )
     parser.add_argument(
         "--resume_from_checkpoint_dir",
@@ -372,6 +372,12 @@ def parse_args():
         type=str,
         default=None,
         help=f"The directory path for C4",
+    )
+    parser.add_argument(
+        "--no_sampling",
+        type=int,
+        default=0,
+        help=f"If set to 1, there will be no sampling. This is useful for training/testing pretrained or whole models",
     )
 
     parser.add_argument(
@@ -439,6 +445,10 @@ def parse_args():
     if args.tiny_attn == 1:
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
 
+    if args.no_sampling == 1:
+        # if we are not sampling, dont test random subtransformers every n epochs
+        args.eval_random_subtransformers = False
+
     if args.c4_dir is not None:
         check_path(args.c4_dir)
         # c4_train_dir = os.path.join(args.c4_dir, "train")
@@ -449,16 +459,6 @@ def parse_args():
         args.dataset_name = "c4_realnews"
         # args.c4_train_dir = c4_train_dir
         # args.c4_val_dir = c4_val_dir
-
-    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
-        dataset_name = args.dataset_name.split("/")[-1].strip()
-        args.output_dir += (
-            "/" + dataset_name + "_" + args.mixing + "_" + get_current_datetime()
-        )
-        args.optim_scheduler_states_path = os.path.join(
-            args.output_dir, "optimizer_scheduler.pt"
-        )
-        os.makedirs(args.output_dir, exist_ok=True)
 
     if args.resume_from_checkpoint_dir is not None:
 
@@ -528,6 +528,16 @@ def main():
             entity="efficient-hat",
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
+
+    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
+        dataset_name = args.dataset_name.split("/")[-1].strip()
+        args.output_dir += (
+            "/" + dataset_name + "_" + str_name + "_" + get_current_datetime()
+        )
+        args.optim_scheduler_states_path = os.path.join(
+            args.output_dir, "{}/optimizer_scheduler.pt"
+        )
+        os.makedirs(args.output_dir, exist_ok=True)
 
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
@@ -635,13 +645,28 @@ def main():
             f"The max_seq_length is not defined!! Setting it to max length in tokenizer"
         )
         global_config.max_seq_length = tokenizer.model_max_length
-    # add mixing to the config
-    global_config.mixing = args.mixing
-    global_config.tiny_attn = args.tiny_attn
+
+    # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
-    if args.inplace_distillation:
-        # initialize with pretrained model if we are using inplace distillation
+    if args.mixing == "mobilebert":
+        # config.sample_hidden_size
+        # config.sample_intermediate_size
+        # config.sample_intra_bottleneck_size
+        # config.sample_num_attention_heads
+        # config.sample_num_hidden_layers
+        # config.sample_true_hidden_size
+
+        # for mobilebert, dont use layernorm
+        global_config.normalization_type = "no_norm"
+        # number of ffn blocks
+        global_config.num_feedforward_networks = 4
+    else:
+        global_config.normalization_type = "layer_norm"
+        global_config.num_feedforward_networks = 1
+
+    if args.inplace_distillation or args.no_sampling:
+        # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
         )
@@ -810,7 +835,11 @@ def main():
         logger.info("Loading model weights from checkpoint ..")
         # we load the model before preparing
         # see this for details: https://github.com/huggingface/accelerate/issues/95
-        model.from_pretrained(args.resume_from_checkpoint_dir)
+        model.load_state_dict(
+            torch.load(
+                os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin")
+            )
+        )
 
         optim_scheduler_states = torch.load(
             args.optim_scheduler_states_path, map_location="cpu"
@@ -923,34 +952,36 @@ def main():
     # rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
     # logger.info(len(rand_seed_lst))
     # logger.info("Random seeds generation done..")
+    if args.eval_random_subtransformers:
+        diverse_hidden_state_subs = get_diverse_subtransformers(
+            "sample_hidden_size", global_config
+        )
+        diverse_attention_subs = get_diverse_subtransformers(
+            "sample_num_attention_heads", global_config
+        )
+        diverse_intermediate_state_subs = get_diverse_subtransformers(
+            "sample_intermediate_size", global_config
+        )
+        diverse_num_hidden_subs = get_diverse_subtransformers(
+            "sample_num_hidden_layers", global_config
+        )
 
-    diverse_hidden_state_subs = get_diverse_subtransformers(
-        "sample_hidden_size", global_config
-    )
-    diverse_attention_subs = get_diverse_subtransformers(
-        "sample_num_attention_heads", global_config
-    )
-    diverse_intermediate_state_subs = get_diverse_subtransformers(
-        "sample_intermediate_size", global_config
-    )
-    diverse_num_hidden_subs = get_diverse_subtransformers(
-        "sample_num_hidden_layers", global_config
-    )
+        diverse_subtransformers = (
+            diverse_hidden_state_subs
+            + diverse_attention_subs
+            + diverse_intermediate_state_subs
+            + diverse_num_hidden_subs
+        )
+        # get unique subtransformers
+        diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
 
-    diverse_subtransformers = (
-        diverse_hidden_state_subs
-        + diverse_attention_subs
-        + diverse_intermediate_state_subs
-        + diverse_num_hidden_subs
-    )
-
-    colors = px.colors.sequential.Viridis
-    marker_colors = (
-        ["yellow"] * len(diverse_hidden_state_subs)
-        + ["green"] * len(diverse_attention_subs)
-        + ["blue"] * len(diverse_intermediate_state_subs)
-        + ["red"] * len(diverse_num_hidden_subs)
-    )
+        # colors = px.colors.sequential.Viridis
+        marker_colors = (
+            ["yellow"] * len(diverse_hidden_state_subs)
+            + ["green"] * len(diverse_attention_subs)
+            + ["blue"] * len(diverse_intermediate_state_subs)
+            + ["red"] * len(diverse_num_hidden_subs)
+        )
 
     best_val_perplexity = 1000000
     seed = -1
@@ -969,7 +1000,7 @@ def main():
                 "sample_intermediate_size",
                 "sample_num_hidden_layers",
             ]
-            for i, config in enumerate(tqdm(diverse_subtransformers)):
+            for i, config in enumerate(diverse_subtransformers):
                 model.set_sample_config(config)
 
                 eval_metric = validate_subtransformer(
@@ -989,6 +1020,8 @@ def main():
                             f"{key}: {getattr(config, key)}"
                             for key in sampling_dimensions
                         ]
+                        # adding the evaluation metrics to print
+                        + [f"{key}: {getattr(config, key)}" for key in eval_metric]
                     )
                 )
                 label_perplex.append(eval_metric["perplexity"])
@@ -1021,7 +1054,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             seed += 1
             k_count += 1
-            if k_count == args.k_sampling:
+            if k_count == args.k_sampling and args.no_sampling != 1:
                 super_config, super_config_small = sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
@@ -1030,7 +1063,6 @@ def main():
                     sampling_type=args.sampling_type,
                 )
                 k_count = 0
-                model.set_sample_config(super_config)
 
             if args.inplace_distillation:
 
@@ -1074,6 +1106,8 @@ def main():
                 # subnet = model.get_active_subnet(super_config)
 
                 # logger.info(subnet)
+                if args.no_sampling != 1:
+                    model.set_sample_config(super_config)
 
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1107,7 +1141,8 @@ def main():
                 break
 
         # change to supertransformer config
-        model.set_sample_config(global_config)
+        if args.no_sampling != 1:
+            model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
             model,
@@ -1155,7 +1190,7 @@ def main():
                         "scheduler": lr_scheduler.state_dict(),
                         "scaler": accelerator.scaler.state_dict(),
                     },
-                    args.optim_scheduler_states_path,
+                    args.optim_scheduler_states_path.format("best_model"),
                 )
 
     if args.output_dir is not None:
@@ -1172,7 +1207,7 @@ def main():
                 "scheduler": lr_scheduler.state_dict(),
                 "scaler": accelerator.scaler.state_dict(),
             },
-            args.optim_scheduler_states_path,
+            args.optim_scheduler_states_path.format("last_model"),
         )
 
 
