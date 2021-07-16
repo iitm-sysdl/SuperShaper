@@ -992,12 +992,15 @@ def main():
         diverse_num_hidden_subs = get_diverse_subtransformers(
             "sample_num_hidden_layers", global_config
         )
+        diverse_num_intra_subs = get_diverse_subtransformers(
+            "sample_intra_bottleneck_size", global_config
+        )
 
         diverse_subtransformers = (
             diverse_hidden_state_subs
             + diverse_attention_subs
             + diverse_intermediate_state_subs
-            + diverse_num_hidden_subs
+            + diverse_num_intra_subs
         )
         # get unique subtransformers
         diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
