@@ -25,7 +25,7 @@ import wandb
 
 import plotly.express as px
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, OrderedDict as OD
 
 
 import numpy as np
@@ -34,6 +34,7 @@ import torch
 from datasets import load_dataset, load_metric
 from torch.utils.data.dataloader import DataLoader
 from tqdm.auto import tqdm
+import torch.nn as nn
 
 import transformers
 from transformers import (
@@ -56,10 +57,14 @@ from engine import (
     show_args,
     get_diverse_subtransformers,
 )
-from custom_layers import custom_bert
+from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
-from utils import count_parameters, check_path, get_current_datetime, unique_everseen
+from more_itertools import unique_everseen
+from utils import count_parameters, check_path, get_current_datetime
+
+import transformers
+from transformers.models.bert.modeling_bert import BertForMaskedLM
 
 from torchinfo import summary
 
@@ -417,7 +422,7 @@ def parse_args():
     if args.inplace_distillation == 1:
         # hard setting this for now
         args.sampling_type = "sandwich"
-        args.mixing = "attention"
+        # args.mixing = "attention"
 
     if (
         args.dataset_name is None
@@ -608,7 +613,9 @@ def main():
     # else:
     #     config = CONFIG_MAPPING[args.model_type]()
     #     logger.warning("You are instantiating a new config instance from scratch.")
-
+    print("===========================")
+    print(args.mixing)
+    print("===========================")
     global_config = get_supertransformer_config(
         args.model_name_or_path, tiny_attn=args.tiny_attn, mixing=args.mixing
     )
@@ -649,23 +656,43 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
+    # TODO: decouple mixing and mobilebert model declarato
     if args.mixing == "mobilebert":
-        # config.sample_hidden_size
-        # config.sample_intermediate_size
-        # config.sample_intra_bottleneck_size
-        # config.sample_num_attention_heads
-        # config.sample_num_hidden_layers
-        # config.sample_true_hidden_size
 
-        # for mobilebert, dont use layernorm
-        global_config.normalization_type = "no_norm"
-        # number of ffn blocks
-        global_config.num_feedforward_networks = 4
-    else:
-        global_config.normalization_type = "layer_norm"
-        global_config.num_feedforward_networks = 1
+        # for attention transfer and feature transfer enable these.
+        global_config.output_attentions = True
+        global_config.output_hidden_states = True
 
-    if args.inplace_distillation or args.no_sampling:
+        states = OD()
+
+        model = custom_mobile_bert.MobileBertForMaskedLM(config=global_config)
+        model2 = BertForMaskedLM.from_pretrained("bert-base-cased")
+
+        for key in model2.state_dict().keys():
+            _key = key.replace("bert.", "mobilebert.")
+            states[_key] = model2.state_dict()[key]
+
+        del model2
+        model.load_state_dict(states, strict=False)
+        del states
+
+        identity = torch.eye(global_config.true_hidden_size)
+        zero_bias = torch.zeros(global_config.true_hidden_size)
+        for key in model.state_dict().keys():
+            if (
+                "bottleneck.input.dense.weight" in key
+                or "output.bottleneck.dense.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(identity)
+            elif (
+                "bottleneck.output.dense.bias" in key
+                or "output.bottleneck.dense.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(zero_bias)
+
+        logger.info("MobileBert Initiliazed with bert-base")
+
+    elif args.inplace_distillation or args.no_sampling:
         # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
@@ -1021,7 +1048,7 @@ def main():
                             for key in sampling_dimensions
                         ]
                         # adding the evaluation metrics to print
-                        + [f"{key}: {getattr(config, key)}" for key in eval_metric]
+                        + [f"{key}: {eval_metric[key]}" for key in eval_metric]
                     )
                 )
                 label_perplex.append(eval_metric["perplexity"])
@@ -1069,8 +1096,12 @@ def main():
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
-                loss /= args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                teacher_hidden_states = outputs.hidden_states
+                teacher_attention_maps = outputs.attentions
+
+                teacher_mlm_loss = loss
+                teacher_mlm_loss /= args.gradient_accumulation_steps
+                accelerator.backward(teacher_mlm_loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
                 # hence applying softmanx to last dim
                 soft_targets = torch.nn.functional.softmax(
@@ -1083,19 +1114,85 @@ def main():
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
-                loss = loss
-                loss /= args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                smallest_student_hidden_states = outputs.hidden_states
+                smallest_student_attention_maps = outputs.attentions
+
+                # smallest_student_logits = torch.nn.functional.log_softmax(
+                #     outputs.logits, dim=-1
+                # )
+
+                smallest_student_mlm_loss = loss
+                smallest_student_mlm_loss /= args.gradient_accumulation_steps
+                accelerator.backward(smallest_student_mlm_loss, retain_graph=True)
 
                 model.set_sample_config(super_config)
                 outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
+                student_hidden_states = outputs.hidden_states
+                student_attention_maps = outputs.attentions
+                # student_logits = torch.nn.functional.log_softmax(outputs.logits, dim=-1)
 
-                loss = loss
-                loss /= args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                student_mlm_loss = loss
+                student_mlm_loss /= args.gradient_accumulation_steps
+                accelerator.backward(student_mlm_loss, retain_graph=True)
 
-                # loss = (loss_big + loss_small + loss_nl) / 3
+                # AKT - > Attention knowledge transfer
+                # FKT - > Feature knowledge transfer
+                student_akt = 0.0
+                student_fkt = 0.0
+                smallest_student_akt = 0.0
+                smallest_student_fkt = 0.0
+
+                non_trainable_layernorm = nn.LayerNorm(
+                    teacher_hidden_states[-1].shape[1:], elementwise_affine=False
+                )
+
+                for teacher_hidden, student_hidden, smallest_student_hidden in zip(
+                    teacher_hidden_states[1:],
+                    student_hidden_states[1:],
+                    smallest_student_hidden_states[1:],
+                ):
+                    teacher_hidden = non_trainable_layernorm(teacher_hidden.detach())
+                    student_hidden = non_trainable_layernorm(student_hidden)
+                    smallest_student_hidden = non_trainable_layernorm(
+                        smallest_student_hidden
+                    )
+
+                    student_fkt += nn.MSELoss()(teacher_hidden, student_hidden)
+                    smallest_student_fkt += nn.MSELoss()(
+                        teacher_hidden, smallest_student_hidden
+                    )
+
+                for (
+                    teacher_attention,
+                    student_attention,
+                    smallest_student_attention,
+                ) in zip(
+                    teacher_attention_maps,
+                    student_attention_maps,
+                    smallest_student_attention_maps,
+                ):
+                    # attentions are aleready in probabilities, hence no softmax
+                    student_attention = student_attention.log()
+                    smallest_student_attention = smallest_student_attention.log()
+
+                    student_akt += nn.KLDivLoss(reduction="batchmean")(
+                        teacher_attention.detach(), student_attention
+                    )
+
+                    smallest_student_akt += nn.KLDivLoss(reduction="batchmean")(
+                        teacher_attention.detach(), smallest_student_attention
+                    )
+
+                # TODO: weight these losses properly
+                student_loss = 0.5 * student_fkt + 0.5 * student_akt
+                smallest_student_loss = (
+                    0.5 * smallest_student_fkt + 0.5 * smallest_student_akt
+                )
+                student_loss /= args.gradient_accumulation_steps
+                smallest_student_loss /= args.gradient_accumulation_steps
+                accelerator.backward(student_loss)
+                accelerator.backward(smallest_student_loss)
 
             else:  # Other means of sampling
                 # model.set_sample_config(super_config)
