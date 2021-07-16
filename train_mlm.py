@@ -665,6 +665,10 @@ def main():
         global_config.num_feedforward_networks = 1
         global_config.use_bottleneck_attention = False
 
+        # for attention transfer and feature transfer enable these.
+        global_config.output_attentions = True
+        global_config.output_hidden_layers = True
+
         states = OD()
 
         model = custom_mobile_bert.MobileBertForMaskedLM(
@@ -1104,6 +1108,8 @@ def main():
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
+                teacher_hidden_states = outputs.hidden_states
+                teacher_attention_maps = outputs.attention_maps
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
@@ -1118,6 +1124,8 @@ def main():
                 model.set_sample_config(super_config_small)
                 outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
+                smallest_student_hidden_states = outputs.hidden_states
+                smallest_student_attention_maps = outputs.attention_maps
                 loss = loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)
@@ -1125,7 +1133,8 @@ def main():
                 model.set_sample_config(super_config)
                 outputs = model(**batch, use_soft_loss=True)
                 loss = outputs.loss
-
+                student_hidden_states = outputs.hidden_states
+                student_attention_maps = outputs.attention_maps
                 loss = loss
                 loss /= args.gradient_accumulation_steps
                 accelerator.backward(loss)

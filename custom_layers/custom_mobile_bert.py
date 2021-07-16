@@ -61,6 +61,7 @@ from custom_layers.custom_linear import CustomLinear
 from custom_layers.custom_layernorm import CustomLayerNorm, CustomNoNorm
 from custom_layers.custom_bert import BertEmbeddings
 from copy import deepcopy
+from utils import CrossEntropyLossSoft
 
 
 logger = logging.get_logger(__name__)
@@ -441,7 +442,9 @@ class MobileBertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.use_bottleneck = config.use_bottleneck
-        self.dense = CustomLinear(config.intra_bottleneck_size, config.intra_bottleneck_size)
+        self.dense = CustomLinear(
+            config.intra_bottleneck_size, config.intra_bottleneck_size
+        )
         self.LayerNorm = NORM2FN[config.normalization_type](
             config.intra_bottleneck_size, eps=config.layer_norm_eps
         )
@@ -451,7 +454,9 @@ class MobileBertSelfOutput(nn.Module):
     def set_sample_config(self, config):
         sample_true_hidden_size = config.sample_true_hidden_size
         sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
-        self.dense.set_sample_config(sample_intra_bottleneck_size, sample_intra_bottleneck_size)
+        self.dense.set_sample_config(
+            sample_intra_bottleneck_size, sample_intra_bottleneck_size
+        )
         self.LayerNorm.set_sample_config(sample_intra_bottleneck_size)
 
         # reinitialize the dropout module with new dropout rate
@@ -556,7 +561,9 @@ class MobileBertAttention(nn.Module):
 class MobileBertIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = CustomLinear(config.intra_bottleneck_size, config.intermediate_size)
+        self.dense = CustomLinear(
+            config.intra_bottleneck_size, config.intermediate_size
+        )
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
@@ -566,7 +573,9 @@ class MobileBertIntermediate(nn.Module):
         sample_intermediate_size = config.sample_intermediate_size
         sample_intra_bottleneck_size = config.intra_bottleneck_size
         sample_true_hidden_size = config.sample_true_hidden_size
-        self.dense.set_sample_config(sample_intra_bottleneck_size, sample_intermediate_size)
+        self.dense.set_sample_config(
+            sample_intra_bottleneck_size, sample_intermediate_size
+        )
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -609,7 +618,9 @@ class MobileBertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.use_bottleneck = config.use_bottleneck
-        self.dense = CustomLinear(config.intermediate_size, config.intra_bottleneck_size)
+        self.dense = CustomLinear(
+            config.intermediate_size, config.intra_bottleneck_size
+        )
         self.LayerNorm = NORM2FN[config.normalization_type](
             config.intra_bottleneck_size, eps=config.layer_norm_eps
         )
@@ -629,7 +640,9 @@ class MobileBertOutput(nn.Module):
         sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         sample_true_hidden_size = config.sample_true_hidden_size
         self.LayerNorm.set_sample_config(sample_intra_bottleneck_size)
-        self.dense.set_sample_config(sample_intermediate_size, sample_intra_bottleneck_size)
+        self.dense.set_sample_config(
+            sample_intermediate_size, sample_intra_bottleneck_size
+        )
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
             super_hidden_size=config.intermediate_size,
@@ -645,17 +658,11 @@ class MobileBertOutput(nn.Module):
         layer_output = self.dense(intermediate_states)
         if not self.use_bottleneck:
             layer_output = self.dropout(layer_output)
-            output = (
-                layer_output
-                + self.linear_scaler * residual_tensor_1
-            )
+            output = layer_output + self.linear_scaler * residual_tensor_1
             layer_output = self.LayerNorm(output)
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
-            output = (
-                layer_output
-                + self.linear_scaler * residual_tensor_2
-            )
+            output = layer_output + self.linear_scaler * residual_tensor_2
             layer_output = self.bottleneck(output)
         return layer_output
 
@@ -1568,6 +1575,7 @@ class MobileBertForMaskedLM(MobileBertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        use_soft_loss=False,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
@@ -1596,10 +1604,17 @@ class MobileBertForMaskedLM(MobileBertPreTrainedModel):
 
         masked_lm_loss = None
         if labels is not None:
-            loss_fct = CrossEntropyLoss()  # -100 index = padding token
-            masked_lm_loss = loss_fct(
-                prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
-            )
+            if use_soft_loss:
+                loss_fct = CrossEntropyLossSoft()
+                masked_lm_loss = loss_fct(
+                    prediction_scores.view(-1, self.config.vocab_size),
+                    labels.view(-1, self.config.vocab_size),
+                )
+            else:
+                loss_fct = CrossEntropyLoss()  # -100 index = padding token
+                masked_lm_loss = loss_fct(
+                    prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+                )
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
