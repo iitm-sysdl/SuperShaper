@@ -105,6 +105,30 @@ def get_supertransformer_config(
         config.intermediate_size
     ] * config.sample_num_hidden_layers
 
+    if mixing == "mobilebert":
+        config.normalization_type = "no_norm"
+        config.num_feedforward_networks = 4
+
+        config.sample_embedding_size = config.embedding_size
+        config.sample_num_hidden_layers = config.num_hidden_layers
+        config.sample_intra_bottleneck_size = config.intra_bottleneck_size
+        config.sample_true_hidden_size = config.true_hidden_size
+    else:
+        config.embedding_size = 768
+        config.intra_bottleneck_size = 768
+        config.true_hidden_size = 768
+        config.normalization_type = "no_norm"
+        config.num_feedforward_networks = 4
+
+        config.use_bottleneck = True
+        config.use_bottleneck_attention = True
+        config.key_query_shared_bottleneck = False
+
+        config.sample_embedding_size = config.embedding_size
+        config.sample_num_hidden_layers = config.num_hidden_layers
+        config.sample_intra_bottleneck_size = config.intra_bottleneck_size
+        config.sample_true_hidden_size = config.true_hidden_size
+
     config.mixing = mixing
     config.tiny_attn = tiny_attn
     return config
@@ -136,6 +160,10 @@ def get_choices(num_hidden_layers=12, mixing="attention"):
     choices["sample_hidden_size"] = (
         [120, 240, 360, 480, 512] if mixing == "gmlp" else choices["sample_hidden_size"]
     )
+    if mixing == "mobilebert":
+        choices["sample_hidden_size"] = [768]
+        choices["sample_intra_bottleneck_size"] = [360, 480, 540, 600, 768]
+
     return choices
 
 

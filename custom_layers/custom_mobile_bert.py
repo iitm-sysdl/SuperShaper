@@ -59,6 +59,7 @@ from transformers.models.mobilebert.configuration_mobilebert import MobileBertCo
 from custom_layers.custom_embedding import CustomEmbedding
 from custom_layers.custom_linear import CustomLinear
 from custom_layers.custom_layernorm import CustomLayerNorm, CustomNoNorm
+from custom_layers.custom_bert import BertEmbeddings
 from copy import deepcopy
 
 
@@ -186,10 +187,12 @@ class MobileBertEmbeddings(nn.Module):
             config.vocab_size, config.embedding_size, padding_idx=config.pad_token_id
         )
         self.position_embeddings = CustomEmbedding(
-            config.max_position_embeddings, config.hidden_size
+            config.max_position_embeddings,
+            config.hidden_size,
+            padding_idx=config.pad_token_id,
         )
         self.token_type_embeddings = CustomEmbedding(
-            config.type_vocab_size, config.hidden_size
+            config.type_vocab_size, config.hidden_size, padding_idx=config.pad_token_id
         )
 
         embed_dim_multiplier = 3 if self.trigram_input else 1
@@ -198,7 +201,9 @@ class MobileBertEmbeddings(nn.Module):
             embedded_input_size, config.hidden_size
         )
 
-        self.LayerNorm = NORM2FN[config.normalization_type](config.hidden_size)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.hidden_size, eps=config.layer_norm_eps
+        )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
@@ -211,7 +216,7 @@ class MobileBertEmbeddings(nn.Module):
         # hidden_size -> sample_emb_hidden_size
         sample_hidden_size = config.sample_hidden_size
         embed_dim_multiplier = 3 if self.trigram_input else 1
-        sample_embedded_input_size = self.sample_embedding_size * embed_dim_multiplier
+        sample_embedded_input_size = config.sample_embedding_size * embed_dim_multiplier
 
         self.word_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.position_embeddings.set_sample_config(sample_hidden_size, part="encoder")
@@ -600,11 +605,19 @@ class MobileBertOutput(nn.Module):
         super().__init__()
         self.use_bottleneck = config.use_bottleneck
         self.dense = CustomLinear(config.intermediate_size, config.true_hidden_size)
-        self.LayerNorm = NORM2FN[config.normalization_type](config.true_hidden_size)
+        self.LayerNorm = NORM2FN[config.normalization_type](
+            config.true_hidden_size, eps=config.layer_norm_eps
+        )
         if not self.use_bottleneck:
             self.dropout = nn.Dropout(config.hidden_dropout_prob)
         else:
             self.bottleneck = OutputBottleneck(config)
+        # add linear scaler to weight the red lines
+        self.linear_scaler = nn.Parameter(
+            torch.zeros(config.true_hidden_size, config.true_hidden_size)
+            + config.layer_norm_eps
+        )
+        self.register_parameter("linear_scaler", self.linear_scaler)
 
     def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
@@ -626,10 +639,18 @@ class MobileBertOutput(nn.Module):
         layer_output = self.dense(intermediate_states)
         if not self.use_bottleneck:
             layer_output = self.dropout(layer_output)
-            layer_output = self.LayerNorm(layer_output + residual_tensor_1)
+            output = (
+                self.linear_scaler * layer_output
+                + (1.0 - self.linear_scaler) * residual_tensor_1
+            )
+            layer_output = self.LayerNorm(output)
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
-            layer_output = self.bottleneck(layer_output, residual_tensor_2)
+            output = (
+                self.linear_scaler * layer_output
+                + (1.0 - self.linear_scaler) * residual_tensor_2
+            )
+            layer_output = self.bottleneck(output)
         return layer_output
 
 
@@ -645,7 +666,7 @@ class BottleneckLayer(nn.Module):
         sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         sample_hidden_size = config.sample_hidden_size
         self.LayerNorm.set_sample_config(sample_intra_bottleneck_size)
-        self.dense.set_sample_config(sample_hidden_size.sample_intra_bottleneck_size)
+        self.dense.set_sample_config(sample_hidden_size, sample_intra_bottleneck_size)
 
     def forward(self, hidden_states):
         layer_input = self.dense(hidden_states)
@@ -830,7 +851,7 @@ class MobileBertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        assert config.mixing == "mobilebert"
+        # assert config.mixing == "mobilebert"
         self.layer = nn.ModuleList(
             [MobileBertLayer(config) for _ in range(config.num_hidden_layers)]
         )
@@ -1096,7 +1117,10 @@ class MobileBertPreTrainedModel(PreTrainedModel):
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
             if module.padding_idx is not None:
                 module.weight.data[module.padding_idx].zero_()
-        elif isinstance(module, (nn.LayerNorm, NoNorm)):
+        elif isinstance(module, CustomNoNorm):
+            module.bias.data.zero_()
+            module.weight.data.fill_(1.0)
+        elif isinstance(module, CustomLayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
 
@@ -1215,7 +1239,8 @@ class MobileBertModel(MobileBertPreTrainedModel):
     def __init__(self, config, add_pooling_layer=True):
         super().__init__(config)
         self.config = config
-        self.embeddings = MobileBertEmbeddings(config)
+        # self.embeddings = MobileBertEmbeddings(config)
+        self.embeddings = BertEmbeddings(config)
         self.encoder = MobileBertEncoder(config)
 
         self.pooler = MobileBertPooler(config) if add_pooling_layer else None
@@ -1489,7 +1514,7 @@ class MobileBertForMaskedLM(MobileBertPreTrainedModel):
         self.init_weights()
 
     def set_sample_config(self, config):
-        self.bert.set_sample_config(config)
+        self.mobilebert.set_sample_config(config)
         self.cls.set_sample_config(config)
 
     def get_active_subnet(self, config):

@@ -83,6 +83,10 @@ class CustomNoNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(super_feat_size))
         self.weight = nn.Parameter(torch.ones(super_feat_size))
 
+        self.samples = {}
+        self.profiling = False
+        self.eps = eps
+
     def profile(self, mode=True):
         self.profiling = mode
 

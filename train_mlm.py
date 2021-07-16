@@ -25,7 +25,7 @@ import wandb
 
 import plotly.express as px
 from datetime import datetime
-from collections import defaultdict
+from collections import defaultdict, OrderedDict as OD
 
 
 import numpy as np
@@ -56,7 +56,7 @@ from engine import (
     show_args,
     get_diverse_subtransformers,
 )
-from custom_layers import custom_bert
+from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
 from utils import count_parameters, check_path, get_current_datetime, unique_everseen
@@ -649,6 +649,7 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
+    # TODO: decouple mixing and mobilebert model declarato
     if args.mixing == "mobilebert":
         # config.sample_hidden_size
         # config.sample_intermediate_size
@@ -658,9 +659,43 @@ def main():
         # config.sample_true_hidden_size
 
         # for mobilebert, dont use layernorm
-        global_config.normalization_type = "no_norm"
+        # global_config.normalization_type = "no_norm"
+        global_config.normalization_type = "layer_norm"
         # number of ffn blocks
-        global_config.num_feedforward_networks = 4
+        global_config.num_feedforward_networks = 1
+        global_config.use_bottleneck_attention = False
+
+        states = OD()
+
+        model = custom_mobile_bert.MobileBertForMaskedLM(
+            "bert-base-cased", config=global_config
+        )
+        model2 = custom_bert.BertForMaskedLM.from_pretrained(
+            "bert-base-cased", config=global_config
+        )
+
+        for key in model.state_dict().keys():
+            _key = key.replace("mobilebert.", "bert.")
+            states[_key] = model.state_dict()[_key]
+
+        del model2
+        model.load_state_dict(states, strict=False)
+        del states
+
+        identity = torch.eye(global_config.true_hidden_size)
+        zero_bias = torch.zeros(global_config.true_hidden_size)
+        for key in model.state_dict().keys():
+            if (
+                "bottleneck.input.dense.weight" in key
+                or "output.bottleneck.dense.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(identity)
+            elif (
+                "bottleneck.output.dense.bias" in key
+                or "output.bottleneck.dense.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(zero_bias)
+
     else:
         global_config.normalization_type = "layer_norm"
         global_config.num_feedforward_networks = 1

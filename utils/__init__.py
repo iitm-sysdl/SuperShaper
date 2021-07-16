@@ -5,6 +5,7 @@ from copy import deepcopy
 import torch
 import torch.nn as nn
 from torch.nn.modules.loss import _Loss
+from collections import OrderedDict
 
 
 def flatten_list(nested_list):
