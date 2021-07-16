@@ -92,6 +92,10 @@ def get_supertransformer_config(
     config.sample_hidden_size = config.hidden_size
     config.sample_num_hidden_layers = config.num_hidden_layers
 
+    # for all networks we use layernorm and feedforwardnetworks 1
+    config.normalization_type = "layer_norm"
+    config.num_feedforward_networks = 1
+
     if not tiny_attn:
         config.sample_num_attention_heads = [
             config.num_attention_heads
@@ -106,28 +110,19 @@ def get_supertransformer_config(
     ] * config.sample_num_hidden_layers
 
     if mixing == "mobilebert":
-        config.normalization_type = "layer_norm"
-        config.num_feedforward_networks = 1
-
-        config.sample_embedding_size = config.embedding_size
-        config.sample_num_hidden_layers = config.num_hidden_layers
-        config.sample_intra_bottleneck_size = [config.intra_bottleneck_size] * config.sample_num_hidden_layers
-        config.sample_true_hidden_size = config.true_hidden_size
-    else:
         config.embedding_size = 768
+        config.hidden_size = 768
         config.intra_bottleneck_size = 768
         config.true_hidden_size = 768
-        config.normalization_type = "no_norm"
-        config.num_feedforward_networks = 4
-
-        config.use_bottleneck = True
-        config.use_bottleneck_attention = True
-        config.key_query_shared_bottleneck = False
 
         config.sample_embedding_size = config.embedding_size
-        config.sample_num_hidden_layers = config.num_hidden_layers
-        config.sample_intra_bottleneck_size = config.intra_bottleneck_size
+        config.sample_intra_bottleneck_size = [
+            config.intra_bottleneck_size
+        ] * config.sample_num_hidden_layers
         config.sample_true_hidden_size = config.true_hidden_size
+        config.use_bottleneck = True
+        config.use_bottleneck_attention = False
+        config.key_query_shared_bottleneck = False
 
     config.mixing = mixing
     config.tiny_attn = tiny_attn
@@ -180,7 +175,11 @@ def get_diverse_subtransformers(elastic_variable, config):
 
     diverse_config = copy.deepcopy(config)
     choices1_keys = ["sample_hidden_size", "sample_num_hidden_layers"]
-    choices2_keys = ["sample_num_attention_heads", "sample_intermediate_size"]
+    choices2_keys = [
+        "sample_num_attention_heads",
+        "sample_intermediate_size",
+        "sample_intra_bottleneck_size",
+    ]
 
     for key in choices1_keys:
         if key == elastic_variable:
@@ -201,7 +200,7 @@ def get_diverse_subtransformers(elastic_variable, config):
         else:
             value = [choice] * num_hidden_layers
             setattr(diverse_config, elastic_variable, value)
-
+        # TODO: add sample_intra_bottleneck_size later
         if (
             getattr(diverse_config, "sample_hidden_size")
             % getattr(diverse_config, "sample_num_attention_heads")[0]
@@ -237,6 +236,7 @@ def random_sampling(config, tiny_attn=False):
     config_dict = {
         "sample_num_attention_heads": [],
         "sample_intermediate_size": [],
+        "sample_intra_bottleneck_size": [],
     }
 
     for i in range(num_hidden_layers):
@@ -247,7 +247,13 @@ def random_sampling(config, tiny_attn=False):
                 choice = random.choice(choice_list)
                 config_dict[key].append(choice)
 
-            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][
+                i
+            ] or (
+                hasattr(config, "sample_intra_bottleneck_size")
+                and config.sample_intra_bottleneck_size[i]
+                % config_dict["sample_num_attention_heads"][i]
+            ):
                 for key in config_dict.keys():
                     config_dict[key] = config_dict[key][:-1]
                 continue
@@ -308,7 +314,7 @@ def biased_params_sampling(config, tiny_attn=False):
     config_dict = {
         "sample_num_attention_heads": [],
         "sample_intermediate_size": [],
-        "sample_intra_bottleneck_size": [], 
+        "sample_intra_bottleneck_size": [],
     }
 
     for i in range(num_hidden_layers):
@@ -321,8 +327,15 @@ def biased_params_sampling(config, tiny_attn=False):
                 )[0]
                 config_dict[key].append(choice)
 
-            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+            if (
+                config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]
+            ) or (
+                hasattr(config, "sample_intra_bottleneck_size")
+                and config.sample_intra_bottleneck_size[i]
+                % config_dict["sample_num_attention_heads"][i]
+            ):
                 for key in config_dict.keys():
+                    # we remove this element from the config dict
                     config_dict[key] = config_dict[key][:-1]
                 continue
             else:
@@ -352,6 +365,7 @@ def get_small_config(config):
     config_dict = {
         "sample_num_attention_heads": [],
         "sample_intermediate_size": [],
+        "sample_intra_bottleneck_size": [],
     }
 
     for i in range(num_hidden_layers):
@@ -362,7 +376,13 @@ def get_small_config(config):
                 choice = choice_list[0]
                 config_dict[key].append(choice)
 
-            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+            if config.sample_hidden_size % config_dict["sample_num_attention_heads"][
+                i
+            ] or (
+                hasattr(config, "sample_intra_bottleneck_size")
+                and config.sample_intra_bottleneck_size[i]
+                % config_dict["sample_num_attention_heads"][i]
+            ):
                 for key in config_dict.keys():
                     config_dict[key] = config_dict[key][:-1]
                 continue

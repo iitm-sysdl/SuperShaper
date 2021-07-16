@@ -337,7 +337,6 @@ class MobileBertSelfAttention(nn.Module):
         return x.permute(0, 2, 1, 3)
 
     def set_sample_config(self, config, tiny_attn=False):
-
         if tiny_attn:
             self.sample_num_attention_heads = 1
             # no sampling
@@ -630,8 +629,7 @@ class MobileBertOutput(nn.Module):
             self.bottleneck = OutputBottleneck(config)
         # add linear scaler to weight the red lines
         self.linear_scaler = nn.Parameter(
-            torch.zeros(config.true_hidden_size, config.true_hidden_size)
-            + config.layer_norm_eps
+            torch.zeros(config.true_hidden_size) + config.layer_norm_eps
         )
         self.register_parameter("linear_scaler", self.linear_scaler)
 
@@ -658,12 +656,12 @@ class MobileBertOutput(nn.Module):
         layer_output = self.dense(intermediate_states)
         if not self.use_bottleneck:
             layer_output = self.dropout(layer_output)
-            output = layer_output + self.linear_scaler * residual_tensor_1
-            layer_output = self.LayerNorm(output)
+            layer_output = self.LayerNorm(layer_output + residual_tensor_1)
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
-            output = layer_output + self.linear_scaler * residual_tensor_2
-            layer_output = self.bottleneck(output)
+            # linear scale the embeddings
+            residual_tensor_2 = self.linear_scaler * residual_tensor_2
+            layer_output = self.bottleneck(layer_output, residual_tensor_2)
         return layer_output
 
 
@@ -885,6 +883,12 @@ class MobileBertEncoder(nn.Module):
             sample_num_attention_heads_list = [config.num_attention_heads] * len(
                 self.layer
             )
+        if isinstance(config.intra_bottleneck_size, list):
+            sample_intra_bottleneck_size = config.intra_bottleneck_size
+        else:
+            sample_intra_bottleneck_size = [
+                config.intra_bottleneck_size
+            ] * config.sample_num_hidden_layers
 
         for i, layer in enumerate(self.layer):
             layer_config = deepcopy(config)
@@ -893,6 +897,9 @@ class MobileBertEncoder(nn.Module):
                 layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
                 layer_config.sample_num_attention_heads = (
                     sample_num_attention_heads_list[i]
+                )
+                layer_config.sample_intra_bottleneck_size = (
+                    sample_intra_bottleneck_size[i]
                 )
                 layer.set_sample_config(layer_config, is_identity_layer=False)
             else:
@@ -914,12 +921,22 @@ class MobileBertEncoder(nn.Module):
                 config.num_attention_heads
             ] * config.sample_num_hidden_layers
 
+        if isinstance(config.intra_bottleneck_size, list):
+            sample_intra_bottleneck_size_list = config.intra_bottleneck_size
+        else:
+            sample_intra_bottleneck_size = [
+                config.intra_bottleneck_size
+            ] * config.sample_num_hidden_layers
+
         ### Extracting the subnetworks
         for i in range(config.sample_num_hidden_layers):
             layer_config = deepcopy(config)
 
             layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
             layer_config.sample_num_attention_heads = sample_num_attention_heads_list[i]
+            layer_config.sample_intra_bottleneck_size = (
+                sample_intra_bottleneck_size_list[i]
+            )
             sublayer.layer[i].set_sample_config(layer_config, is_identity_layer=False)
 
             sublayer.layer[i] = self.layer[i].get_active_subnet(layer_config)

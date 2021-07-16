@@ -2064,6 +2064,8 @@ class BertForMaskedLM(BertPreTrainedModel):
                 "bi-directional self-attention."
             )
 
+        setattr(config, "normalization_type", "layer_norm")
+
         self.bert = BertModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
 
