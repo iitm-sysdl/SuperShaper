@@ -106,12 +106,12 @@ def get_supertransformer_config(
     ] * config.sample_num_hidden_layers
 
     if mixing == "mobilebert":
-        config.normalization_type = "no_norm"
-        config.num_feedforward_networks = 4
+        config.normalization_type = "layer_norm"
+        config.num_feedforward_networks = 1
 
         config.sample_embedding_size = config.embedding_size
         config.sample_num_hidden_layers = config.num_hidden_layers
-        config.sample_intra_bottleneck_size = config.intra_bottleneck_size
+        config.sample_intra_bottleneck_size = [config.intra_bottleneck_size] * config.sample_num_hidden_layers
         config.sample_true_hidden_size = config.true_hidden_size
     else:
         config.embedding_size = 768
@@ -163,6 +163,9 @@ def get_choices(num_hidden_layers=12, mixing="attention"):
     if mixing == "mobilebert":
         choices["sample_hidden_size"] = [768]
         choices["sample_intra_bottleneck_size"] = [360, 480, 540, 600, 768]
+        choices["sample_true_hidden_size"] = [768]
+        choices["sample_intermediate_size"] = [3072]
+        choices["sample_num_hidden_layers"] = [12]
 
     return choices
 
@@ -305,6 +308,7 @@ def biased_params_sampling(config, tiny_attn=False):
     config_dict = {
         "sample_num_attention_heads": [],
         "sample_intermediate_size": [],
+        "sample_intra_bottleneck_size": [], 
     }
 
     for i in range(num_hidden_layers):

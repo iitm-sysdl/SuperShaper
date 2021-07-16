@@ -313,7 +313,7 @@ class MobileBertSelfAttention(nn.Module):
         super().__init__()
         self.num_attention_heads = config.num_attention_heads
         self.attention_head_size = int(
-            config.true_hidden_size / config.num_attention_heads
+            config.intra_bottleneck_size / config.num_attention_heads
         )
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
@@ -340,17 +340,19 @@ class MobileBertSelfAttention(nn.Module):
         if tiny_attn:
             self.sample_num_attention_heads = 1
             # no sampling
-            sample_true_hidden_size = config.true_hidden_size
-            sample_hidden_size = config.hidden_size
+            sample_true_hidden_size = config.sample_true_hidden_size
+            sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
+            sample_hidden_size = config.sample_hidden_size
             self.sample_attention_head_size = int(
-                sample_true_hidden_size / self.sample_num_attention_heads
+                sample_intra_bottleneck_size / self.sample_num_attention_heads
             )
         else:
             self.sample_num_attention_heads = config.sample_num_attention_heads
             sample_true_hidden_size = config.sample_true_hidden_size
+            sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
             sample_hidden_size = config.sample_hidden_size
             self.sample_attention_head_size = int(
-                sample_true_hidden_size / self.sample_num_attention_heads
+                sample_intra_bottleneck_size / self.sample_num_attention_heads
             )
 
         self.sample_all_head_size = (
@@ -374,8 +376,8 @@ class MobileBertSelfAttention(nn.Module):
             self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         sample_attention_probs_dropout_prob = calc_dropout(
             config.attention_probs_dropout_prob,
-            super_hidden_size=config.true_hidden_size,
-            sample_hidden_size=sample_true_hidden_size,
+            super_hidden_size=config.intra_bottleneck_size,
+            sample_hidden_size=sample_intra_bottleneck_size,
         )
         # reinitialize the dropout module with new dropout rate
         # we can also directly use F.dropout as a function with the input
@@ -439,17 +441,18 @@ class MobileBertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.use_bottleneck = config.use_bottleneck
-        self.dense = CustomLinear(config.true_hidden_size, config.true_hidden_size)
+        self.dense = CustomLinear(config.intra_bottleneck_size, config.intra_bottleneck_size)
         self.LayerNorm = NORM2FN[config.normalization_type](
-            config.true_hidden_size, eps=config.layer_norm_eps
+            config.intra_bottleneck_size, eps=config.layer_norm_eps
         )
         if not self.use_bottleneck:
             self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
     def set_sample_config(self, config):
         sample_true_hidden_size = config.sample_true_hidden_size
-        self.dense.set_sample_config(sample_true_hidden_size, sample_true_hidden_size)
-        self.LayerNorm.set_sample_config(sample_true_hidden_size)
+        sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
+        self.dense.set_sample_config(sample_intra_bottleneck_size, sample_intra_bottleneck_size)
+        self.LayerNorm.set_sample_config(sample_intra_bottleneck_size)
 
         # reinitialize the dropout module with new dropout rate
         # we can also directly use F.dropout as a function with the input
@@ -458,8 +461,8 @@ class MobileBertSelfOutput(nn.Module):
         if not self.use_bottleneck:
             sample_hidden_dropout_prob = calc_dropout(
                 config.hidden_dropout_prob,
-                super_hidden_size=config.true_hidden_size,
-                sample_hidden_size=sample_true_hidden_size,
+                super_hidden_size=config.intra_bottleneck_size,
+                sample_hidden_size=sample_intra_bottleneck_size,
             )
             self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
@@ -553,7 +556,7 @@ class MobileBertAttention(nn.Module):
 class MobileBertIntermediate(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = CustomLinear(config.true_hidden_size, config.intermediate_size)
+        self.dense = CustomLinear(config.intra_bottleneck_size, config.intermediate_size)
         if isinstance(config.hidden_act, str):
             self.intermediate_act_fn = ACT2FN[config.hidden_act]
         else:
@@ -561,8 +564,9 @@ class MobileBertIntermediate(nn.Module):
 
     def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
+        sample_intra_bottleneck_size = config.intra_bottleneck_size
         sample_true_hidden_size = config.sample_true_hidden_size
-        self.dense.set_sample_config(sample_true_hidden_size, sample_intermediate_size)
+        self.dense.set_sample_config(sample_intra_bottleneck_size, sample_intermediate_size)
 
     def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
@@ -574,7 +578,7 @@ class MobileBertIntermediate(nn.Module):
 class OutputBottleneck(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.dense = CustomLinear(config.true_hidden_size, config.hidden_size)
+        self.dense = CustomLinear(config.intra_bottleneck_size, config.hidden_size)
         self.LayerNorm = NORM2FN[config.normalization_type](
             config.hidden_size, eps=config.layer_norm_eps
         )
@@ -582,8 +586,9 @@ class OutputBottleneck(nn.Module):
 
     def set_sample_config(self, config):
         sample_true_hidden_size = config.sample_true_hidden_size
+        sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         sample_hidden_size = config.sample_hidden_size
-        self.dense.set_sample_config(sample_true_hidden_size, sample_hidden_size)
+        self.dense.set_sample_config(sample_intra_bottleneck_size, sample_hidden_size)
         self.LayerNorm.set_sample_config(sample_hidden_size)
 
         sample_hidden_dropout_prob = calc_dropout(
@@ -604,9 +609,9 @@ class MobileBertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.use_bottleneck = config.use_bottleneck
-        self.dense = CustomLinear(config.intermediate_size, config.true_hidden_size)
+        self.dense = CustomLinear(config.intermediate_size, config.intra_bottleneck_size)
         self.LayerNorm = NORM2FN[config.normalization_type](
-            config.true_hidden_size, eps=config.layer_norm_eps
+            config.intra_bottleneck_size, eps=config.layer_norm_eps
         )
         if not self.use_bottleneck:
             self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -621,9 +626,10 @@ class MobileBertOutput(nn.Module):
 
     def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
+        sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         sample_true_hidden_size = config.sample_true_hidden_size
-        self.LayerNorm.set_sample_config(sample_true_hidden_size)
-        self.dense.set_sample_config(sample_intermediate_size, sample_true_hidden_size)
+        self.LayerNorm.set_sample_config(sample_intra_bottleneck_size)
+        self.dense.set_sample_config(sample_intermediate_size, sample_intra_bottleneck_size)
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
             super_hidden_size=config.intermediate_size,
@@ -640,15 +646,15 @@ class MobileBertOutput(nn.Module):
         if not self.use_bottleneck:
             layer_output = self.dropout(layer_output)
             output = (
-                self.linear_scaler * layer_output
-                + (1.0 - self.linear_scaler) * residual_tensor_1
+                layer_output
+                + self.linear_scaler * residual_tensor_1
             )
             layer_output = self.LayerNorm(output)
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
             output = (
-                self.linear_scaler * layer_output
-                + (1.0 - self.linear_scaler) * residual_tensor_2
+                layer_output
+                + self.linear_scaler * residual_tensor_2
             )
             layer_output = self.bottleneck(output)
         return layer_output
