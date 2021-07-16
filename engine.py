@@ -161,6 +161,7 @@ def get_choices(num_hidden_layers=12, mixing="attention"):
         choices["sample_true_hidden_size"] = [768]
         choices["sample_intermediate_size"] = [3072]
         choices["sample_num_hidden_layers"] = [12]
+        choices["sample_num_attention_heads"] = [12]
 
     return choices
 
