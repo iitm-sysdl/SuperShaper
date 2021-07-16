@@ -1051,33 +1051,31 @@ class MobileBertPredictionHeadTransform(nn.Module):
         return hidden_states
 
 
+# this class is changed a lot from bert
 class MobileBertLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.transform = MobileBertPredictionHeadTransform(config)
+
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
-        self.dense = CustomLinear(
-            config.vocab_size, config.hidden_size - config.embedding_size, bias=False
-        )
-        self.decoder = CustomLinear(
-            config.embedding_size, config.vocab_size, bias=False
-        )
+        self.decoder = CustomLinear(config.hidden_size, config.vocab_size, bias=False)
+
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+
         # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
 
     def set_sample_config(self, config):
         self.transform.set_sample_config(config)
-        self.dense.set_sample_config(
-            config.vocab_size, config.sample_hidden_size - config.sample_embedding_size
-        )
+        # self.dense.set_sample_config(
+        #     config.vocab_size, config.sample_hidden_size - config.sample_embedding_size
+        # )
         self.decoder.set_sample_config(config.sample_hidden_size, config.vocab_size)
 
     def get_active_subnet(self, config):
         subnet = MobileBertLMPredictionHead(config)
         subnet.transform = self.transform.get_active_subnet(config)
-        subnet.dense = self.dense.get_active_subnet()
         subnet.decoder = self.decoder.get_active_subnet()
         subnet.bias.data.copy_(self.bias)
 
@@ -1085,10 +1083,7 @@ class MobileBertLMPredictionHead(nn.Module):
 
     def forward(self, hidden_states):
         hidden_states = self.transform(hidden_states)
-        hidden_states = hidden_states.matmul(
-            torch.cat([self.decoder.weight.t(), self.dense.weight], dim=0)
-        )
-        hidden_states += self.decoder.bias
+        hidden_states = self.decoder(hidden_states)
         return hidden_states
 
 
@@ -1424,15 +1419,15 @@ class MobileBertForPreTraining(MobileBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddigs):
         self.cls.predictions.decoder = new_embeddigs
 
-    def resize_token_embeddings(
-        self, new_num_tokens: Optional[int] = None
-    ) -> CustomEmbedding:
-        # resize dense output embedings at first
-        self.cls.predictions.dense = self._get_resized_lm_head(
-            self.cls.predictions.dense, new_num_tokens=new_num_tokens, transposed=True
-        )
+    # def resize_token_embeddings(
+    #     self, new_num_tokens: Optional[int] = None
+    # ) -> CustomEmbedding:
+    #     # resize dense output embedings at first
+    #     self.cls.predictions.dense = self._get_resized_lm_head(
+    #         self.cls.predictions.dense, new_num_tokens=new_num_tokens, transposed=True
+    #     )
 
-        return super().resize_token_embeddings(new_num_tokens=new_num_tokens)
+    #     return super().resize_token_embeddings(new_num_tokens=new_num_tokens)
 
     @add_start_docstrings_to_model_forward(
         MOBILEBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
@@ -1562,14 +1557,14 @@ class MobileBertForMaskedLM(MobileBertPreTrainedModel):
     def set_output_embeddings(self, new_embeddigs):
         self.cls.predictions.decoder = new_embeddigs
 
-    def resize_token_embeddings(
-        self, new_num_tokens: Optional[int] = None
-    ) -> CustomEmbedding:
-        # resize dense output embedings at first
-        self.cls.predictions.dense = self._get_resized_lm_head(
-            self.cls.predictions.dense, new_num_tokens=new_num_tokens, transposed=True
-        )
-        return super().resize_token_embeddings(new_num_tokens=new_num_tokens)
+    # def resize_token_embeddings(
+    #     self, new_num_tokens: Optional[int] = None
+    # ) -> CustomEmbedding:
+    #     # resize dense output embedings at first
+    #     self.cls.predictions.dense = self._get_resized_lm_head(
+    #         self.cls.predictions.dense, new_num_tokens=new_num_tokens, transposed=True
+    #     )
+    #     return super().resize_token_embeddings(new_num_tokens=new_num_tokens)
 
     @add_start_docstrings_to_model_forward(
         MOBILEBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
