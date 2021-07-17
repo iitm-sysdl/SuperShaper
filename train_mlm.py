@@ -677,7 +677,9 @@ def main():
         del states
 
         identity = torch.eye(global_config.true_hidden_size)
-        zero_bias = torch.zeros(global_config.true_hidden_size)
+        zero_bias = (
+            torch.zeros(global_config.true_hidden_size) + global_config.layer_norm_eps
+        )
         for key in model.state_dict().keys():
             if (
                 "bottleneck.input.dense.weight" in key
@@ -686,7 +688,7 @@ def main():
                 model.state_dict()[key].data.copy_(identity)
             elif (
                 "bottleneck.output.dense.bias" in key
-                or "output.bottleneck.dense.weight" in key
+                or "output.bottleneck.dense.bias" in key
             ):
                 model.state_dict()[key].data.copy_(zero_bias)
 
@@ -1011,6 +1013,7 @@ def main():
             + ["green"] * len(diverse_attention_subs)
             + ["blue"] * len(diverse_intermediate_state_subs)
             + ["red"] * len(diverse_num_hidden_subs)
+            + ["black"] * len(diverse_num_intra_subs)
         )
 
     best_val_perplexity = 1000000
@@ -1029,6 +1032,7 @@ def main():
                 "sample_num_attention_heads",
                 "sample_intermediate_size",
                 "sample_num_hidden_layers",
+                "sample_intra_bottleneck_size",
             ]
             for i, config in enumerate(diverse_subtransformers):
                 model.set_sample_config(config)
@@ -1176,15 +1180,18 @@ def main():
                     smallest_student_attention_maps,
                 ):
                     # attentions are aleready in probabilities, hence no softmax
-                    student_attention = student_attention.log()
-                    smallest_student_attention = smallest_student_attention.log()
+                    student_attention = student_attention.clamp(min=1e-4).log()
+                    smallest_student_attention = smallest_student_attention.clamp(
+                        min=1e-4
+                    ).log()
+                    student_kl = -(teacher_attention.detach() * student_attention)
+                    student_akt += torch.mean(torch.sum(student_kl, axis=-1))
 
-                    student_akt += nn.KLDivLoss(reduction="batchmean")(
-                        teacher_attention.detach(), student_attention
+                    smallest_student_kl = -(
+                        teacher_attention.detach() * smallest_student_attention
                     )
-
-                    smallest_student_akt += nn.KLDivLoss(reduction="batchmean")(
-                        teacher_attention.detach(), smallest_student_attention
+                    smallest_student_akt += torch.mean(
+                        torch.sum(smallest_student_kl, axis=-1)
                     )
 
                 # TODO: weight these losses properly
