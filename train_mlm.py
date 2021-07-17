@@ -483,6 +483,50 @@ def parse_args():
     return args
 
 
+def compute_layerwise_distillation(teacher_hidden_states, student_hidden_states, teacher_attention_maps, student_attention_maps):
+
+    student_fkt = 0.0
+    student_akt = 0.0
+
+    non_trainable_layernorm = nn.LayerNorm(
+        teacher_hidden_states[-1].shape[1:], elementwise_affine=False
+    )
+    for teacher_hidden, student_hidden in zip(teacher_hidden_states, student_hidden_states):
+        teacher_hidden = non_trainable_layernorm(teacher_hidden.detach())
+        student_hidden = non_trainable_layernorm(student_hidden)
+        student_fkt = student_fkt + nn.MSELoss()(teacher_hidden, student_hidden)
+    
+    for (teacher_attention, student_attention) in zip(teacher_attention_maps,student_attention_maps):
+        # attentions are aleready in probabilities, hence no softmax
+        student_attention = student_attention.clamp(min=1e-4).log()
+        student_kl = -(teacher_attention.detach() * student_attention)
+        student_akt = student_akt + torch.mean(torch.sum(student_kl, axis=-1))
+   
+    return student_akt, student_fkt
+    
+def compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args):
+
+    outputs = model(**batch, use_soft_loss=True)
+    loss = outputs.loss
+    student_hidden_states = outputs.hidden_states
+    student_attention_maps = outputs.attentions
+    
+    student_akt, student_fkt = compute_layerwise_distillation(
+                                teacher_hidden_states[1:],  student_hidden_states[1:],
+                                teacher_attention_maps[1:], student_attention_maps[1:]
+                                )
+
+    student_mlm_loss = loss
+    student_mlm_loss = student_mlm_loss / args.gradient_accumulation_steps
+    student_distill_loss = (
+        0.5 * student_fkt + 0.5 * student_akt
+    )
+
+    student_distill_loss = student_distill_loss / args.gradient_accumulation_steps
+
+    return student_mlm_loss + student_distill_loss
+
+
 def main():
     args = parse_args()
 
@@ -705,8 +749,6 @@ def main():
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
 
-    # maybe not required but doing it just to be sure
-    model.set_sample_config(global_config)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -894,7 +936,7 @@ def main():
         model = ModuleProxyWrapper(model)
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
-
+    model.set_sample_config(global_config)
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -1107,7 +1149,10 @@ def main():
                 teacher_attention_maps = outputs.attentions
 
                 teacher_mlm_loss = loss
-                teacher_mlm_loss /= args.gradient_accumulation_steps
+                teacher_mlm_loss = teacher_mlm_loss / args.gradient_accumulation_steps
+
+                #logger.info(f"Teacher_mlm_loss: {teacher_mlm_loss}")
+
                 accelerator.backward(teacher_mlm_loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
                 # hence applying softmanx to last dim
@@ -1117,92 +1162,14 @@ def main():
 
                 # replace the labels in our batch to soft_targets
                 batch["labels"] = soft_targets
-
+                
                 model.set_sample_config(super_config_small)
-                outputs = model(**batch, use_soft_loss=True)
-                loss = outputs.loss
-                smallest_student_hidden_states = outputs.hidden_states
-                smallest_student_attention_maps = outputs.attentions
-
-                # smallest_student_logits = torch.nn.functional.log_softmax(
-                #     outputs.logits, dim=-1
-                # )
-
-                smallest_student_mlm_loss = loss
-                smallest_student_mlm_loss /= args.gradient_accumulation_steps
-                accelerator.backward(smallest_student_mlm_loss, retain_graph=True)
-
-                model.set_sample_config(super_config)
-                outputs = model(**batch, use_soft_loss=True)
-                loss = outputs.loss
-                student_hidden_states = outputs.hidden_states
-                student_attention_maps = outputs.attentions
-                # student_logits = torch.nn.functional.log_softmax(outputs.logits, dim=-1)
-
-                student_mlm_loss = loss
-                student_mlm_loss /= args.gradient_accumulation_steps
-                accelerator.backward(student_mlm_loss, retain_graph=True)
-
-                # AKT - > Attention knowledge transfer
-                # FKT - > Feature knowledge transfer
-                student_akt = 0.0
-                student_fkt = 0.0
-                smallest_student_akt = 0.0
-                smallest_student_fkt = 0.0
-
-                non_trainable_layernorm = nn.LayerNorm(
-                    teacher_hidden_states[-1].shape[1:], elementwise_affine=False
-                )
-
-                for teacher_hidden, student_hidden, smallest_student_hidden in zip(
-                    teacher_hidden_states[1:],
-                    student_hidden_states[1:],
-                    smallest_student_hidden_states[1:],
-                ):
-                    teacher_hidden = non_trainable_layernorm(teacher_hidden.detach())
-                    student_hidden = non_trainable_layernorm(student_hidden)
-                    smallest_student_hidden = non_trainable_layernorm(
-                        smallest_student_hidden
-                    )
-
-                    student_fkt += nn.MSELoss()(teacher_hidden, student_hidden)
-                    smallest_student_fkt += nn.MSELoss()(
-                        teacher_hidden, smallest_student_hidden
-                    )
-
-                for (
-                    teacher_attention,
-                    student_attention,
-                    smallest_student_attention,
-                ) in zip(
-                    teacher_attention_maps,
-                    student_attention_maps,
-                    smallest_student_attention_maps,
-                ):
-                    # attentions are aleready in probabilities, hence no softmax
-                    student_attention = student_attention.clamp(min=1e-4).log()
-                    smallest_student_attention = smallest_student_attention.clamp(
-                        min=1e-4
-                    ).log()
-                    student_kl = -(teacher_attention.detach() * student_attention)
-                    student_akt += torch.mean(torch.sum(student_kl, axis=-1))
-
-                    smallest_student_kl = -(
-                        teacher_attention.detach() * smallest_student_attention
-                    )
-                    smallest_student_akt += torch.mean(
-                        torch.sum(smallest_student_kl, axis=-1)
-                    )
-
-                # TODO: weight these losses properly
-                student_loss = 0.5 * student_fkt + 0.5 * student_akt
-                smallest_student_loss = (
-                    0.5 * smallest_student_fkt + 0.5 * smallest_student_akt
-                )
-                student_loss /= args.gradient_accumulation_steps
-                smallest_student_loss /= args.gradient_accumulation_steps
-                accelerator.backward(student_loss)
+                smallest_student_loss = compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args)
                 accelerator.backward(smallest_student_loss)
+                
+                model.set_sample_config(super_config)
+                sampled_student_loss = compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args)
+                accelerator.backward(sampled_student_loss)
 
             else:  # Other means of sampling
                 # model.set_sample_config(super_config)
@@ -1319,4 +1286,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    with torch.autograd.set_detect_anomaly(True):
+        main()

@@ -592,6 +592,14 @@ class OutputBottleneck(nn.Module):
         )
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
+        # add linear scaler to weight the red lines
+        self.linear_scaler = nn.Parameter(
+            #torch.zeros(config.true_hidden_size) + config.layer_norm_eps
+            torch.zeros(config.true_hidden_size)
+            #torch.zeros(1)
+        )
+        self.register_parameter("linear_scaler", self.linear_scaler)
+
     def set_sample_config(self, config):
         sample_true_hidden_size = config.sample_true_hidden_size
         sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
@@ -607,9 +615,10 @@ class OutputBottleneck(nn.Module):
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(self, hidden_states, residual_tensor):
-        layer_outputs = self.dense(hidden_states)
-        layer_outputs = self.dropout(layer_outputs)
-        layer_outputs = self.LayerNorm(layer_outputs + residual_tensor)
+        layer_outputs = self.dense(hidden_states) 
+        layer_outputs = self.dropout(layer_outputs) * (1.0-self.linear_scaler)
+        layer_outputs = layer_outputs + self.linear_scaler * residual_tensor
+        #layer_outputs = self.LayerNorm(layer_outputs + self.linear_scaler * residual_tensor)
         return layer_outputs
 
 
@@ -627,11 +636,6 @@ class MobileBertOutput(nn.Module):
             self.dropout = nn.Dropout(config.hidden_dropout_prob)
         else:
             self.bottleneck = OutputBottleneck(config)
-        # add linear scaler to weight the red lines
-        self.linear_scaler = nn.Parameter(
-            torch.zeros(config.true_hidden_size) + config.layer_norm_eps
-        )
-        self.register_parameter("linear_scaler", self.linear_scaler)
 
     def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
@@ -660,7 +664,7 @@ class MobileBertOutput(nn.Module):
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
             # linear scale the embeddings
-            residual_tensor_2 = self.linear_scaler * residual_tensor_2
+            #residual_tensor_2 = self.linear_scaler * residual_tensor_2
             layer_output = self.bottleneck(layer_output, residual_tensor_2)
         return layer_output
 
@@ -681,7 +685,7 @@ class BottleneckLayer(nn.Module):
 
     def forward(self, hidden_states):
         layer_input = self.dense(hidden_states)
-        layer_input = self.LayerNorm(layer_input)
+        #layer_input = self.LayerNorm(layer_input)
         return layer_input
 
 
