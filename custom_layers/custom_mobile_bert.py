@@ -330,8 +330,8 @@ class MobileBertSelfAttention(nn.Module):
 
     def transpose_for_scores(self, x):
         new_x_shape = x.size()[:-1] + (
-            self.num_attention_heads,
-            self.attention_head_size,
+            self.sample_num_attention_heads,
+            self.sample_attention_head_size,
         )
         x = x.view(*new_x_shape)
         return x.permute(0, 2, 1, 3)
@@ -376,8 +376,8 @@ class MobileBertSelfAttention(nn.Module):
             self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         sample_attention_probs_dropout_prob = calc_dropout(
             config.attention_probs_dropout_prob,
-            super_hidden_size=config.intra_bottleneck_size,
-            sample_hidden_size=sample_intra_bottleneck_size,
+            super_hidden_size=config.num_attention_heads,
+            sample_hidden_size=config.sample_num_attention_heads,
         )
         # reinitialize the dropout module with new dropout rate
         # we can also directly use F.dropout as a function with the input
@@ -413,7 +413,7 @@ class MobileBertSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_scores = attention_scores / math.sqrt(self.sample_attention_head_size)
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
@@ -427,7 +427,9 @@ class MobileBertSelfAttention(nn.Module):
             attention_probs = attention_probs * head_mask
         context_layer = torch.matmul(attention_probs, value_layer)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
-        new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
+        new_context_layer_shape = context_layer.size()[:-2] + (
+            self.sample_all_head_size,
+        )
         context_layer = context_layer.view(*new_context_layer_shape)
         outputs = (
             (context_layer, attention_probs) if output_attentions else (context_layer,)
@@ -570,7 +572,7 @@ class MobileBertIntermediate(nn.Module):
 
     def set_sample_config(self, config):
         sample_intermediate_size = config.sample_intermediate_size
-        sample_intra_bottleneck_size = config.intra_bottleneck_size
+        sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         sample_true_hidden_size = config.sample_true_hidden_size
         self.dense.set_sample_config(
             sample_intra_bottleneck_size, sample_intermediate_size
@@ -594,9 +596,9 @@ class OutputBottleneck(nn.Module):
 
         # add linear scaler to weight the red lines
         self.linear_scaler = nn.Parameter(
-            #torch.zeros(config.true_hidden_size) + config.layer_norm_eps
+            # torch.zeros(config.true_hidden_size) + config.layer_norm_eps
             torch.zeros(config.true_hidden_size)
-            #torch.zeros(1)
+            # torch.zeros(1)
         )
         self.register_parameter("linear_scaler", self.linear_scaler)
 
@@ -615,10 +617,10 @@ class OutputBottleneck(nn.Module):
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(self, hidden_states, residual_tensor):
-        layer_outputs = self.dense(hidden_states) 
-        layer_outputs = self.dropout(layer_outputs) * (1.0-self.linear_scaler)
+        layer_outputs = self.dense(hidden_states)
+        layer_outputs = self.dropout(layer_outputs) * (1.0 - self.linear_scaler)
         layer_outputs = layer_outputs + self.linear_scaler * residual_tensor
-        #layer_outputs = self.LayerNorm(layer_outputs + self.linear_scaler * residual_tensor)
+        # layer_outputs = self.LayerNorm(layer_outputs + self.linear_scaler * residual_tensor)
         return layer_outputs
 
 
@@ -664,7 +666,7 @@ class MobileBertOutput(nn.Module):
         else:
             layer_output = self.LayerNorm(layer_output + residual_tensor_1)
             # linear scale the embeddings
-            #residual_tensor_2 = self.linear_scaler * residual_tensor_2
+            # residual_tensor_2 = self.linear_scaler * residual_tensor_2
             layer_output = self.bottleneck(layer_output, residual_tensor_2)
         return layer_output
 
@@ -685,7 +687,7 @@ class BottleneckLayer(nn.Module):
 
     def forward(self, hidden_states):
         layer_input = self.dense(hidden_states)
-        #layer_input = self.LayerNorm(layer_input)
+        # layer_input = self.LayerNorm(layer_input)
         return layer_input
 
 
@@ -881,17 +883,17 @@ class MobileBertEncoder(nn.Module):
             sample_intermediate_sizes = [config.sample_intermediate_size] * len(
                 self.layer
             )
-        if isinstance(config.num_attention_heads, list):
-            sample_num_attention_heads_list = config.num_attention_heads
+        if isinstance(config.sample_num_attention_heads, list):
+            sample_num_attention_heads_list = config.sample_num_attention_heads
         else:
             sample_num_attention_heads_list = [config.num_attention_heads] * len(
                 self.layer
             )
-        if isinstance(config.intra_bottleneck_size, list):
-            sample_intra_bottleneck_size = config.intra_bottleneck_size
+        if isinstance(config.sample_intra_bottleneck_size, list):
+            sample_intra_bottleneck_size = config.sample_intra_bottleneck_size
         else:
             sample_intra_bottleneck_size = [
-                config.intra_bottleneck_size
+                config.sample_intra_bottleneck_size
             ] * config.sample_num_hidden_layers
 
         for i, layer in enumerate(self.layer):

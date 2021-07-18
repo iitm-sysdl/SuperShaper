@@ -381,8 +381,8 @@ class BertSelfAttention(nn.Module):
         self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         sample_hidden_dropout_prob = calc_dropout(
             config.hidden_dropout_prob,
-            super_hidden_size=config.hidden_size,
-            sample_hidden_size=sample_hidden_size,
+            super_hidden_size=config.num_attention_heads,
+            sample_hidden_size=sample_num_attention_heads,
         )
         # reinitialize the dropout module with new dropout rate
         # we can also directly use F.dropout as a function with the input
@@ -486,7 +486,7 @@ class BertSelfAttention(nn.Module):
                     + relative_position_scores_key
                 )
 
-        attention_scores = attention_scores / math.sqrt(self.attention_head_size)
+        attention_scores = attention_scores / math.sqrt(self.sample_attention_head_size)
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
@@ -688,10 +688,11 @@ class BertMobile(nn.Module):
         return layer_output
 
 
-
 """
 Implementation for Spatial Unit and Dense layers inspired from https://github.com/lucidrains/g-mlp-pytorch
 """
+
+
 class SpatialUnit(nn.Module):
     def __init__(
         self,
@@ -1272,11 +1273,11 @@ class BertEncoder(nn.Module):
             sample_intermediate_sizes = [
                 config.sample_intermediate_size
             ] * config.sample_num_hidden_layers
-        if isinstance(config.num_attention_heads, list):
-            sample_num_attention_heads_list = config.num_attention_heads
+        if isinstance(config.sample_num_attention_heads, list):
+            sample_num_attention_heads_list = config.sample_num_attention_heads
         else:
             sample_num_attention_heads_list = [
-                config.num_attention_heads
+                config.sample_num_attention_heads
             ] * config.sample_num_hidden_layers
 
         ### Extracting the subnetworks
