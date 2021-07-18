@@ -409,9 +409,9 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--layerwise_distillation", 
-        type=int, 
-        default=True, 
+        "--layerwise_distillation",
+        type=int,
+        default=0,
         help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
     )
 
@@ -419,9 +419,9 @@ def parse_args():
 
     args.model_name_or_path = "bert-base-cased"
     # Sanity checks
-    
+
     if args.layerwise_distillation:
-        assert(args.inplace_distillation)
+        assert args.inplace_distillation
 
     if args.inplace_distillation == 1:
         # hard setting this for now
@@ -544,10 +544,10 @@ def compute_student_loss(
     loss = outputs.loss
     student_hidden_states = outputs.hidden_states
     student_attention_maps = outputs.attentions
-    
+
     student_mlm_loss = loss
     student_mlm_loss = student_mlm_loss / args.gradient_accumulation_steps
-    
+
     overall_loss = student_mlm_loss
 
     losses = {
@@ -587,7 +587,7 @@ def compute_student_loss(
         losses["overall_loss"] = overall_loss.item()
         losses["student_distill_loss"] = student_distill_loss.item()
         losses["student_feature_knowledge_transfer_loss"] = student_fkt.item()
-        losses["student_attention_knowledge_transfer_loss"] = student_akt.item() 
+        losses["student_attention_knowledge_transfer_loss"] = student_akt.item()
         losses["layer_wise_akt"] = layer_wise_akt
         losses["layer_wise_fkt"] = layer_wise_fkt
 
@@ -636,6 +636,8 @@ def main():
     )
     if args.inplace_distillation:
         str_name += "_ip_distill"
+        if args.layerwise_distillation:
+            str_name += "_layerwise_distill"
     else:
         str_name += "_pretraining"
     if accelerator.is_main_process:
@@ -1291,40 +1293,41 @@ def main():
                     if not args.inplace_distillation:
                         wandb.log(
                             {
-                                "Supertransformer Train loss": loss.item(),
+                                "Supertransformer mlm loss": loss.item(),
                             }
                         )
                     else:
-                        wandb.log(
-                            {
-                                "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
-                                "Smallest Student mlm loss": smallest_student_losses_dict[
-                                    "student_mlm_loss"
-                                ],
-                                "Smallest distill loss": smallest_student_losses_dict[
-                                    "student_distill_loss"
-                                ],
-                                "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
-                                    "student_feature_knowledge_transfer_loss"
-                                ],
-                                "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
-                                    "student_attention_knowledge_transfer_loss"
-                                ],
-                                "Subtransformer Student mlm loss": sampled_student_losses_dict[
-                                    "student_mlm_loss"
-                                ],
-                                "Subtransformer distill loss": sampled_student_losses_dict[
-                                    "student_distill_loss"
-                                ],
-                                "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
-                                    "student_feature_knowledge_transfer_loss"
-                                ],
-                                "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
-                                    "student_attention_knowledge_transfer_loss"
-                                ],
-                            }
-                        )
+
                         if args.layerwise_distillation:
+                            wandb.log(
+                                {
+                                    "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
+                                    "Smallest Student mlm loss": smallest_student_losses_dict[
+                                        "student_mlm_loss"
+                                    ],
+                                    "Smallest distill loss": smallest_student_losses_dict[
+                                        "student_distill_loss"
+                                    ],
+                                    "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
+                                        "student_feature_knowledge_transfer_loss"
+                                    ],
+                                    "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
+                                        "student_attention_knowledge_transfer_loss"
+                                    ],
+                                    "Subtransformer Student mlm loss": sampled_student_losses_dict[
+                                        "student_mlm_loss"
+                                    ],
+                                    "Subtransformer distill loss": sampled_student_losses_dict[
+                                        "student_distill_loss"
+                                    ],
+                                    "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
+                                        "student_feature_knowledge_transfer_loss"
+                                    ],
+                                    "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
+                                        "student_attention_knowledge_transfer_loss"
+                                    ],
+                                }
+                            )
                             for idx in range(
                                 len(smallest_student_losses_dict["layer_wise_akt"])
                             ):
@@ -1352,6 +1355,18 @@ def main():
                                         ],
                                     }
                                 )
+                        else:
+                            wandb.log(
+                                {
+                                    "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
+                                    "Smallest Student mlm loss": smallest_student_losses_dict[
+                                        "student_mlm_loss"
+                                    ],
+                                    "Subtransformer Student mlm loss": sampled_student_losses_dict[
+                                        "student_mlm_loss"
+                                    ],
+                                }
+                            )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
