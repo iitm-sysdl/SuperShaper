@@ -408,10 +408,19 @@ def parse_args():
         help=f"Sensitizes the amount of KD-loss that needs to be added with existing loss",
     )
 
+    parser.add_argument(
+        "--layerwise_distillation", 
+        type=int, 
+        default=True, 
+        help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
+
     args = parser.parse_args()
 
     args.model_name_or_path = "bert-base-cased"
     # Sanity checks
+    
+    if args.layerwise_distillation:
+        assert(args.inplace_distillation)
 
     if args.inplace_distillation == 1:
         # hard setting this for now
@@ -534,42 +543,52 @@ def compute_student_loss(
     loss = outputs.loss
     student_hidden_states = outputs.hidden_states
     student_attention_maps = outputs.attentions
-
-    (
-        student_akt,
-        student_fkt,
-        layer_wise_akt,
-        layer_wise_fkt,
-    ) = compute_layerwise_distillation(
-        # the official mobilbeBert repo skips the first layer
-        # teacher_hidden_states[1:],
-        # student_hidden_states[1:],
-        # teacher_attention_maps[1:],
-        # student_attention_maps[1:],
-        teacher_hidden_states,
-        student_hidden_states,
-        teacher_attention_maps,
-        student_attention_maps,
-        track_layerwise_loss=track_layerwise_loss,
-    )
-
+    
     student_mlm_loss = loss
     student_mlm_loss = student_mlm_loss / args.gradient_accumulation_steps
-    student_distill_loss = 0.5 * student_fkt + 0.5 * student_akt
-
-    student_distill_loss = student_distill_loss / args.gradient_accumulation_steps
-
-    overall_loss = student_mlm_loss + student_distill_loss
+    
+    overall_loss = student_mlm_loss
 
     losses = {
         "overall_loss": overall_loss.item(),
-        "student_distill_loss": student_distill_loss.item(),
+        "student_distill_loss": 0,
         "student_mlm_loss": student_mlm_loss.item(),
-        "student_feature_knowledge_transfer_loss": student_fkt.item(),
-        "student_attention_knowledge_transfer_loss": student_akt.item(),
-        "layer_wise_akt": layer_wise_akt,
-        "layer_wise_fkt": layer_wise_fkt,
+        "student_feature_knowledge_transfer_loss": 0,
+        "student_attention_knowledge_transfer_loss": 0,
+        "layer_wise_akt": [],
+        "layer_wise_fkt": [],
     }
+
+    if args.layerwise_distillation:
+        (
+            student_akt,
+            student_fkt,
+            layer_wise_akt,
+            layer_wise_fkt,
+        ) = compute_layerwise_distillation(
+            # the official mobilbeBert repo skips the first layer
+            # teacher_hidden_states[1:],
+            # student_hidden_states[1:],
+            # teacher_attention_maps[1:],
+            # student_attention_maps[1:],
+            teacher_hidden_states,
+            student_hidden_states,
+            teacher_attention_maps,
+            student_attention_maps,
+            track_layerwise_loss=track_layerwise_loss,
+        )
+
+        student_distill_loss = 0.5 * student_fkt + 0.5 * student_akt
+        student_distill_loss = student_distill_loss / args.gradient_accumulation_steps
+
+        overall_loss = overall_loss + student_distill_loss
+
+        losses["overall_loss"] = overall_loss.item()
+        losses["student_distill_loss"] = student_distill_loss.item()
+        losses["student_feature_knowledge_transfer_loss"] = student_fkt.item()
+        losses["student_attention_knowledge_transfer_loss"] = student_akt.item() 
+        losses["layer_wise_akt"] = layer_wise_akt
+        losses["layer_wise_fkt"] = layer_wise_fkt
 
     return overall_loss, losses
 
@@ -1304,33 +1323,34 @@ def main():
                                 ],
                             }
                         )
-                        for idx in range(
-                            len(smallest_student_losses_dict["layer_wise_akt"])
-                        ):
-                            wandb.log(
-                                {
-                                    f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
-                                        "layer_wise_akt"
-                                    ][
-                                        idx
-                                    ],
-                                    f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
-                                        "layer_wise_akt"
-                                    ][
-                                        idx
-                                    ],
-                                    f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
-                                        "layer_wise_fkt"
-                                    ][
-                                        idx
-                                    ],
-                                    f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
-                                        "layer_wise_fkt"
-                                    ][
-                                        idx
-                                    ],
-                                }
-                            )
+                        if args.layerwise_distillation:
+                            for idx in range(
+                                len(smallest_student_losses_dict["layer_wise_akt"])
+                            ):
+                                wandb.log(
+                                    {
+                                        f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
+                                            "layer_wise_akt"
+                                        ][
+                                            idx
+                                        ],
+                                        f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
+                                            "layer_wise_akt"
+                                        ][
+                                            idx
+                                        ],
+                                        f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
+                                            "layer_wise_fkt"
+                                        ][
+                                            idx
+                                        ],
+                                        f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
+                                            "layer_wise_fkt"
+                                        ][
+                                            idx
+                                        ],
+                                    }
+                                )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
