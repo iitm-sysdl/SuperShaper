@@ -1310,33 +1310,33 @@ def main():
                                 ],
                             }
                         )
-                    for idx in range(
-                        len(smallest_student_losses_dict["layer_wise_akt"])
-                    ):
-                        wandb.log(
-                            {
-                                f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
-                                    "layer_wise_akt"
-                                ][
-                                    idx
-                                ],
-                                f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
-                                    "layer_wise_akt"
-                                ][
-                                    idx
-                                ],
-                                f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
-                                    "layer_wise_fkt"
-                                ][
-                                    idx
-                                ],
-                                f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
-                                    "layer_wise_fkt"
-                                ][
-                                    idx
-                                ],
-                            }
-                        )
+                        for idx in range(
+                            len(smallest_student_losses_dict["layer_wise_akt"])
+                        ):
+                            wandb.log(
+                                {
+                                    f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
+                                        "layer_wise_akt"
+                                    ][
+                                        idx
+                                    ],
+                                    f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
+                                        "layer_wise_akt"
+                                    ][
+                                        idx
+                                    ],
+                                    f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
+                                        "layer_wise_fkt"
+                                    ][
+                                        idx
+                                    ],
+                                    f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
+                                        "layer_wise_fkt"
+                                    ][
+                                        idx
+                                    ],
+                                }
+                            )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
