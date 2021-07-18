@@ -483,48 +483,101 @@ def parse_args():
     return args
 
 
-def compute_layerwise_distillation(teacher_hidden_states, student_hidden_states, teacher_attention_maps, student_attention_maps):
+def compute_layerwise_distillation(
+    teacher_hidden_states,
+    student_hidden_states,
+    teacher_attention_maps,
+    student_attention_maps,
+    track_layerwise_loss=False,
+):
 
     student_fkt = 0.0
     student_akt = 0.0
+    if track_layerwise_loss:
+        layer_wise_fkt = []
+        layer_wise_akt = []
+    else:
+        layer_wise_fkt = None
+        layer_wise_akt = None
 
     non_trainable_layernorm = nn.LayerNorm(
         teacher_hidden_states[-1].shape[1:], elementwise_affine=False
     )
-    for teacher_hidden, student_hidden in zip(teacher_hidden_states, student_hidden_states):
+    for teacher_hidden, student_hidden in zip(
+        teacher_hidden_states, student_hidden_states
+    ):
         teacher_hidden = non_trainable_layernorm(teacher_hidden.detach())
         student_hidden = non_trainable_layernorm(student_hidden)
-        student_fkt = student_fkt + nn.MSELoss()(teacher_hidden, student_hidden)
-    
-    for (teacher_attention, student_attention) in zip(teacher_attention_maps,student_attention_maps):
+        fkt = nn.MSELoss()(teacher_hidden, student_hidden)
+        student_fkt = student_fkt + fkt
+        if track_layerwise_loss:
+            layer_wise_fkt.append(fkt.item())
+
+    for (teacher_attention, student_attention) in zip(
+        teacher_attention_maps, student_attention_maps
+    ):
         # attentions are aleready in probabilities, hence no softmax
         student_attention = student_attention.clamp(min=1e-4).log()
         student_kl = -(teacher_attention.detach() * student_attention)
-        student_akt = student_akt + torch.mean(torch.sum(student_kl, axis=-1))
-   
-    return student_akt, student_fkt
-    
-def compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args):
+        akt = torch.mean(torch.sum(student_kl, axis=-1))
+        student_akt = student_akt + akt
+        if track_layerwise_loss:
+            layer_wise_akt.append(akt.item())
+
+    return student_akt, student_fkt, layer_wise_akt, layer_wise_fkt
+
+
+def compute_student_loss(
+    model,
+    batch,
+    teacher_hidden_states,
+    teacher_attention_maps,
+    args,
+    track_layerwise_loss=False,
+):
 
     outputs = model(**batch, use_soft_loss=True)
     loss = outputs.loss
     student_hidden_states = outputs.hidden_states
     student_attention_maps = outputs.attentions
-    
-    student_akt, student_fkt = compute_layerwise_distillation(
-                                teacher_hidden_states[1:],  student_hidden_states[1:],
-                                teacher_attention_maps[1:], student_attention_maps[1:]
-                                )
+
+    (
+        student_akt,
+        student_fkt,
+        layer_wise_akt,
+        layer_wise_fkt,
+    ) = compute_layerwise_distillation(
+        # the official mobilbeBert repo skips the first layer
+        # teacher_hidden_states[1:],
+        # student_hidden_states[1:],
+        # teacher_attention_maps[1:],
+        # student_attention_maps[1:],
+        teacher_hidden_states,
+        student_hidden_states,
+        teacher_attention_maps,
+        student_attention_maps,
+        track_layerwise_loss=track_layerwise_loss,
+    )
 
     student_mlm_loss = loss
     student_mlm_loss = student_mlm_loss / args.gradient_accumulation_steps
-    student_distill_loss = (
-        0.5 * student_fkt + 0.5 * student_akt
-    )
+    student_distill_loss = 0.5 * student_fkt + 0.5 * student_akt
 
     student_distill_loss = student_distill_loss / args.gradient_accumulation_steps
 
-    return student_mlm_loss + student_distill_loss
+    overall_loss = student_mlm_loss + student_distill_loss
+
+    losses = {
+        "overall_loss": overall_loss.item(),
+        "student_distill_loss": student_distill_loss.item(),
+        "student_mlm_loss": student_mlm_loss.item(),
+        "student_feature_knowledge_transfer_loss": student_fkt.item(),
+        "student_attention_knowledge_transfer_loss": student_akt.item(),
+        "layer_wise_akt": layer_wise_akt,
+        "layer_wise_fkt": layer_wise_fkt,
+    }
+
+    return overall_loss, losses
 
 
 def main():
@@ -748,7 +801,6 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
-
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -1151,7 +1203,7 @@ def main():
                 teacher_mlm_loss = loss
                 teacher_mlm_loss = teacher_mlm_loss / args.gradient_accumulation_steps
 
-                #logger.info(f"Teacher_mlm_loss: {teacher_mlm_loss}")
+                # logger.info(f"Teacher_mlm_loss: {teacher_mlm_loss}")
 
                 accelerator.backward(teacher_mlm_loss)
                 # logits are of shape batch_size, sequence_length, config.vocab_size
@@ -1162,13 +1214,33 @@ def main():
 
                 # replace the labels in our batch to soft_targets
                 batch["labels"] = soft_targets
-                
+
                 model.set_sample_config(super_config_small)
-                smallest_student_loss = compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args)
+                (
+                    smallest_student_loss,
+                    smallest_student_losses_dict,
+                ) = compute_student_loss(
+                    model,
+                    batch,
+                    teacher_hidden_states,
+                    teacher_attention_maps,
+                    args,
+                    track_layerwise_loss=True,
+                )
                 accelerator.backward(smallest_student_loss)
-                
+
                 model.set_sample_config(super_config)
-                sampled_student_loss = compute_student_loss(model, batch, teacher_hidden_states, teacher_attention_maps, args)
+                (
+                    sampled_student_loss,
+                    sampled_student_losses_dict,
+                ) = compute_student_loss(
+                    model,
+                    batch,
+                    teacher_hidden_states,
+                    teacher_attention_maps,
+                    args,
+                    track_layerwise_loss=True,
+                )
                 accelerator.backward(sampled_student_loss)
 
             else:  # Other means of sampling
@@ -1202,11 +1274,69 @@ def main():
 
                 ### Plot the high-res step-loss ###
                 if accelerator.is_main_process:
-                    wandb.log(
-                        {
-                            "Supertransformer Train loss": loss,
-                        }
-                    )
+                    if not args.inplace_distillation:
+                        wandb.log(
+                            {
+                                "Supertransformer Train loss": loss.item(),
+                            }
+                        )
+                    else:
+                        wandb.log(
+                            {
+                                "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
+                                "Smallest Student mlm loss": smallest_student_losses_dict[
+                                    "student_mlm_loss"
+                                ],
+                                "Smallest distill loss": smallest_student_losses_dict[
+                                    "student_distill_loss"
+                                ],
+                                "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
+                                    "student_feature_knowledge_transfer_loss"
+                                ],
+                                "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
+                                    "student_attention_knowledge_transfer_loss"
+                                ],
+                                "Subtransformer Student mlm loss": sampled_student_losses_dict[
+                                    "student_mlm_loss"
+                                ],
+                                "Subtransformer distill loss": sampled_student_losses_dict[
+                                    "student_distill_loss"
+                                ],
+                                "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
+                                    "student_feature_knowledge_transfer_loss"
+                                ],
+                                "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
+                                    "student_attention_knowledge_transfer_loss"
+                                ],
+                            }
+                        )
+                    for idx in range(
+                        len(smallest_student_losses_dict["layer_wise_akt"])
+                    ):
+                        wandb.log(
+                            {
+                                f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
+                                    "layer_wise_akt"
+                                ][
+                                    idx
+                                ],
+                                f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
+                                    "layer_wise_akt"
+                                ][
+                                    idx
+                                ],
+                                f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
+                                    "layer_wise_fkt"
+                                ][
+                                    idx
+                                ],
+                                f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
+                                    "layer_wise_fkt"
+                                ][
+                                    idx
+                                ],
+                            }
+                        )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
