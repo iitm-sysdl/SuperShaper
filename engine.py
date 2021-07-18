@@ -44,6 +44,354 @@ GLUE_TASKS = [
 
 # SUPPORTED_MODELS = ['bert-base-cased', 'bert-base-uncased', 'bert-base-multilingual-cased', 'bert-large-uncased', 'bert-large-cased']
 
+class Sampler:
+    def __init__(args, config, accelerator):
+        self.config = config 
+        self.args = args
+        self.accelerator = accelerator
+
+    def get_supertransformer_config(
+        self
+    ):
+        config = AutoConfig.from_pretrained(self.args.model_name_or_path)
+    
+        if self.args.mixing == "gmlp":
+            # gmlp needs twice the encoder layers to match bert param size
+            config.num_hidden_layers = 36
+            config.hidden_size = 512
+    
+        config.sample_hidden_size = config.hidden_size
+        config.sample_num_hidden_layers = config.num_hidden_layers
+    
+        # for all networks we use layernorm and feedforwardnetworks 1
+        config.normalization_type = "layer_norm"
+        config.num_feedforward_networks = 1
+    
+        if not self.args.tiny_attn:
+            config.sample_num_attention_heads = [
+                config.num_attention_heads
+            ] * config.sample_num_hidden_layers
+        else:
+            config.sample_num_attention_heads = [1] * config.sample_num_hidden_layers
+    
+        config.num_attention_heads = 1 if self.args.tiny_attn else config.num_attention_heads
+    
+        config.sample_intermediate_size = [
+            config.intermediate_size
+        ] * config.sample_num_hidden_layers
+    
+        if self.args.mixing == "mobilebert":
+            config.embedding_size = 768
+            config.hidden_size = 768
+            config.intra_bottleneck_size = 768
+            config.true_hidden_size = 768
+    
+            config.sample_embedding_size = config.embedding_size
+            config.sample_intra_bottleneck_size = [
+                config.intra_bottleneck_size
+            ] * config.sample_num_hidden_layers
+            config.sample_true_hidden_size = config.true_hidden_size
+            config.use_bottleneck = True
+            config.use_bottleneck_attention = False
+            config.key_query_shared_bottleneck = False
+    
+        config.mixing = mixing
+        config.tiny_attn = tiny_attn
+        return config
+
+
+    def get_task(self, task_name):
+        if task_name in GLUE_TASKS:
+            return GlueTask
+        
+    def show_random_elements(self, dataset, num_examples=10):
+        assert num_examples <= len(
+            dataset
+        ), "Can't pick more elements than there are in the dataset."
+        picks = []
+        for _ in range(num_examples):
+            pick = random.randint(0, len(dataset) - 1)
+            while pick in picks:
+                pick = random.randint(0, len(dataset) - 1)
+            picks.append(pick)
+        
+        df = pd.DataFrame(dataset[picks])
+        for column, typ in dataset.features.items():
+            if isinstance(typ, datasets.ClassLabel):
+                df[column] = df[column].transform(lambda i: typ.names[i])
+        self.accelerator.print(df)
+        
+    def get_choices(self):
+        choices = {
+            "sample_hidden_size": [360, 480, 540, 600, 768],
+            "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
+            "sample_intermediate_size": [512, 1024, 2048, 3072],
+            "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers, 2))
+            + [self.config.num_hidden_layers],
+        }
+        choices["sample_hidden_size"] = (
+            [120, 240, 360, 480, 512] if self.args.mixing == "gmlp" else choices["sample_hidden_size"]
+        )
+        if self.args.mixing == "mobilebert":
+            choices["sample_hidden_size"] = [768]
+            choices["sample_intra_bottleneck_size"] = [120, 240, 360, 480, 540, 600, 768]
+            choices["sample_true_hidden_size"] = [768]
+            choices["sample_intermediate_size"] = [3072]
+            choices["sample_num_hidden_layers"] = [12]
+            choices["sample_num_attention_heads"] = [12]
+        
+        return choices
+        
+    def get_diverse_subtransformers(self, elastic_variable):
+        diverse_configs = []
+        all_choices = self.get_choices(self.config.num_hidden_layers, self.config.mixing)
+        
+        num_hidden_layers = int(self.config.num_hidden_layers)
+        
+        elastic_variable_choices = all_choices[elastic_variable]
+        
+        diverse_config = copy.deepcopy(self.config)
+        static_keys = ["sample_hidden_size", "sample_num_hidden_layers"]
+        layerwise_changing_keys = [
+            "sample_num_attention_heads",
+            "sample_intermediate_size",
+            "sample_intra_bottleneck_size",
+        ]
+        
+        # we now set the max possible values for single choices and layer wise chhoices
+        
+        for key in static_keys:
+            if key == elastic_variable:
+                continue
+            value = max(all_choices[key])
+            setattr(diverse_config, key, value)
+        
+        for key in layerwise_changing_keys:
+            if key == elastic_variable:
+                continue
+            value = [max(all_choices[key])] * num_hidden_layers
+            setattr(diverse_config, key, value)
+        
+        for choice in elastic_variable_choices:
+            if elastic_variable in static_keys:
+                value = choice
+                setattr(diverse_config, elastic_variable, value)
+            else:
+                value = [choice] * num_hidden_layers
+                setattr(diverse_config, elastic_variable, value)
+            # TODO: add sample_intra_bottleneck_size later
+            if (
+                getattr(diverse_config, "sample_hidden_size")
+                % getattr(diverse_config, "sample_num_attention_heads")[0]
+            ):
+                continue
+            diverse_configs.append(copy.deepcopy(diverse_config))
+        
+        def sorter(x):
+            value = getattr(x, elastic_variable)
+            if isinstance(value, list):
+                return value[0]
+            else:
+                return value
+        
+        diverse_configs = sorted(diverse_configs, key=sorter)
+        
+        return diverse_configs
+
+    def naive_params_sampling(self, population_size=30):
+
+        config = copy.deepcopy(self.config)
+        choices = self.get_choices(config.num_hidden_layers, mixing=config.mixing)
+    
+        max_params = 0
+        best_config = None
+    
+        assert population_size > 0
+    
+        ## We can replace this with a simple mathematical function to compute params given a config and a maximizing
+        ## function to give precedence for params! That might be faster
+        ## For now implemented as using the best params from a randomly sampled population!
+    
+        for i in range(population_size):
+            config = random_sampling(config, tiny_attn)
+            model = BertForMaskedLM(config)
+            params = count_parameters(model)
+    
+            if max_params < params:
+                max_params = params
+                best_config = config
+    
+        return best_config
+
+    def weighted_params_sample(self):
+        config = copy.deepcopy(self.config)
+
+        choices = self.get_choices(config.num_hidden_layers, mixing=config.mixing)
+        normalized_probs = self.calc_probs(choices)
+    
+        ### Figuring the number of hidden layers
+        hidden_layers_list = choices["sample_num_hidden_layers"]
+        num_hidden_layers = random.choices(
+            hidden_layers_list, k=1, weights=normalized_probs["sample_num_hidden_layers"]
+        )[0]
+        setattr(config, "sample_num_hidden_layers", num_hidden_layers)
+    
+        ## Figuring the hidden size for BERT embeddings
+        hidden_size_embeddings_list = choices["sample_hidden_size"]
+        num_hidden_size = random.choices(
+            hidden_size_embeddings_list, k=1, weights=normalized_probs["sample_hidden_size"]
+        )[0]
+        setattr(config, "sample_hidden_size", num_hidden_size)
+    
+        config_dict = {
+            "sample_num_attention_heads": [],
+            "sample_intermediate_size": [],
+            "sample_intra_bottleneck_size": [],
+        }
+    
+        if not hasattr(config, "sample_intra_bottleneck_size"):
+            _ = config_dict.pop("sample_intra_bottleneck_size")
+    
+        for i in range(num_hidden_layers):
+            while True:
+                for key in config_dict.keys():
+    
+                    choice_list = choices[key]
+                    choice = random.choices(
+                        choice_list, k=1, weights=normalized_probs[key]
+                    )[0]
+                    config_dict[key].append(choice)
+    
+                if config.sample_hidden_size % config_dict["sample_num_attention_heads"][i]:
+                    for key in config_dict.keys():
+                        # we remove this element from the config dict
+                        config_dict[key] = config_dict[key][:-1]
+                    continue
+                else:
+                    if hasattr(config, "sample_intra_bottleneck_size"):
+                        if (
+                            config.sample_intra_bottleneck_size[i]
+                            % config_dict["sample_num_attention_heads"][i]
+                        ):
+                            for key in config_dict.keys():
+                                config_dict[key] = config_dict[key][:-1]
+                            continue
+                    break
+    
+        for key in config_dict.keys():
+            setattr(config, key, config_dict[key])
+    
+        if tiny_attn:
+            setattr(config, "sample_num_attention_heads", 1)
+    
+        return config, None
+    
+    
+    def get_small_config(self):
+
+        config = copy.deepcopy(self.config)
+
+        choices = self.get_choices(config.num_hidden_layers, mixing=config.mixing)
+    
+        hidden_layers_list = choices["sample_num_hidden_layers"]
+        hidden_size_embeddings_list = choices["sample_hidden_size"]
+    
+        ## Choosing the small network
+        num_hidden_layers = hidden_layers_list[0]
+        setattr(config, "sample_num_hidden_layers", num_hidden_layers)
+        hidden_size = hidden_size_embeddings_list[0]
+        setattr(config, "sample_hidden_size", hidden_size)
+    
+        # hard setting this as this does not infuence the param sizes
+        # and 2 is divisible for all choices
+        setattr(config, "sample_num_attention_heads", [2] * num_hidden_layers)
+    
+        if self.args.mixing == "mobilebert":
+            setattr(config, "sample_num_attention_heads", [12] * num_hidden_layers)
+    
+        config_dict = {
+            "sample_intermediate_size": [],
+            "sample_intra_bottleneck_size": [],
+        }
+    
+        if not hasattr(config, "sample_intra_bottleneck_size"):
+            _ = config_dict.pop("sample_intra_bottleneck_size")
+        for i in range(num_hidden_layers):
+            while True:
+                for key in config_dict.keys():
+    
+                    choice_list = choices[key]
+                    choice = choice_list[0]
+                    config_dict[key].append(choice)
+    
+                if (
+                    config.sample_hidden_size
+                    % getattr(config, "sample_num_attention_heads")[i]
+                ):
+                    for key in config_dict.keys():
+                        config_dict[key] = config_dict[key][:-1]
+                    continue
+                else:
+                    if hasattr(config, "sample_intra_bottleneck_size"):
+                        if (
+                            config.sample_intra_bottleneck_size[i]
+                            % getattr(config, "sample_num_attention_heads")[i]
+                        ):
+                            for key in config_dict.keys():
+                                config_dict[key] = config_dict[key][:-1]
+                            continue
+                    break
+        for key in config_dict.keys():
+            setattr(config, key, config_dict[key])
+    
+        return config
+    
+    
+    ## Population size will be implemented later
+    def sandwich_sampling(self, pop_size=1):
+        small_config = self.get_small_config()
+        random_config, _ = self.weighted_params_sample()
+    
+        return random_config, small_config
+    
+    
+    def sample_subtransformer(
+        self, randomize=True, rand_seed=0
+    ):
+        if randomize:
+            random.seed(rand_seed)
+        if config is None:
+            config = get_supertransformer_config(mixing=config.mixing)
+        config = copy.deepcopy(config)
+    
+        config_big = None
+        config_small = None
+    
+        if self.args.sampling_type == "random" or self.args.sampling_type == "biased_params":
+            config, _ = self.weighted_params_sample()
+        elif self.args.sampling_type == "naive_params":
+            config = self.naive_params_sampling()
+        elif self.args.sampling_type == "sandwich":
+            config, config_small = self.sandwich_sampling(1)
+            assert config_small is not None
+        else:
+            raise NotImplementedError
+    
+        return config, config_small
+
+    def calc_probs(self, choices_dictionary):
+        normalized_probs = {}
+        for choice, v in choices_dictionary.items():
+            _v = []
+            _sum = sum(v)
+            for i in v:
+                if self.args.sampling_type == "biased_params":
+                    _v.append(i / _sum)
+                elif self.args.sampling_type == "random": 
+                    _v.append(1 / len(v))
+            normalized_probs[choice] = _v
+        return normalized_probs
+
 
 def get_task(task_name):
     if task_name in GLUE_TASKS:

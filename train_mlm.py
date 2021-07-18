@@ -413,6 +413,7 @@ def parse_args():
         type=int, 
         default=True, 
         help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
+    )
 
     args = parser.parse_args()
 
@@ -1131,7 +1132,7 @@ def main():
     logger.info("=============================")
     for epoch in range(completed_epochs, args.num_train_epochs):
         # first evaluate random subtransformers before starting training
-        if args.eval_random_subtransformers and completed_epochs % 3 == 0:
+        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
             hover_templates = []
             label_perplex = []
             sampling_dimensions = [
