@@ -378,19 +378,13 @@ def parse_args():
         default=None,
         help=f"The directory path for C4",
     )
-    parser.add_argument(
-        "--no_sampling",
-        type=int,
-        default=0,
-        help=f"If set to 1, there will be no sampling. This is useful for training/testing pretrained or whole models",
-    )
 
     parser.add_argument(
         "--sampling_type",
         type=str,
         default="random",
         help=f"The sampling type for super-transformer",
-        choices=["naive_params", "biased_params", "random", "sandwich"],
+        choices=["none", "naive_params", "biased_params", "random", "sandwich"],
     )
 
     parser.add_argument(
@@ -450,7 +444,7 @@ def parse_args():
     if args.tiny_attn == 1:
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
 
-    if args.no_sampling == 1:
+    if args.sampling_type == "none":
         # if we are not sampling, dont test random subtransformers every n epochs
         args.eval_random_subtransformers = False
 
@@ -791,7 +785,7 @@ def main():
 
         logger.info("MobileBert Initiliazed with bert-base")
 
-    elif args.inplace_distillation or args.no_sampling:
+    elif args.inplace_distillation or args.sampling_type == "none":
         # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
@@ -1182,7 +1176,7 @@ def main():
         for step, batch in enumerate(train_dataloader):
             seed += 1
             k_count += 1
-            if k_count == args.k_sampling and args.no_sampling != 1:
+            if k_count == args.k_sampling and args.sampling_type != "none":
                 super_config, super_config_small = sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
@@ -1252,7 +1246,7 @@ def main():
                 # subnet = model.get_active_subnet(super_config)
 
                 # logger.info(subnet)
-                if args.no_sampling != 1:
+                if args.sampling_type != "none":
                     model.set_sample_config(super_config)
 
                 outputs = model(**batch)
@@ -1345,7 +1339,7 @@ def main():
                 break
 
         # change to supertransformer config
-        if args.no_sampling != 1:
+        if args.sampling_type != "none":
             model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
