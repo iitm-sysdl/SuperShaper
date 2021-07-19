@@ -1067,7 +1067,7 @@ def main():
     )
 
     if accelerator.is_main_process:
-        wandb.watch(model)
+        wandb.watch(model, log="all", log_freq=100)
 
     def get_diverse_seeds(num_subtransformers, config):
         diverse_seeds = []
