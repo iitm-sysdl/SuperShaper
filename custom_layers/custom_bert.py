@@ -380,9 +380,9 @@ class BertSelfAttention(nn.Module):
         self.key.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         sample_hidden_dropout_prob = calc_dropout(
-            config.hidden_dropout_prob,
+            config.attention_probs_dropout_prob,
             super_hidden_size=config.num_attention_heads,
-            sample_hidden_size=sample_num_attention_heads,
+            sample_hidden_size=self.sample_num_attention_heads,
         )
         # reinitialize the dropout module with new dropout rate
         # we can also directly use F.dropout as a function with the input
@@ -1145,7 +1145,7 @@ class BertLayer(nn.Module):
     ):
         if self.is_identity_layer:
             # print("Returning without any operations")
-            return (hidden_states,)
+            return (hidden_states, None, None)
 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
@@ -1245,10 +1245,10 @@ class BertEncoder(nn.Module):
             sample_intermediate_sizes = [config.sample_intermediate_size] * len(
                 self.layer
             )
-        if isinstance(config.num_attention_heads, list):
-            sample_num_attention_heads_list = config.num_attention_heads
+        if isinstance(config.sample_num_attention_heads, list):
+            sample_num_attention_heads_list = config.sample_num_attention_heads
         else:
-            sample_num_attention_heads_list = [config.num_attention_heads] * len(
+            sample_num_attention_heads_list = [config.sample_num_attention_heads] * len(
                 self.layer
             )
 
@@ -1826,14 +1826,13 @@ class BertModel(BertPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(head_mask, self.config.sample_num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
             position_ids=position_ids,
             token_type_ids=token_type_ids,
             inputs_embeds=inputs_embeds,
-            past_key_values_length=past_key_values_length,
         )
         encoder_outputs = self.encoder(
             embedding_output,

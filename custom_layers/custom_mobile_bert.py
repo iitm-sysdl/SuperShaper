@@ -818,6 +818,9 @@ class MobileBertLayer(nn.Module):
         head_mask=None,
         output_attentions=None,
     ):
+        if self.is_identity_layer:
+            # print("Returning without any operations")
+            return (hidden_states, None, None)
         if self.use_bottleneck:
             query_tensor, key_tensor, value_tensor, layer_input = self.bottleneck(
                 hidden_states
@@ -886,7 +889,7 @@ class MobileBertEncoder(nn.Module):
         if isinstance(config.sample_num_attention_heads, list):
             sample_num_attention_heads_list = config.sample_num_attention_heads
         else:
-            sample_num_attention_heads_list = [config.num_attention_heads] * len(
+            sample_num_attention_heads_list = [config.sample_num_attention_heads] * len(
                 self.layer
             )
         if isinstance(config.sample_intra_bottleneck_size, list):
@@ -964,10 +967,12 @@ class MobileBertEncoder(nn.Module):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
+            layer_head_mask = head_mask[i] if head_mask is not None else None
+
             layer_outputs = layer_module(
                 hidden_states,
                 attention_mask,
-                head_mask[i],
+                layer_head_mask,
                 output_attentions,
             )
             hidden_states = layer_outputs[0]
@@ -995,17 +1000,19 @@ class MobileBertEncoder(nn.Module):
 class MobileBertPooler(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.do_activate = config.classifier_activation
-        if self.do_activate:
-            self.dense = CustomLinear(config.hidden_size, config.hidden_size)
+        # modifying this to be inline with bertpooler
+        # self.do_activate = config.classifier_activation
+        # if self.do_activate:
+        self.dense = CustomLinear(config.hidden_size, config.hidden_size)
+        self.activation = nn.Tanh()
 
     def set_sample_config(self, config):
         if isinstance(config.sample_hidden_size, list):
             sample_hidden_size = config.sample_hidden_size[-1]
         else:
             sample_hidden_size = config.sample_hidden_size
-        if self.do_activate:
-            self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
+        # if self.do_activate:
+        self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
 
     def get_active_subnet(self, config):
         sublayer = MobileBertPooler(config)
@@ -1016,12 +1023,12 @@ class MobileBertPooler(nn.Module):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         first_token_tensor = hidden_states[:, 0]
-        if not self.do_activate:
-            return first_token_tensor
-        else:
-            pooled_output = self.dense(first_token_tensor)
-            pooled_output = torch.tanh(pooled_output)
-            return pooled_output
+        # if not self.do_activate:
+        #     return first_token_tensor
+        # else:
+        pooled_output = self.dense(first_token_tensor)
+        pooled_output = self.activation(pooled_output)
+        return pooled_output
 
 
 class MobileBertPredictionHeadTransform(nn.Module):
@@ -1343,21 +1350,40 @@ class MobileBertModel(MobileBertPreTrainedModel):
             return_dict if return_dict is not None else self.config.use_return_dict
         )
 
+        # if input_ids is not None and inputs_embeds is not None:
+        #     raise ValueError(
+        #         "You cannot specify both input_ids and inputs_embeds at the same time"
+        #     )
+        # elif input_ids is not None:
+        #     input_shape = input_ids.size()
+        # elif inputs_embeds is not None:
+        #     input_shape = inputs_embeds.size()[:-1]
+        # else:
+        #     raise ValueError("You have to specify either input_ids or inputs_embeds")
+
+        # modified to be inline with bertmodel
         if input_ids is not None and inputs_embeds is not None:
             raise ValueError(
                 "You cannot specify both input_ids and inputs_embeds at the same time"
             )
         elif input_ids is not None:
             input_shape = input_ids.size()
+            batch_size, seq_length = input_shape
         elif inputs_embeds is not None:
             input_shape = inputs_embeds.size()[:-1]
+            batch_size, seq_length = input_shape
         else:
             raise ValueError("You have to specify either input_ids or inputs_embeds")
 
         device = input_ids.device if input_ids is not None else inputs_embeds.device
 
+        # if attention_mask is None:
+        #     attention_mask = torch.ones(input_shape, device=device)
+        # if token_type_ids is None:
+        #     token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
+
         if attention_mask is None:
-            attention_mask = torch.ones(input_shape, device=device)
+            attention_mask = torch.ones(((batch_size, seq_length)), device=device)
         if token_type_ids is None:
             token_type_ids = torch.zeros(input_shape, dtype=torch.long, device=device)
 
@@ -1372,7 +1398,7 @@ class MobileBertModel(MobileBertPreTrainedModel):
         # attention_probs has shape bsz x n_heads x N x N
         # input head_mask has shape [num_heads] or [num_hidden_layers x num_heads]
         # and head_mask is converted to shape [num_hidden_layers x batch x num_heads x seq_length x seq_length]
-        head_mask = self.get_head_mask(head_mask, self.config.num_hidden_layers)
+        head_mask = self.get_head_mask(head_mask, self.config.sample_num_hidden_layers)
 
         embedding_output = self.embeddings(
             input_ids=input_ids,
