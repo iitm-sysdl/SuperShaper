@@ -629,10 +629,16 @@ class OutputBottleneck(nn.Module):
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def forward(self, hidden_states, residual_tensor):
+        # make sure linear scaler is clamped between [0, 1]
+        w = self.linear_scaler.data
+        w = torch.clamp(w, min=0.0, max=1.0)
+
         layer_outputs = self.dense(hidden_states)
         layer_outputs = self.dropout(layer_outputs) * (1.0 - self.linear_scaler)
         layer_outputs = layer_outputs + self.linear_scaler * residual_tensor
-        # layer_outputs = self.LayerNorm(layer_outputs + self.linear_scaler * residual_tensor)
+        # layer_outputs = self.LayerNorm(
+        #     layer_outputs + self.linear_scaler * residual_tensor
+        # )
         return layer_outputs
 
 
