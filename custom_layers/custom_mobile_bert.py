@@ -359,6 +359,9 @@ class MobileBertSelfAttention(nn.Module):
             self.sample_num_attention_heads * self.sample_attention_head_size
         )
 
+        # print("Sample IntraBottleneck size: ", sample_intra_bottleneck_size)
+        # print("Sample num heads size: ", self.sample_num_attention_heads)
+        # print("Sample attention head size: ", self.sample_attention_head_size)
         # print(
         #     f"Changing num_attention heads from {self.num_attention_heads} -> {self.sample_num_attention_heads}"
         # )
@@ -413,12 +416,21 @@ class MobileBertSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
+        assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 1")
         attention_scores = attention_scores / math.sqrt(self.sample_attention_head_size)
+        assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 2")
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
+
         # Normalize the attention scores to probabilities.
-        attention_probs = nn.Softmax(dim=-1)(attention_scores)
+        # adding 1e-8 for preventing of small values in attention scores
+        attention_probs = nn.Softmax(dim=-1)(attention_scores + 1e-8)
+
+        assert (
+            torch.isfinite(attention_probs).all(),
+            "NaNs in attention probabilities after softmax",
+        )
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)

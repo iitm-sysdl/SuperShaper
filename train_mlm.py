@@ -1273,7 +1273,7 @@ def main():
 
                 outputs = model(**batch)
                 loss = outputs.loss
-                loss /= args.gradient_accumulation_steps
+                loss = loss / args.gradient_accumulation_steps
                 accelerator.backward(loss)
 
             # loss = loss / args.gradient_accumulation_steps
