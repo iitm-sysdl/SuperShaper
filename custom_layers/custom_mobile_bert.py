@@ -416,28 +416,28 @@ class MobileBertSelfAttention(nn.Module):
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
-        assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 1")
+        # assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 1")
         attention_scores = attention_scores / math.sqrt(self.sample_attention_head_size)
-        assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 2")
+        # assert (torch.isfinite(attention_scores).all(), "NaNs in attention scores 2")
         if attention_mask is not None:
             # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
             attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
         # adding 1e-8 for preventing of small values in attention scores
-        attention_probs = nn.Softmax(dim=-1)(attention_scores + 1e-8)
+        attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
-        assert (
-            torch.isfinite(attention_probs).all(),
-            "NaNs in attention probabilities after softmax",
-        )
+        # assert (
+        #     torch.isfinite(attention_probs).all(),
+        #     "NaNs in attention probabilities after softmax",
+        # )
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
-        assert (
-            torch.isfinite(attention_probs).all(),
-            "NaNs in attention probabilities after dropout",
-        )
+        # assert (
+        #     torch.isfinite(attention_probs).all(),
+        #     "NaNs in attention probabilities after dropout",
+        # )
         # Mask heads if we want to
         if head_mask is not None:
             attention_probs = attention_probs * head_mask
