@@ -434,6 +434,10 @@ class MobileBertSelfAttention(nn.Module):
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
+        assert (
+            torch.isfinite(attention_probs).all(),
+            "NaNs in attention probabilities after dropout",
+        )
         # Mask heads if we want to
         if head_mask is not None:
             attention_probs = attention_probs * head_mask

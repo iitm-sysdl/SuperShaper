@@ -282,6 +282,12 @@ def parse_args():
         help="Model type to use if training from scratch.",
     )
     parser.add_argument(
+        "--logging_steps",
+        type=int,
+        default=100,
+        help="Log every X updates steps.",
+    )
+    parser.add_argument(
         "--max_seq_length",
         type=int,
         default=None,
@@ -299,7 +305,7 @@ def parse_args():
     parser.add_argument(
         "--preprocessing_num_workers",
         type=int,
-        default=None,
+        default=8,
         help="The number of processes to use for the preprocessing.",
     )
     parser.add_argument(
@@ -414,6 +420,9 @@ def parse_args():
         default=0,
         help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
     )
+    # parser.add_argument(
+    #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+    # )
 
     args = parser.parse_args()
 
@@ -515,7 +524,7 @@ def compute_layerwise_distillation(
         fkt = nn.MSELoss()(teacher_hidden, student_hidden)
         student_fkt = student_fkt + fkt
         if track_layerwise_loss:
-            layer_wise_fkt.append(fkt.item())
+            layer_wise_fkt.append(fkt)
 
     for (teacher_attention, student_attention) in zip(
         teacher_attention_maps, student_attention_maps
@@ -526,7 +535,7 @@ def compute_layerwise_distillation(
         akt = torch.mean(torch.sum(student_kl, axis=-1))
         student_akt = student_akt + akt
         if track_layerwise_loss:
-            layer_wise_akt.append(akt.item())
+            layer_wise_akt.append(akt)
 
     return student_akt, student_fkt, layer_wise_akt, layer_wise_fkt
 
@@ -551,9 +560,9 @@ def compute_student_loss(
     overall_loss = student_mlm_loss
 
     losses = {
-        "overall_loss": overall_loss.item(),
+        "overall_loss": overall_loss,
         "student_distill_loss": 0,
-        "student_mlm_loss": student_mlm_loss.item(),
+        "student_mlm_loss": student_mlm_loss,
         "student_feature_knowledge_transfer_loss": 0,
         "student_attention_knowledge_transfer_loss": 0,
         "layer_wise_akt": [],
@@ -584,10 +593,10 @@ def compute_student_loss(
 
         overall_loss = overall_loss + student_distill_loss
 
-        losses["overall_loss"] = overall_loss.item()
-        losses["student_distill_loss"] = student_distill_loss.item()
-        losses["student_feature_knowledge_transfer_loss"] = student_fkt.item()
-        losses["student_attention_knowledge_transfer_loss"] = student_akt.item()
+        losses["overall_loss"] = overall_loss
+        losses["student_distill_loss"] = student_distill_loss
+        losses["student_feature_knowledge_transfer_loss"] = student_fkt
+        losses["student_attention_knowledge_transfer_loss"] = student_akt
         losses["layer_wise_akt"] = layer_wise_akt
         losses["layer_wise_fkt"] = layer_wise_fkt
 
@@ -769,12 +778,13 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
-    # TODO: decouple mixing and mobilebert model declarato
-    if args.mixing == "mobilebert":
-
+    if args.layerwise_distillation:
         # for attention transfer and feature transfer enable these.
         global_config.output_attentions = True
         global_config.output_hidden_states = True
+
+    # TODO: decouple mixing and mobilebert model declarato
+    if args.mixing == "mobilebert":
 
         states = OD()
 
@@ -817,6 +827,16 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
+
+    if args.resume_from_checkpoint_dir is not None:
+        logger.info("Loading model weights from checkpoint ..")
+        # we load the model before preparing
+        # see this for details: https://github.com/huggingface/accelerate/issues/95
+        checkpoints = torch.load(
+            os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin"),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -940,11 +960,15 @@ def main():
         shuffle=True,
         collate_fn=data_collator,
         batch_size=args.per_device_train_batch_size,
+        num_workers=args.preprocessing_num_workers,
+        pin_memory=True,
     )
     eval_dataloader = DataLoader(
         eval_dataset,
         collate_fn=data_collator,
         batch_size=args.per_device_eval_batch_size,
+        num_workers=args.preprocessing_num_workers,
+        pin_memory=True,
     )
 
     # Optimizer
@@ -971,14 +995,6 @@ def main():
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
     if args.resume_from_checkpoint_dir is not None:
-        logger.info("Loading model weights from checkpoint ..")
-        # we load the model before preparing
-        # see this for details: https://github.com/huggingface/accelerate/issues/95
-        model.load_state_dict(
-            torch.load(
-                os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin")
-            )
-        )
 
         optim_scheduler_states = torch.load(
             args.optim_scheduler_states_path, map_location="cpu"
@@ -1210,6 +1226,8 @@ def main():
 
             if args.inplace_distillation:
 
+                track_loss = step % args.logging_steps == 0
+
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1241,7 +1259,7 @@ def main():
                     teacher_hidden_states,
                     teacher_attention_maps,
                     args,
-                    track_layerwise_loss=True,
+                    track_layerwise_loss=track_loss,
                 )
                 accelerator.backward(smallest_student_loss)
 
@@ -1255,9 +1273,12 @@ def main():
                     teacher_hidden_states,
                     teacher_attention_maps,
                     args,
-                    track_layerwise_loss=True,
+                    track_layerwise_loss=track_loss,
                 )
                 accelerator.backward(sampled_student_loss)
+
+                # gradient clipping
+                # accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             else:  # Other means of sampling
                 # model.set_sample_config(super_config)
@@ -1284,12 +1305,12 @@ def main():
             ):
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 progress_bar.update(1)
                 completed_steps += 1
 
                 ### Plot the high-res step-loss ###
-                if accelerator.is_main_process:
+                if accelerator.is_main_process and track_loss:
                     if not args.inplace_distillation:
                         wandb.log(
                             {
@@ -1304,28 +1325,28 @@ def main():
                                     "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
                                     "Smallest Student mlm loss": smallest_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest distill loss": smallest_student_losses_dict[
                                         "student_distill_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
                                         "student_feature_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
                                         "student_attention_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer Student mlm loss": sampled_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer distill loss": sampled_student_losses_dict[
                                         "student_distill_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
                                         "student_feature_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
                                         "student_attention_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                 }
                             )
                             for idx in range(
@@ -1337,22 +1358,22 @@ def main():
                                             "layer_wise_akt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
                                             "layer_wise_akt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
                                             "layer_wise_fkt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
                                             "layer_wise_fkt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                     }
                                 )
                         else:
@@ -1361,10 +1382,10 @@ def main():
                                     "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
                                     "Smallest Student mlm loss": smallest_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer Student mlm loss": sampled_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                 }
                             )
 
@@ -1446,5 +1467,6 @@ def main():
 
 
 if __name__ == "__main__":
-    with torch.autograd.set_detect_anomaly(True):
-        main()
+    # with torch.autograd.set_detect_anomaly(True):
+    # main()
+    main()
