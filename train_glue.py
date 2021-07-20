@@ -47,7 +47,7 @@ from collections import defaultdict
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
-from engine import (
+from sampling import (
     sample_subtransformer,
     get_supertransformer_config,
     show_random_elements,
@@ -744,39 +744,21 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model)
 
-    def get_diverse_seeds(num_subtransformers, config):
-        diverse_seeds = []
-        num_hidden_layers_seeds = defaultdict(list)
-        for seed in range(num_subtransformers * 4):
-            num_hidden_layers = sample_subtransformer(
-                False, True, seed, config=config
-            ).sample_num_hidden_layers
-            num_hidden_layers_seeds[num_hidden_layers].append(seed)
-        uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
-        num_per_uniq_layer = (num_subtransformers // uniq_num_hidden_layers) + 1
-        for k, v in num_hidden_layers_seeds.items():
-            diverse_seeds.extend(v[:num_per_uniq_layer])
-        return diverse_seeds[:num_subtransformers]
-
-    logger.info("Generating diverse random seeds..")
-    rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
-    logger.info(len(rand_seed_lst))
-    logger.info("Random seeds generation done..")
-
     best_val_acc = 0
+    sampler = Sampler("random", "none", args.mixing, global_config, accelerator)
 
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()
         seed = -1
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            super_config = sample_subtransformer(
+            super_config = sampler.sample_subtransformer(
                 limit_subtransformer_choices=False,
                 randomize=True,
                 rand_seed=seed,
                 tiny_attn=args.tiny_attn,
                 config=global_config,
-            )
+            )["random_subtranformers"][0]
             model.set_sample_config(super_config)
 
             # super_config.max_seq_length = config.max_seq_length
@@ -852,65 +834,66 @@ def main():
                 )
                 break
 
-        if args.eval_random_subtransformers and completed_epochs % 5 == 0:
-            hover_templates = []
-            label_acc = []
-            sampling_dimensions = [
-                "sample_hidden_size",
-                "sample_num_attention_heads",
-                "sample_intermediate_size",
-                "sample_num_hidden_layers",
-                "random_seed",
-            ]
-            for i in range(args.num_subtransformers_monitor):
-                random_seed = rand_seed_lst[i]
-                config = sample_subtransformer(
-                    False,
-                    randomize=True,
-                    rand_seed=random_seed,
-                    tiny_attn=args.tiny_attn,
-                    config=global_config,
-                )
+        # TODO: make this similar to train_mlm
+        # if args.eval_random_subtransformers and completed_epochs % 5 == 0:
+        # hover_templates = []
+        # label_acc = []
+        # sampling_dimensions = [
+        #     "sample_hidden_size",
+        #     "sample_num_attention_heads",
+        #     "sample_intermediate_size",
+        #     "sample_num_hidden_layers",
+        #     "random_seed",
+        # ]
+        # for i in range(args.num_subtransformers_monitor):
+        #     random_seed = rand_seed_lst[i]
+        #     config = sample_subtransformer(
+        #         False,
+        #         randomize=True,
+        #         rand_seed=random_seed,
+        #         tiny_attn=args.tiny_attn,
+        #         config=global_config,
+        #     )
 
-                config.random_seed = random_seed
-                model.set_sample_config(config)
+        #     config.random_seed = random_seed
+        #     model.set_sample_config(config)
 
-                eval_metric = validate_subtransformer(
-                    model, args.task_name, eval_dataloader, accelerator
-                )
-                # eval_metric['validation_random_seed'] = random_seed
-                # label_lst.append([eval_metric['accuracy'], random_seed])
-                # label_lst.append([random_seed, eval_metric['accuracy']])
-                hover_templates.append(
-                    "<br>".join(
-                        [
-                            f"{key}: {getattr(config, key)}"
-                            for key in sampling_dimensions
-                        ]
-                    )
-                )
-                label_acc.append(eval_metric["accuracy"])
-                # label_seed.append(random_seed)
-                # accelerator.print(eval_metric)
-                # wandb.log(eval_metric)
+        #     eval_metric = validate_subtransformer(
+        #         model, args.task_name, eval_dataloader, accelerator
+        #     )
+        #     # eval_metric['validation_random_seed'] = random_seed
+        #     # label_lst.append([eval_metric['accuracy'], random_seed])
+        #     # label_lst.append([random_seed, eval_metric['accuracy']])
+        #     hover_templates.append(
+        #         "<br>".join(
+        #             [
+        #                 f"{key}: {getattr(config, key)}"
+        #                 for key in sampling_dimensions
+        #             ]
+        #         )
+        #     )
+        #     label_acc.append(eval_metric["accuracy"])
+        #     # label_seed.append(random_seed)
+        #     # accelerator.print(eval_metric)
+        #     # wandb.log(eval_metric)
 
-            if accelerator.is_main_process:
-                ## If plotting using Custom Plotly
-                fig = go.Figure()
+        # if accelerator.is_main_process:
+        #     ## If plotting using Custom Plotly
+        #     fig = go.Figure()
 
-                fig.add_trace(
-                    go.Bar(
-                        x=np.arange(len(rand_seed_lst)),
-                        y=label_acc,
-                        hovertext=hover_templates,
-                    )
-                )
-                fig.update_layout(
-                    title="Relative Performance Order",
-                    xaxis_title="Random Seed",
-                    yaxis_title="Accuracy",
-                )
-                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+        #     fig.add_trace(
+        #         go.Bar(
+        #             x=np.arange(len(rand_seed_lst)),
+        #             y=label_acc,
+        #             hovertext=hover_templates,
+        #         )
+        #     )
+        #     fig.update_layout(
+        #         title="Relative Performance Order",
+        #         xaxis_title="Random Seed",
+        #         yaxis_title="Accuracy",
+        #     )
+        #     wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set

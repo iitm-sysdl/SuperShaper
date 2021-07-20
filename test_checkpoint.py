@@ -30,8 +30,8 @@ from transformers import (
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
-from engine import (
-    sample_subtransformer,
+from sampling import (
+    Sampler,
     get_supertransformer_config,
     show_args,
 )
@@ -625,14 +625,16 @@ def main():
     subtranformer_losses = []
     subtranformer_configs = []
 
+    sampler = Sampler("random", "none", args.mixing, global_config, accelerator)
+
     for idx, _seed in enumerate(tqdm(random_seeds)):
-        subtransformer_config, _ = sample_subtransformer(
+        subtransformer_config = sampler.sample_subtransformer(
             randomize=True,
             rand_seed=_seed,
             tiny_attn=False,
             config=global_config,
             sampling_type="random",
-        )
+        )["random_subtransformers"][0]
         model.set_sample_config(subtransformer_config)
         eval_metric = validate_subtransformer(
             model,

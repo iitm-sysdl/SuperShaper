@@ -50,13 +50,14 @@ from transformers import (
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
-from engine import (
-    sample_subtransformer,
+from sampling import (
+    Sampler,
     get_supertransformer_config,
     show_random_elements,
     show_args,
-    get_diverse_subtransformers,
 )
+
+
 from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
@@ -106,7 +107,6 @@ def validate_subtransformer(
     model.eval()
     for step, batch in enumerate(eval_dataloader):
         # We could avoid this line since we set the accelerator with `device_placement=True`.
-        batch.to(accelerator.device)
         with torch.no_grad():
             outputs = model(**batch)
 
@@ -282,6 +282,12 @@ def parse_args():
         help="Model type to use if training from scratch.",
     )
     parser.add_argument(
+        "--logging_steps",
+        type=int,
+        default=100,
+        help="Log every X updates steps.",
+    )
+    parser.add_argument(
         "--max_seq_length",
         type=int,
         default=None,
@@ -299,7 +305,7 @@ def parse_args():
     parser.add_argument(
         "--preprocessing_num_workers",
         type=int,
-        default=None,
+        default=8,
         help="The number of processes to use for the preprocessing.",
     )
     parser.add_argument(
@@ -384,7 +390,20 @@ def parse_args():
         type=str,
         default="random",
         help=f"The sampling type for super-transformer",
-        choices=["none", "naive_params", "biased_params", "random", "sandwich"],
+        choices=["none", "naive_params", "biased_params", "random"],
+    )
+    parser.add_argument(
+        "--sampling_rule",
+        type=str,
+        default="none",
+        help=f"The sampling rule for sampling super-transformers",
+        choices=["none", "sandwich"],
+    )
+    parser.add_argument(
+        "--pop_size",
+        type=int,
+        default=1,
+        help=f"Number of random subtransformers to sample at each step",
     )
 
     parser.add_argument(
@@ -414,6 +433,9 @@ def parse_args():
         default=0,
         help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
     )
+    # parser.add_argument(
+    #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
+    # )
 
     args = parser.parse_args()
 
@@ -424,9 +446,9 @@ def parse_args():
         assert args.inplace_distillation
 
     if args.inplace_distillation == 1:
-        # hard setting this for now
-        args.sampling_type = "sandwich"
-        # args.mixing = "attention"
+        assert (
+            args.sampling_rule == "sandwich"
+        ), "Sampling rule needs to be sandwich if using inplace distillation"
 
     if (
         args.dataset_name is None
@@ -515,7 +537,7 @@ def compute_layerwise_distillation(
         fkt = nn.MSELoss()(teacher_hidden, student_hidden)
         student_fkt = student_fkt + fkt
         if track_layerwise_loss:
-            layer_wise_fkt.append(fkt.item())
+            layer_wise_fkt.append(fkt)
 
     for (teacher_attention, student_attention) in zip(
         teacher_attention_maps, student_attention_maps
@@ -526,7 +548,7 @@ def compute_layerwise_distillation(
         akt = torch.mean(torch.sum(student_kl, axis=-1))
         student_akt = student_akt + akt
         if track_layerwise_loss:
-            layer_wise_akt.append(akt.item())
+            layer_wise_akt.append(akt)
 
     return student_akt, student_fkt, layer_wise_akt, layer_wise_fkt
 
@@ -551,9 +573,9 @@ def compute_student_loss(
     overall_loss = student_mlm_loss
 
     losses = {
-        "overall_loss": overall_loss.item(),
+        "overall_loss": overall_loss,
         "student_distill_loss": 0,
-        "student_mlm_loss": student_mlm_loss.item(),
+        "student_mlm_loss": student_mlm_loss,
         "student_feature_knowledge_transfer_loss": 0,
         "student_attention_knowledge_transfer_loss": 0,
         "layer_wise_akt": [],
@@ -584,10 +606,10 @@ def compute_student_loss(
 
         overall_loss = overall_loss + student_distill_loss
 
-        losses["overall_loss"] = overall_loss.item()
-        losses["student_distill_loss"] = student_distill_loss.item()
-        losses["student_feature_knowledge_transfer_loss"] = student_fkt.item()
-        losses["student_attention_knowledge_transfer_loss"] = student_akt.item()
+        losses["overall_loss"] = overall_loss
+        losses["student_distill_loss"] = student_distill_loss
+        losses["student_feature_knowledge_transfer_loss"] = student_fkt
+        losses["student_attention_knowledge_transfer_loss"] = student_akt
         losses["layer_wise_akt"] = layer_wise_akt
         losses["layer_wise_fkt"] = layer_wise_fkt
 
@@ -712,25 +734,9 @@ def main():
         if extension == "txt":
             extension = "text"
         raw_datasets = load_dataset(extension, data_files=data_files)
-    # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
-    # https://huggingface.co/docs/datasets/loading_datasets.html.
 
-    # Load pretrained model and tokenizer
-    #
-    # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
-    # download model & vocab.
-    # if args.config_name:
-    #     config = AutoConfig.from_pretrained(args.config_name)
-    # elif args.model_name_or_path:
-    #     config = AutoConfig.from_pretrained(args.model_name_or_path)
-    # else:
-    #     config = CONFIG_MAPPING[args.model_type]()
-    #     logger.warning("You are instantiating a new config instance from scratch.")
-    print("===========================")
-    print(args.mixing)
-    print("===========================")
     global_config = get_supertransformer_config(
-        args.model_name_or_path, tiny_attn=args.tiny_attn, mixing=args.mixing
+        args.model_name_or_path, mixing=args.mixing
     )
 
     if args.tokenizer_name:
@@ -769,12 +775,13 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
-    # TODO: decouple mixing and mobilebert model declarato
-    if args.mixing == "mobilebert":
-
+    if args.layerwise_distillation:
         # for attention transfer and feature transfer enable these.
         global_config.output_attentions = True
         global_config.output_hidden_states = True
+
+    # TODO: decouple mixing and mobilebert model declarato
+    if args.mixing == "mobilebert":
 
         states = OD()
 
@@ -817,6 +824,16 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
+
+    if args.resume_from_checkpoint_dir is not None:
+        logger.info("Loading model weights from checkpoint ..")
+        # we load the model before preparing
+        # see this for details: https://github.com/huggingface/accelerate/issues/95
+        checkpoints = torch.load(
+            os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin"),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -940,11 +957,15 @@ def main():
         shuffle=True,
         collate_fn=data_collator,
         batch_size=args.per_device_train_batch_size,
+        num_workers=args.preprocessing_num_workers,
+        pin_memory=True,
     )
     eval_dataloader = DataLoader(
         eval_dataset,
         collate_fn=data_collator,
         batch_size=args.per_device_eval_batch_size,
+        num_workers=args.preprocessing_num_workers,
+        pin_memory=True,
     )
 
     # Optimizer
@@ -971,14 +992,6 @@ def main():
     optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate)
 
     if args.resume_from_checkpoint_dir is not None:
-        logger.info("Loading model weights from checkpoint ..")
-        # we load the model before preparing
-        # see this for details: https://github.com/huggingface/accelerate/issues/95
-        model.load_state_dict(
-            torch.load(
-                os.path.join(args.resume_from_checkpoint_dir, "pytorch_model.bin")
-            )
-        )
 
         optim_scheduler_states = torch.load(
             args.optim_scheduler_states_path, map_location="cpu"
@@ -1069,74 +1082,48 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model, log="all", log_freq=100)
 
-    def get_diverse_seeds(num_subtransformers, config):
-        diverse_seeds = []
-        num_hidden_layers_seeds = defaultdict(list)
-        for seed in range(num_subtransformers * 4):
-            # num_hidden_layers = sample_subtransformer(
-            #        True, seed, config=config
-            # ).sample_num_hidden_layers
-            super_config, _ = sample_subtransformer(
-                True, seed, config=config, sampling_type=args.sampling_type
-            )
-            num_hidden_layers = super_config.sample_num_hidden_layers
-            num_hidden_layers_seeds[num_hidden_layers].append(seed)
-        uniq_num_hidden_layers = len(num_hidden_layers_seeds.keys())
-        num_per_uniq_layer = (num_subtransformers // uniq_num_hidden_layers) + 1
-        for k, v in num_hidden_layers_seeds.items():
-            diverse_seeds.extend(v[:num_per_uniq_layer])
-        return diverse_seeds[:num_subtransformers]
+    sampler = Sampler(
+        args.sampling_type, args.sampling_rule, args.mixing, global_config, accelerator
+    )
 
-    # logger.info("Generating diverse random seeds..")
-    # rand_seed_lst = get_diverse_seeds(args.num_subtransformers_monitor, global_config)
-    # logger.info(len(rand_seed_lst))
-    # logger.info("Random seeds generation done..")
     if args.eval_random_subtransformers:
-        diverse_hidden_state_subs = get_diverse_subtransformers(
-            "sample_hidden_size", global_config
-        )
-        diverse_attention_subs = get_diverse_subtransformers(
-            "sample_num_attention_heads", global_config
-        )
-        diverse_intermediate_state_subs = get_diverse_subtransformers(
-            "sample_intermediate_size", global_config
-        )
-        diverse_num_hidden_subs = get_diverse_subtransformers(
-            "sample_num_hidden_layers", global_config
-        )
-        diverse_num_intra_subs = get_diverse_subtransformers(
-            "sample_intra_bottleneck_size", global_config
-        )
+        if args.mixing != "mobilebert":
+            diverse_hidden_state_subs = sampler.get_diverse_subtransformers(
+                "sample_hidden_size"
+            )
+            diverse_attention_subs = sampler.get_diverse_subtransformers(
+                "sample_num_attention_heads"
+            )
+            diverse_intermediate_state_subs = sampler.get_diverse_subtransformers(
+                "sample_intermediate_size"
+            )
+            diverse_num_hidden_subs = sampler.get_diverse_subtransformers(
+                "sample_num_hidden_layers"
+            )
 
-        diverse_subtransformers = (
-            diverse_hidden_state_subs
-            + diverse_attention_subs
-            + diverse_intermediate_state_subs
-            + diverse_num_intra_subs
-        )
-        # get unique subtransformers
-        diverse_subtransformers = list(unique_everseen(diverse_subtransformers))
-
-        # colors = px.colors.sequential.Viridis
-        marker_colors = (
-            ["yellow"] * len(diverse_hidden_state_subs)
-            + ["green"] * len(diverse_attention_subs)
-            + ["blue"] * len(diverse_intermediate_state_subs)
-            + ["red"] * len(diverse_num_hidden_subs)
-            + ["black"] * len(diverse_num_intra_subs)
-        )
-
-    best_val_perplexity = 1000000
-    seed = -1
-    logger.info("=============================")
-    logger.info(completed_epochs)
-    logger.info(args.num_train_epochs)
-    logger.info("=============================")
-    for epoch in range(completed_epochs, args.num_train_epochs):
-        # first evaluate random subtransformers before starting training
-        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
-            hover_templates = []
-            label_perplex = []
+            diverse_subtransformers = (
+                diverse_hidden_state_subs
+                + diverse_attention_subs
+                + diverse_intermediate_state_subs
+            )
+            marker_colors = (
+                ["yellow"] * len(diverse_hidden_state_subs)
+                + ["green"] * len(diverse_attention_subs)
+                + ["blue"] * len(diverse_intermediate_state_subs)
+                + ["red"] * len(diverse_num_hidden_subs)
+            )
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+        else:
+            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
+                "sample_intra_bottleneck_size"
+            )
+            diverse_subtransformers = diverse_num_intra_subs
+            marker_colors = ["black"] * len(diverse_num_intra_subs)
             sampling_dimensions = [
                 "sample_hidden_size",
                 "sample_num_attention_heads",
@@ -1144,6 +1131,19 @@ def main():
                 "sample_num_hidden_layers",
                 "sample_intra_bottleneck_size",
             ]
+
+    best_val_perplexity = 1000000
+    seed = -1
+    logger.info("=============================")
+    logger.info(f"Statring training from epoch {completed_epochs}")
+    logger.info(f"Training till epoch  {args.num_train_epochs}")
+    logger.info("=============================")
+
+    for epoch in range(completed_epochs, args.num_train_epochs):
+        # first evaluate random subtransformers before starting training
+        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
+            hover_templates = []
+            label_perplex = []
             for i, config in enumerate(diverse_subtransformers):
                 model.set_sample_config(config)
 
@@ -1194,22 +1194,27 @@ def main():
 
         model.train()
         k_count = args.k_sampling - 1
-        # seed = -1 ## Don't re-initialize the seed! Allow totally random subtransformers
+
         for step, batch in enumerate(train_dataloader):
             seed += 1
             k_count += 1
             if k_count == args.k_sampling and args.sampling_type != "none":
-                super_config, super_config_small = sample_subtransformer(
+                config_dict = sampler.sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
-                    tiny_attn=args.tiny_attn,
-                    config=global_config,
-                    sampling_type=args.sampling_type,
+                    pop_size=args.pop_size,
                 )
                 k_count = 0
 
+                super_config_small = config_dict["smallest_subtransformer"]
+                # list of random subtransformers with len pop_size
+                super_configs = config_dict["random_subtransformers"]
+
+            track_loss = step % args.logging_steps == 0 and step > 0
+
             if args.inplace_distillation:
 
+                # supertransformer
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1241,61 +1246,94 @@ def main():
                     teacher_hidden_states,
                     teacher_attention_maps,
                     args,
-                    track_layerwise_loss=True,
+                    track_layerwise_loss=track_loss,
                 )
                 accelerator.backward(smallest_student_loss)
 
-                model.set_sample_config(super_config)
-                (
-                    sampled_student_loss,
-                    sampled_student_losses_dict,
-                ) = compute_student_loss(
-                    model,
-                    batch,
-                    teacher_hidden_states,
-                    teacher_attention_maps,
-                    args,
-                    track_layerwise_loss=True,
-                )
-                accelerator.backward(sampled_student_loss)
-
-            else:  # Other means of sampling
-                # model.set_sample_config(super_config)
-
-                # super_config.max_seq_length = config.max_seq_length
-                # super_config.mixing = config.mixing
-                # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-                # subnet = model.get_active_subnet(super_config)
-
-                # logger.info(subnet)
-                if args.sampling_type != "none":
+                for idx in range(args.pop_size):
+                    super_config = super_configs[idx]
                     model.set_sample_config(super_config)
+                    (
+                        sampled_student_loss,
+                        sampled_student_losses_dict,
+                    ) = compute_student_loss(
+                        model,
+                        batch,
+                        teacher_hidden_states,
+                        teacher_attention_maps,
+                        args,
+                        track_layerwise_loss=track_loss,
+                    )
+                    accelerator.backward(sampled_student_loss)
 
-                outputs = model(**batch)
-                loss = outputs.loss
-                loss = loss / args.gradient_accumulation_steps
-                accelerator.backward(loss)
+                # gradient clipping
+                # accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-            # loss = loss / args.gradient_accumulation_steps
-            # accelerator.backward(loss)
+            else:
+                if args.sampling_rule == "sandwich":
+
+                    # supertransformer
+                    model.set_sample_config(global_config)
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    teacher_mlm_loss = loss
+                    teacher_mlm_loss = (
+                        teacher_mlm_loss / args.gradient_accumulation_steps
+                    )
+
+                    accelerator.backward(teacher_mlm_loss)
+
+                    # smallest subtransformer
+                    model.set_sample_config(super_config_small)
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    smallest_mlm_loss = loss
+                    smallest_mlm_loss = (
+                        smallest_mlm_loss / args.gradient_accumulation_steps
+                    )
+
+                    accelerator.backward(smallest_mlm_loss)
+
+                # random_subtransformers
+                for idx in range(args.pop_size):
+                    super_config = super_configs[idx]
+
+                    if args.sampling_type != "none":
+                        model.set_sample_config(super_config)
+
+                    outputs = model(**batch)
+                    loss = outputs.loss
+                    loss = loss / args.gradient_accumulation_steps
+                    accelerator.backward(loss)
+
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1
             ):
                 optimizer.step()
                 lr_scheduler.step()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 progress_bar.update(1)
                 completed_steps += 1
 
                 ### Plot the high-res step-loss ###
-                if accelerator.is_main_process:
+                if accelerator.is_main_process and track_loss:
                     if not args.inplace_distillation:
-                        wandb.log(
-                            {
-                                "Supertransformer mlm loss": loss.item(),
-                            }
-                        )
+                        if args.sampling_rule == "sandwich":
+                            wandb.log(
+                                {
+                                    "Supertransformer mlm loss": teacher_mlm_loss.item(),
+                                    "Supertransformer mlm loss": smallest_mlm_loss.item(),
+                                    "Subtransformer mlm loss": loss.item(),
+                                }
+                            )
+                        else:
+
+                            wandb.log(
+                                {
+                                    "Subtransformer mlm loss": loss.item(),
+                                }
+                            )
                     else:
 
                         if args.layerwise_distillation:
@@ -1304,28 +1342,28 @@ def main():
                                     "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
                                     "Smallest Student mlm loss": smallest_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest distill loss": smallest_student_losses_dict[
                                         "student_distill_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
                                         "student_feature_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
                                         "student_attention_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer Student mlm loss": sampled_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer distill loss": sampled_student_losses_dict[
                                         "student_distill_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
                                         "student_feature_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
                                         "student_attention_knowledge_transfer_loss"
-                                    ],
+                                    ].item(),
                                 }
                             )
                             for idx in range(
@@ -1337,22 +1375,22 @@ def main():
                                             "layer_wise_akt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
                                             "layer_wise_akt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
                                             "layer_wise_fkt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                         f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
                                             "layer_wise_fkt"
                                         ][
                                             idx
-                                        ],
+                                        ].item(),
                                     }
                                 )
                         else:
@@ -1361,10 +1399,10 @@ def main():
                                     "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
                                     "Smallest Student mlm loss": smallest_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                     "Subtransformer Student mlm loss": sampled_student_losses_dict[
                                         "student_mlm_loss"
-                                    ],
+                                    ].item(),
                                 }
                             )
 
@@ -1446,5 +1484,6 @@ def main():
 
 
 if __name__ == "__main__":
-    with torch.autograd.set_detect_anomaly(True):
-        main()
+    # with torch.autograd.set_detect_anomaly(True):
+    # main()
+    main()
