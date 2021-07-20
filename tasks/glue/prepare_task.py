@@ -33,41 +33,16 @@ GLUE_task_to_keys = {
 }
 
 
-def show_random_elements(dataset, accelerator, num_examples=10):
-    assert num_examples <= len(
-        dataset
-    ), "Can't pick more elements than there are in the dataset."
-    picks = []
-    for _ in range(num_examples):
-        pick = random.randint(0, len(dataset) - 1)
-        while pick in picks:
-            pick = random.randint(0, len(dataset) - 1)
-        picks.append(pick)
-
-    df = pd.DataFrame(dataset[picks])
-    for column, typ in dataset.features.items():
-        if isinstance(typ, datasets.ClassLabel):
-            df[column] = df[column].transform(lambda i: typ.names[i])
-    accelerator.print(df)
-
-
 class GlueTask:
     def __init__(
         self,
         task,
-        model_checkpoint,
-        model_config,
+        tokenizer,
         max_seq_len,
-        accelerator,
-        initialize_pretrained_model=True,
     ):
         assert task in GLUE_TASKS, f"Task must be one of these: {GLUE_TASKS} "
         self.actual_task = "mnli" if task == "mnli-mm" else task
         dataset = load_dataset("glue", self.actual_task)
-        accelerator.print(f"{task} dataset statistics:")
-        accelerator.print(dataset)
-        accelerator.print(f"Random samples from {task} dataset")
-        show_random_elements(dataset["train"], accelerator, 5)
         self.metric = load_metric("glue", self.actual_task)
         self.max_seq_len = max_seq_len
         validation_key = (
@@ -84,10 +59,9 @@ class GlueTask:
         #     if task == "cola"
         #     else "accuracy"
         # )
-        self.config = model_config
 
         self.sentence1_key, self.sentence2_key = GLUE_task_to_keys[task]
-        self.tokenizer = AutoTokenizer.from_pretrained(model_checkpoint)
+        self.tokenizer = tokenizer
 
         encoded_dataset = dataset.map(self.preprocess_function, batched=True)
         encoded_dataset.rename_column_("label", "labels")
@@ -98,15 +72,6 @@ class GlueTask:
         encoded_dataset.set_format(type="torch", columns=columns_to_return)
         self.train_dataset = encoded_dataset["train"]
         self.eval_dataset = encoded_dataset[validation_key]
-        self.num_labels = 3 if task.startswith("mnli") else 1 if task == "stsb" else 2
-
-        if initialize_pretrained_model:
-            self.model = BertForSequenceClassification.from_pretrained(
-                model_checkpoint, num_labels=self.num_labels
-            )
-        else:
-            model_config.num_labels = self.num_labels
-            self.model = BertForSequenceClassification(config=model_config)
 
     def preprocess_function(self, examples):
         if self.sentence2_key is None:
