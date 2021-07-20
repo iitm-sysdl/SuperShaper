@@ -557,6 +557,105 @@ class BertSelfOutput(nn.Module):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
+'''
+Implementation for Spatial Unit and Dense layers inspired from https://github.com/lucidrains/g-mlp-pytorch
+'''
+
+class SpatialUnit(nn.Module):
+    def __init__(self, intermediate_size, seq_len, act, causal=False, init_eps=1e-3):
+        super().__init__() 
+        out = intermediate_size // 2 
+        self.causal = causal 
+
+        self.norm = CustomLayerNorm(out)
+        self.proj = nn.Conv1d(seq_len, seq_len, 1)
+
+        self.act = act
+
+        init_eps /= seq_len
+        nn.init.uniform_(self.proj.weight, -init_eps, init_eps)
+        nn.init.constant_(self.proj.bias, 1.)
+    
+    def set_sample_config(self, sample_intermediate_size):
+        self.norm.set_sample_config(sample_intermediate_size)
+    
+    def get_active_subnet(self, config):
+        sublayer = SpatialUnit(config)
+        sublayer.norm = self.norm.get_active_subnet(config.sample_intermediate_size)
+        sublayer.proj.weight.data.copy_(self.proj.weight)
+        sublayer.proj.bias.data.copy_(self.proj.bias)
+    
+    def forward(self, hidden_states, gate_res=None):
+        device, n = hidden_states.device, hidden_states.shape[1]
+
+        res, gate = hidden_states.chunk(2, dim = -1)
+        gate = self.norm(gate)
+
+        weight, bias = self.proj.weight, self.proj.bias
+        if self.causal:
+            weight, bias = weight[:n, :n], bias[:n]
+            mask = torch.ones(weight.shape[:2], device = device).triu_(1).bool()
+            weight = weight.masked_fill(mask[..., None], 0.)
+
+        gate = F.conv1d(gate, weight, bias)
+
+        if exists(gate_res):
+            gate = gate + gate_res
+
+        return self.act(gate) * res
+
+
+class BertDense(nn.Module):
+    def __init__(self, config, act=nn.Identity(), attn=None):
+        super().__init__()  
+        
+        ### Can we have this as an elasticization parameter ### 
+        self.attention = BertSelfAttention(config) if attn is not None else None
+
+        self.channel_projection_in  = CustomLinear(config.hidden_size, config.intermediate_size)
+        self.proj_act = nn.GELU() 
+        self.spatial_projection  = SpatialUnit(config.intermediate_size, config.sequence_length, act)
+        self.channel_projection_out = CustomLinear(config.intermediate_size // 2, config.hidden_size)
+
+    def set_sample_config(self, config): 
+        sample_hidden_size = config.sample_hidden_size
+        sample_intermediate_size = config.sample_intermediate_size 
+
+        self.channel_projection_in.set_sample_config(sample_hidden_size, sample_intermediate_size)
+        self.spatial_projection.set_sample_config(sample_intermediate_size)
+        self.channel_projection_out.set_sample_config(sample_hidden_size, sample_intermediate_size)
+
+        if self.attention is not None:
+            self.attention.set_sample_config(config) 
+    
+    def get_active_subnet(self, config):
+        sublayer = BertDense(config)
+        sublayer.channel_projection_in = self.channel_projection_in.get_active_subnet() 
+        sublayer.spatial_projection  = self.spatial_projection.get_active_subnet()
+        sublayer.channel_projection_out = self.channel_projection_out.get_active_subnet() 
+        
+        if self.attention is not None: 
+            sublayer.attention.get_active_subnet(config)
+
+    def forward(
+        self,
+        hidden_states,
+        attention_mask=None,
+        head_mask=None,
+        encoder_hidden_states=None,
+        encoder_attention_mask=None,
+        past_key_value=None,
+        output_attentions=False,
+        ):
+        
+        gate_res = self.attention(hidden_states) if self.attention is not None else None
+
+        x = self.channel_projection_in(hidden_states)
+        x = self.spatial_projection(x, gate_res = gate_res)
+        x = self.channel_projection_out(x)
+        
+        return x
+
 
 class BertMobile(nn.Module):
     def __init__(self, config):
