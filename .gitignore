@@ -137,3 +137,4 @@ utils.py
 /latency_dataset/iwslt14deen_gpu_titanxp_all.csv
 evo_search.py
 evolution.py
+latency_generator_example.py
