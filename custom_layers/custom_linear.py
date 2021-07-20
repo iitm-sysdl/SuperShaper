@@ -31,6 +31,7 @@ class CustomLinear(nn.Linear):
 
         self._reset_parameters(bias, uniform_, non_linear)
         self.profiling = False
+        self.bias_val = bias
 
     def profile(self, mode=True):
         self.profiling = mode
@@ -72,7 +73,8 @@ class CustomLinear(nn.Linear):
         )
         #self._sample_parameters()
         sub_layer.weight.data.copy_(self.samples["weight"])
-        sub_layer.bias.data.copy_(self.samples["bias"])
+        if self.bias_val:
+            sub_layer.bias.data.copy_(self.samples["bias"])
 
         return sub_layer
 
