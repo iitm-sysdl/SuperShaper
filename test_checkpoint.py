@@ -625,7 +625,7 @@ def main():
     subtranformer_losses = []
     subtranformer_configs = []
 
-    sampler = Sampler("random", "none", args.mixing, global_config, accelerator)
+    sampler = Sampler("random", "none", args.mixing, global_config)
 
     for idx, _seed in enumerate(tqdm(random_seeds)):
         subtransformer_config = sampler.sample_subtransformer(

@@ -52,12 +52,10 @@ class Sampler:
         sampling_rule,
         mixing,
         config,
-        accelerator,
         static_keys=None,
         layerwise_changing_keys=None,
     ):
         self.config = config
-        self.accelerator = accelerator
         self.sampling_type = sampling_type
         self.sampling_rule = sampling_rule
         self.mixing = mixing

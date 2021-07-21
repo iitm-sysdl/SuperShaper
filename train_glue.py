@@ -745,7 +745,7 @@ def main():
         wandb.watch(model)
 
     best_val_acc = 0
-    sampler = Sampler("random", "none", args.mixing, global_config, accelerator)
+    sampler = Sampler("random", "none", args.mixing, global_config)
 
     for epoch in range(completed_epochs, args.num_train_epochs):
         model.train()

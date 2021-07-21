@@ -1089,7 +1089,7 @@ def main():
         wandb.watch(model, log="all", log_freq=100)
 
     sampler = Sampler(
-        args.sampling_type, args.sampling_rule, args.mixing, global_config, accelerator
+        args.sampling_type, args.sampling_rule, args.mixing, global_config
     )
 
     if args.eval_random_subtransformers:
@@ -1301,9 +1301,9 @@ def main():
 
                 # random_subtransformers
                 for idx in range(args.pop_size):
-                    super_config = super_configs[idx]
 
                     if args.sampling_type != "none":
+                        super_config = super_configs[idx]
                         model.set_sample_config(super_config)
 
                     outputs = model(**batch)
@@ -1328,7 +1328,7 @@ def main():
                             wandb.log(
                                 {
                                     "Supertransformer mlm loss": teacher_mlm_loss.item(),
-                                    "Supertransformer mlm loss": smallest_mlm_loss.item(),
+                                    "Smallest mlm loss": smallest_mlm_loss.item(),
                                     "Subtransformer mlm loss": loss.item(),
                                 }
                             )
