@@ -1049,9 +1049,15 @@ def main():
             completed_steps < args.max_train_steps
         ), "model is already trained to specified number of epochs or max steps"
 
+        if optim_scheduler_states.get("current_seed", None):
+            seed = optim_scheduler_states["current_seed"]
+        else:
+            seed = -1
+
     else:
         completed_epochs = 0
         completed_steps = 0
+        seed = -1
 
     # Train!
     total_batch_size = (
@@ -1133,7 +1139,6 @@ def main():
             ]
 
     best_val_perplexity = 1000000
-    seed = -1
     logger.info("=============================")
     logger.info(f"Statring training from epoch {completed_epochs}")
     logger.info(f"Training till epoch  {args.num_train_epochs}")
@@ -1457,6 +1462,7 @@ def main():
                 accelerator.save(
                     {
                         "epoch": completed_epochs,
+                        "current_seed": seed,
                         "steps": completed_steps,
                         "optimizer": optimizer.state_dict(),
                         "scheduler": lr_scheduler.state_dict(),
@@ -1474,6 +1480,7 @@ def main():
         accelerator.save(
             {
                 "epoch": completed_epochs,
+                "current_seed": seed,
                 "steps": completed_steps,
                 "optimizer": optimizer.state_dict(),
                 "scheduler": lr_scheduler.state_dict(),
