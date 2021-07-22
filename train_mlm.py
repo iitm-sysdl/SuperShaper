@@ -814,6 +814,28 @@ def main():
 
         logger.info("MobileBert Initiliazed with bert-base")
 
+    elif args.mixing == 'bert-bottleneck':
+        model = custom_bert.BertForMaskedLM.from_pretrained("bert-base-cased", config=global_config)
+
+        identity = torch.eye(global_config.true_hidden_size)
+        zero_bias = (
+            torch.zeros(global_config.true_hidden_size) + global_config.layer_norm_eps
+        )
+
+        for key in model.state_dict().keys():
+            if (
+                "input_bottleneck.weight" in key
+                or "output_bottleneck.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(identity)
+            elif (
+                "input_bottleneck.bias" in key
+                or "output_bottleneck.bias" in key
+            ):
+                model.state_dict()[key].data.copy_(zero_bias)
+        
+        logger.info("BERT-Bottleneck Initiliazed with BERT-base")
+
     elif args.inplace_distillation or args.sampling_type == "none":
         # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
