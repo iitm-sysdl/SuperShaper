@@ -1,3 +1,0 @@
-Device,Best config total parameters,Num layers,Embedding size,Average FFN hidden size,Average number of heads
-xeon,26738688,6,768,1365.33,9.0
-gtx1080,26738688,6,768,1365.33,9.0
