@@ -1286,7 +1286,7 @@ class BertLayer(nn.Module):
             return (hidden_states, None, None)
 
         if self.use_bottleneck:
-            hidden_states = self.bottleneck(hidden_states)
+            hidden_states = self.input_bottleneck(hidden_states)
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
             past_key_value[:2] if past_key_value is not None else None

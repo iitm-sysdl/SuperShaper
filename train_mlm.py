@@ -797,9 +797,6 @@ def main():
         del states
 
         identity = torch.eye(global_config.true_hidden_size)
-        zero_bias = (
-            torch.zeros(global_config.true_hidden_size)
-        )
         for key in model.state_dict().keys():
             if (
                 "bottleneck.input.dense.weight" in key
@@ -820,15 +817,12 @@ def main():
         )
 
         identity = torch.eye(global_config.hidden_size)
-        zero_bias = (
-            torch.zeros(global_config.hidden_size) + global_config.layer_norm_eps
-        )
 
         for key in model.state_dict().keys():
             if "input_bottleneck.weight" in key or "output_bottleneck.weight" in key:
                 model.state_dict()[key].data.copy_(identity)
             elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
-                model.state_dict()[key].data.copy_(zero_bias)
+                model.state_dict()[key].data.zero_()
 
         logger.info("BERT-Bottleneck Initiliazed with BERT-base")
 
@@ -1111,7 +1105,32 @@ def main():
     )
 
     if args.eval_random_subtransformers:
-        if args.mixing != "mobilebert":
+        if args.mixing == "mobilebert":
+            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
+                "sample_intra_bottleneck_size"
+            )
+            diverse_subtransformers = diverse_num_intra_subs
+            marker_colors = ["black"] * len(diverse_num_intra_subs)
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+                "sample_intra_bottleneck_size",
+            ]
+        elif args.mixing == "bert-bottleneck":
+            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
+                "sample_hidden_size"
+            )
+            diverse_subtransformers = diverse_num_intra_subs
+            marker_colors = ["black"] * len(diverse_num_intra_subs)
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+        else:
             diverse_hidden_state_subs = sampler.get_diverse_subtransformers(
                 "sample_hidden_size"
             )
@@ -1141,19 +1160,6 @@ def main():
                 "sample_num_attention_heads",
                 "sample_intermediate_size",
                 "sample_num_hidden_layers",
-            ]
-        else:
-            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
-                "sample_intra_bottleneck_size"
-            )
-            diverse_subtransformers = diverse_num_intra_subs
-            marker_colors = ["black"] * len(diverse_num_intra_subs)
-            sampling_dimensions = [
-                "sample_hidden_size",
-                "sample_num_attention_heads",
-                "sample_intermediate_size",
-                "sample_num_hidden_layers",
-                "sample_intra_bottleneck_size",
             ]
 
     best_val_perplexity = 1000000

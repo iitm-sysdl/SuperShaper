@@ -70,6 +70,16 @@ class Sampler:
                 "sample_intermediate_size",
                 "sample_intra_bottleneck_size",
             ]
+        elif self.mixing == "bert-bottleneck":
+            self.layerwise_changing_keys = layerwise_changing_keys or [
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_hidden_size",
+            ]
+            self.static_keys = static_keys or [
+                "sample_num_hidden_layers",
+            ]
+
         else:
             self.layerwise_changing_keys = layerwise_changing_keys or [
                 "sample_num_attention_heads",
@@ -145,8 +155,13 @@ class Sampler:
             else:
                 value = [choice] * num_hidden_layers
                 setattr(diverse_config, elastic_variable, value)
+
+            if self.mixing == "bert-bottleneck":
+                hidden = getattr(diverse_config, "sample_hidden_size")[0]
+                if hidden % getattr(diverse_config, "sample_num_attention_heads")[0]:
+                    continue
             # TODO: add sample_intra_bottleneck_size later
-            if (
+            elif (
                 getattr(diverse_config, "sample_hidden_size")
                 % getattr(diverse_config, "sample_num_attention_heads")[0]
             ):
