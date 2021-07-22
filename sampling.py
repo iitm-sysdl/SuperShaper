@@ -79,7 +79,7 @@ class Sampler:
     # TODO: Replace this with a YAML file.
     def get_choices(self):
         choices = {
-            "sample_hidden_size": [360, 480, 540, 600, 768],
+            "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
             "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers, 2))
@@ -105,6 +105,13 @@ class Sampler:
             choices["sample_intermediate_size"] = [3072]
             choices["sample_num_hidden_layers"] = [12]
             choices["sample_num_attention_heads"] = [12]
+        elif self.mixing == "bert-bottleneck":
+            choices = {
+                "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
+                "sample_num_attention_heads": [12],
+                "sample_intermediate_size": [3072],
+                "sample_num_hidden_layers": [12],
+            }
 
         return choices
 
@@ -172,7 +179,7 @@ class Sampler:
         ## For now implemented as using the best params from a randomly sampled population!
 
         for i in range(population_size):
-            config = self.weighted_params(self.config)
+            config = self.weighted_params_sample(self.config)
             model = BertForMaskedLM(config)
             params = count_parameters(model)
 
@@ -197,14 +204,15 @@ class Sampler:
         )[0]
         setattr(config, "sample_num_hidden_layers", num_hidden_layers)
 
-        ## Figuring the hidden size for BERT embeddings
-        hidden_size_embeddings_list = choices["sample_hidden_size"]
-        num_hidden_size = random.choices(
-            hidden_size_embeddings_list,
-            k=1,
-            weights=normalized_probs["sample_hidden_size"],
-        )[0]
-        setattr(config, "sample_hidden_size", num_hidden_size)
+        if self.mixing != "bert-bottleneck":
+            ## Figuring the hidden size for BERT embeddings
+            hidden_size_embeddings_list = choices["sample_hidden_size"]
+            num_hidden_size = random.choices(
+                hidden_size_embeddings_list,
+                k=1,
+                weights=normalized_probs["sample_hidden_size"],
+            )[0]
+            setattr(config, "sample_hidden_size", num_hidden_size)
 
         config_dict = {
             "sample_num_attention_heads": [],
@@ -214,6 +222,15 @@ class Sampler:
 
         if not hasattr(config, "sample_intra_bottleneck_size"):
             _ = config_dict.pop("sample_intra_bottleneck_size")
+
+        if self.mixing == "bert-bottleneck":
+            config_dict = {
+                "sample_num_attention_heads": [],
+                "sample_intermediate_size": [],
+                "sample_intra_bottleneck_size": [],
+                # we need to have diff hiddensizes for every layer
+                "sample_hidden_size": [],
+            }
 
         for i in range(num_hidden_layers):
             while True:
@@ -225,23 +242,33 @@ class Sampler:
                     )[0]
                     config_dict[key].append(choice)
 
-                if (
-                    config.sample_hidden_size
-                    % config_dict["sample_num_attention_heads"][i]
-                ):
-                    for key in config_dict.keys():
-                        # we remove this element from the config dict
-                        config_dict[key] = config_dict[key][:-1]
-                    continue
+                if self.mixing == "bert-bottleneck":
+                    if (
+                        config.sample_hidden_size[i]
+                        % config_dict["sample_num_attention_heads"][i]
+                    ):
+                        for key in config_dict.keys():
+                            config_dict[key] = config_dict[key][:-1]
+                        continue
                 else:
-                    if hasattr(config, "sample_intra_bottleneck_size"):
-                        if (
-                            config.sample_intra_bottleneck_size[i]
-                            % config_dict["sample_num_attention_heads"][i]
-                        ):
-                            for key in config_dict.keys():
-                                config_dict[key] = config_dict[key][:-1]
-                            continue
+                    if (
+                        config.sample_hidden_size
+                        % config_dict["sample_num_attention_heads"][i]
+                    ):
+                        for key in config_dict.keys():
+                            # we remove this element from the config dict
+                            config_dict[key] = config_dict[key][:-1]
+                        continue
+                    else:
+                        if hasattr(config, "sample_intra_bottleneck_size"):
+                            if (
+                                config.sample_intra_bottleneck_size[i]
+                                % config_dict["sample_num_attention_heads"][i]
+                            ):
+                                for key in config_dict.keys():
+                                    config_dict[key] = config_dict[key][:-1]
+                                continue
+
                     break
 
         for key in config_dict.keys():
@@ -260,7 +287,15 @@ class Sampler:
         )
         config_dict["sample_hidden_size"] = min(choices["sample_hidden_size"])
 
-        if self.mixing == "mobilebert":
+        if self.mixing == "bert-bottleneck":
+            config_dict["sample_hidden_size"] = [
+                min(choices["sample_hidden_size"])
+            ] * config_dict["sample_hidden_size"]
+            config_dict["sample_num_attention_heads"] = [12] * config_dict[
+                "sample_num_hidden_layers"
+            ]
+
+        elif self.mixing == "mobilebert":
             config_dict["sample_num_attention_heads"] = [12] * config_dict[
                 "sample_num_hidden_layers"
             ]
@@ -370,6 +405,11 @@ def get_supertransformer_config(
 
     config.sample_hidden_size = config.hidden_size
     config.sample_num_hidden_layers = config.num_hidden_layers
+
+    if mixing == "bert-bottleneck":
+        config.sample_hidden_size = [
+            config.hidden_size
+        ] * config.sample_num_hidden_layers
 
     # for all networks we use layernorm and feedforwardnetworks 1
     config.normalization_type = "layer_norm"

@@ -357,7 +357,7 @@ def parse_args():
         type=str,
         required=True,
         help=f"specifies how to mix the tokens in bertlayers",
-        choices=["attention", "gmlp", "fnet", "mobilebert"],
+        choices=["attention", "gmlp", "fnet", "mobilebert", "bert-bottleneck"],
     )
     parser.add_argument(
         "--resume_from_checkpoint_dir",

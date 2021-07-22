@@ -212,7 +212,7 @@ class BertEmbeddings(nn.Module):
         self.token_type_embeddings = CustomEmbedding(
             config.type_vocab_size, config.hidden_size, padding_idx=config.pad_token_id
         )
-
+        self.use_bottleneck = config.mixing == "bert-bottleneck"
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
         self.LayerNorm = NORM2FN[config.normalization_type](
@@ -232,6 +232,11 @@ class BertEmbeddings(nn.Module):
         # we name all param inside sampling ocnfig as sample_*
         # hidden_size -> sample_emb_hidden_size
         sample_hidden_size = config.sample_hidden_size
+        if self.use_bottleneck:
+            # dont slice embeddings if you are using bottleneck
+            # we will slice it with bottleneck layers
+            sample_hidden_size = config.hidden_size
+
         self.word_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.position_embeddings.set_sample_config(sample_hidden_size, part="encoder")
         self.token_type_embeddings.set_sample_config(sample_hidden_size, part="encoder")
@@ -250,6 +255,7 @@ class BertEmbeddings(nn.Module):
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
     def get_active_subnet(self, config):
+        ## TODO: Handle the effect of bottleneck for get_active_subnet!!
         sublayer = BertEmbeddings(config)
         sublayer.word_embeddings = self.word_embeddings.get_active_subnet(
             part="encoder"
@@ -557,15 +563,17 @@ class BertSelfOutput(nn.Module):
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
-'''
+
+"""
 Implementation for Spatial Unit and Dense layers inspired from https://github.com/lucidrains/g-mlp-pytorch
-'''
+"""
+
 
 class SpatialUnit(nn.Module):
     def __init__(self, intermediate_size, seq_len, act, causal=False, init_eps=1e-3):
-        super().__init__() 
-        out = intermediate_size // 2 
-        self.causal = causal 
+        super().__init__()
+        out = intermediate_size // 2
+        self.causal = causal
 
         self.norm = CustomLayerNorm(out)
         self.proj = nn.Conv1d(seq_len, seq_len, 1)
@@ -574,28 +582,28 @@ class SpatialUnit(nn.Module):
 
         init_eps /= seq_len
         nn.init.uniform_(self.proj.weight, -init_eps, init_eps)
-        nn.init.constant_(self.proj.bias, 1.)
-    
+        nn.init.constant_(self.proj.bias, 1.0)
+
     def set_sample_config(self, sample_intermediate_size):
         self.norm.set_sample_config(sample_intermediate_size)
-    
+
     def get_active_subnet(self, config):
         sublayer = SpatialUnit(config)
         sublayer.norm = self.norm.get_active_subnet(config.sample_intermediate_size)
         sublayer.proj.weight.data.copy_(self.proj.weight)
         sublayer.proj.bias.data.copy_(self.proj.bias)
-    
+
     def forward(self, hidden_states, gate_res=None):
         device, n = hidden_states.device, hidden_states.shape[1]
 
-        res, gate = hidden_states.chunk(2, dim = -1)
+        res, gate = hidden_states.chunk(2, dim=-1)
         gate = self.norm(gate)
 
         weight, bias = self.proj.weight, self.proj.bias
         if self.causal:
             weight, bias = weight[:n, :n], bias[:n]
-            mask = torch.ones(weight.shape[:2], device = device).triu_(1).bool()
-            weight = weight.masked_fill(mask[..., None], 0.)
+            mask = torch.ones(weight.shape[:2], device=device).triu_(1).bool()
+            weight = weight.masked_fill(mask[..., None], 0.0)
 
         gate = F.conv1d(gate, weight, bias)
 
@@ -607,34 +615,46 @@ class SpatialUnit(nn.Module):
 
 class BertDense(nn.Module):
     def __init__(self, config, act=nn.Identity(), attn=None):
-        super().__init__()  
-        
-        ### Can we have this as an elasticization parameter ### 
+        super().__init__()
+
+        ### Can we have this as an elasticization parameter ###
         self.attention = BertSelfAttention(config) if attn is not None else None
 
-        self.channel_projection_in  = CustomLinear(config.hidden_size, config.intermediate_size)
-        self.proj_act = nn.GELU() 
-        self.spatial_projection  = SpatialUnit(config.intermediate_size, config.sequence_length, act)
-        self.channel_projection_out = CustomLinear(config.intermediate_size // 2, config.hidden_size)
+        self.channel_projection_in = CustomLinear(
+            config.hidden_size, config.intermediate_size
+        )
+        self.proj_act = nn.GELU()
+        self.spatial_projection = SpatialUnit(
+            config.intermediate_size, config.sequence_length, act
+        )
+        self.channel_projection_out = CustomLinear(
+            config.intermediate_size // 2, config.hidden_size
+        )
 
-    def set_sample_config(self, config): 
+    def set_sample_config(self, config):
         sample_hidden_size = config.sample_hidden_size
-        sample_intermediate_size = config.sample_intermediate_size 
+        sample_intermediate_size = config.sample_intermediate_size
 
-        self.channel_projection_in.set_sample_config(sample_hidden_size, sample_intermediate_size)
+        self.channel_projection_in.set_sample_config(
+            sample_hidden_size, sample_intermediate_size
+        )
         self.spatial_projection.set_sample_config(sample_intermediate_size)
-        self.channel_projection_out.set_sample_config(sample_hidden_size, sample_intermediate_size)
+        self.channel_projection_out.set_sample_config(
+            sample_hidden_size, sample_intermediate_size
+        )
 
         if self.attention is not None:
-            self.attention.set_sample_config(config) 
-    
+            self.attention.set_sample_config(config)
+
     def get_active_subnet(self, config):
         sublayer = BertDense(config)
-        sublayer.channel_projection_in = self.channel_projection_in.get_active_subnet() 
-        sublayer.spatial_projection  = self.spatial_projection.get_active_subnet()
-        sublayer.channel_projection_out = self.channel_projection_out.get_active_subnet() 
-        
-        if self.attention is not None: 
+        sublayer.channel_projection_in = self.channel_projection_in.get_active_subnet()
+        sublayer.spatial_projection = self.spatial_projection.get_active_subnet()
+        sublayer.channel_projection_out = (
+            self.channel_projection_out.get_active_subnet()
+        )
+
+        if self.attention is not None:
             sublayer.attention.get_active_subnet(config)
 
     def forward(
@@ -646,14 +666,14 @@ class BertDense(nn.Module):
         encoder_attention_mask=None,
         past_key_value=None,
         output_attentions=False,
-        ):
-        
+    ):
+
         gate_res = self.attention(hidden_states) if self.attention is not None else None
 
         x = self.channel_projection_in(hidden_states)
-        x = self.spatial_projection(x, gate_res = gate_res)
+        x = self.spatial_projection(x, gate_res=gate_res)
         x = self.channel_projection_out(x)
-        
+
         return x
 
 
@@ -1191,6 +1211,13 @@ class BertLayer(nn.Module):
         super().__init__()
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
+        self.use_bottleneck = config.mixing == "bert-bottleneck"
+        if self.use_bottleneck:
+            # TODO: add initializer to the linear layer
+            self.input_bottleneck = CustomLinear(config.hidden_size, config.hidden_size)
+            self.output_bottleneck = CustomLinear(
+                config.hidden_size, config.hidden_size
+            )
         self.attention = BertAttention(config)
         self.is_decoder = config.is_decoder
         self.add_cross_attention = config.add_cross_attention
@@ -1208,6 +1235,14 @@ class BertLayer(nn.Module):
             self.is_identity_layer = True
             return
         self.is_identity_layer = False
+        if self.use_bottleneck:
+            self.input_bottleneck.set_sample_config(
+                config.hidden_size, config.sample_hidden_size
+            )
+            self.output_bottleneck.set_sample_config(
+                config.sample_hidden_size,
+                config.hidden_size,
+            )
         self.attention.set_sample_config(config)
         if hasattr(self, "crossattention"):
             self.crossattention.set_sample_config(config)
@@ -1220,6 +1255,10 @@ class BertLayer(nn.Module):
         sublayer.attention.self.set_sample_config(
             config
         )  ## Just to access those variables
+
+        if self.use_bottleneck:
+            sublayer.input_bottleneck = self.input_bottleneck.get_active_subnet()
+            sublayer.output_bottleneck = self.output_bottleneck.get_active_subnet()
 
         sublayer.attention = self.attention.get_active_subnet(config)
 
@@ -1246,6 +1285,8 @@ class BertLayer(nn.Module):
             # print("Returning without any operations")
             return (hidden_states, None, None)
 
+        if self.use_bottleneck:
+            hidden_states = self.bottleneck(hidden_states)
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
             past_key_value[:2] if past_key_value is not None else None
@@ -1302,6 +1343,10 @@ class BertLayer(nn.Module):
             self.seq_len_dim,
             attention_output,
         )
+
+        if self.use_bottleneck:
+            layer_output = self.output_bottleneck(layer_output)
+
         outputs = (layer_output,) + outputs
 
         # if decoder, return the attn key/values as the last output
@@ -1320,7 +1365,7 @@ class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        if config.mixing == "attention":
+        if config.mixing == "attention" or config.mixing == "bert-bottleneck":
             layer_function = BertLayer
         elif config.mixing == "gmlp":
             layer_function = BertDense
@@ -1328,6 +1373,8 @@ class BertEncoder(nn.Module):
             layer_function = BertFNet
         else:
             raise NotImplementedError(f"{config.mixing} is currently not implemented")
+
+        self.use_bottleneck = config.mixing == "bert-bottleneck"
 
         self.layer = nn.ModuleList(
             [layer_function(config) for _ in range(config.num_hidden_layers)]
@@ -1351,6 +1398,9 @@ class BertEncoder(nn.Module):
                 self.layer
             )
 
+        if self.use_bottleneck:
+            sample_hidden_size = config.sample_num_attention_heads
+
         for i, layer in enumerate(self.layer):
             layer_config = deepcopy(config)
 
@@ -1359,6 +1409,9 @@ class BertEncoder(nn.Module):
                 layer_config.sample_num_attention_heads = (
                     sample_num_attention_heads_list[i]
                 )
+                if self.use_bottleneck:
+                    # for bert-bottleneck, use diff hidden size for each layer
+                    layer_config.sample_hidden_size = sample_hidden_size[i]
                 layer.set_sample_config(layer_config, is_identity_layer=False)
             else:
                 layer.set_sample_config(layer_config, is_identity_layer=True)
@@ -1524,10 +1577,13 @@ class BertPredictionHeadTransform(nn.Module):
         )
 
     def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        if config.mixing == "bert-bottleneck":
+            sample_hidden_size = config.hidden_size
         self.dense.set_sample_config(
-            config.sample_hidden_size, config.sample_hidden_size
+            sample_hidden_size, sample_hidden_size
         )
-        self.LayerNorm.set_sample_config(config.sample_hidden_size)
+        self.LayerNorm.set_sample_config(sample_hidden_size)
 
     def get_active_subnet(self, config):
         subnet = BertPredictionHeadTransform(config)
@@ -1559,8 +1615,12 @@ class BertLMPredictionHead(nn.Module):
         self.decoder.bias = self.bias
 
     def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        if config.mixing == "bert-bottleneck":
+            sample_hidden_size = config.hidden_size
+
         self.transform.set_sample_config(config)
-        self.decoder.set_sample_config(config.sample_hidden_size, config.vocab_size)
+        self.decoder.set_sample_config(sample_hidden_size, config.vocab_size)
 
     def get_active_subnet(self, config):
         subnet = BertLMPredictionHead(config)
