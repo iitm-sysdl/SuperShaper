@@ -1399,7 +1399,7 @@ class BertEncoder(nn.Module):
             )
 
         if self.use_bottleneck:
-            sample_hidden_size = config.sample_num_attention_heads
+            sample_hidden_size = config.sample_hidden_size
 
         for i, layer in enumerate(self.layer):
             layer_config = deepcopy(config)
