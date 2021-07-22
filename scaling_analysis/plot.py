@@ -81,7 +81,7 @@ fig.add_trace(
 )
 
 ### For the Super-transformer Perplexities ###
-ikd_params = [108 * (10 ** 6)]
+ikd_params = [130 * (10 ** 6)]
 
 ikd_per = [3.625]
 biased_per = [5.6]
