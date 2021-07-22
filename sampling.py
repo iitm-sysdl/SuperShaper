@@ -227,7 +227,6 @@ class Sampler:
             config_dict = {
                 "sample_num_attention_heads": [],
                 "sample_intermediate_size": [],
-                "sample_intra_bottleneck_size": [],
                 # we need to have diff hiddensizes for every layer
                 "sample_hidden_size": [],
             }
@@ -269,7 +268,7 @@ class Sampler:
                                     config_dict[key] = config_dict[key][:-1]
                                 continue
 
-                    break
+                break
 
         for key in config_dict.keys():
             setattr(config, key, config_dict[key])

@@ -798,7 +798,7 @@ def main():
 
         identity = torch.eye(global_config.true_hidden_size)
         zero_bias = (
-            torch.zeros(global_config.true_hidden_size) + global_config.layer_norm_eps
+            torch.zeros(global_config.true_hidden_size)
         )
         for key in model.state_dict().keys():
             if (
@@ -810,30 +810,26 @@ def main():
                 "bottleneck.output.dense.bias" in key
                 or "output.bottleneck.dense.bias" in key
             ):
-                model.state_dict()[key].data.copy_(zero_bias)
+                model.state_dict()[key].data.zero_()
 
         logger.info("MobileBert Initiliazed with bert-base")
 
-    elif args.mixing == 'bert-bottleneck':
-        model = custom_bert.BertForMaskedLM.from_pretrained("bert-base-cased", config=global_config)
+    elif args.mixing == "bert-bottleneck":
+        model = custom_bert.BertForMaskedLM.from_pretrained(
+            "bert-base-cased", config=global_config
+        )
 
-        identity = torch.eye(global_config.true_hidden_size)
+        identity = torch.eye(global_config.hidden_size)
         zero_bias = (
-            torch.zeros(global_config.true_hidden_size) + global_config.layer_norm_eps
+            torch.zeros(global_config.hidden_size) + global_config.layer_norm_eps
         )
 
         for key in model.state_dict().keys():
-            if (
-                "input_bottleneck.weight" in key
-                or "output_bottleneck.weight" in key
-            ):
+            if "input_bottleneck.weight" in key or "output_bottleneck.weight" in key:
                 model.state_dict()[key].data.copy_(identity)
-            elif (
-                "input_bottleneck.bias" in key
-                or "output_bottleneck.bias" in key
-            ):
+            elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
                 model.state_dict()[key].data.copy_(zero_bias)
-        
+
         logger.info("BERT-Bottleneck Initiliazed with BERT-base")
 
     elif args.inplace_distillation or args.sampling_type == "none":

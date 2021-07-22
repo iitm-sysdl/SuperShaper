@@ -1580,9 +1580,7 @@ class BertPredictionHeadTransform(nn.Module):
         sample_hidden_size = config.sample_hidden_size
         if config.mixing == "bert-bottleneck":
             sample_hidden_size = config.hidden_size
-        self.dense.set_sample_config(
-            sample_hidden_size, sample_hidden_size
-        )
+        self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
         self.LayerNorm.set_sample_config(sample_hidden_size)
 
     def get_active_subnet(self, config):
