@@ -27,7 +27,6 @@ import os
 import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
-
 import torch
 
 # https://discuss.pytorch.org/t/attributeerror-builtin-function-or-method-object-has-no-attribute-fftn/109744
@@ -70,7 +69,8 @@ from custom_layers.custom_embedding import CustomEmbedding
 from custom_layers.custom_linear import CustomLinear
 from custom_layers.custom_layernorm import CustomLayerNorm, CustomNoNorm
 from copy import deepcopy
-from utils import CrossEntropyLossSoft
+from loss import CrossEntropyLossSoft
+from loss import *
 
 logger = logging.get_logger(__name__)
 
@@ -2329,7 +2329,7 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         self.bert = BertModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
-
+        self.config = config
         self.init_weights()
 
     def set_sample_config(self, config):
@@ -2407,7 +2407,11 @@ class BertForMaskedLM(BertPreTrainedModel):
         masked_lm_loss = None
         if labels is not None:
             if use_soft_loss:
-                loss_fct = CrossEntropyLossSoft()
+                if self.config.alpha_divergence:
+                    loss_fct = AdaptiveLossSoft(self.config.alpha_min, self.config.alpha_max, self.config.beta_clip)
+                else:
+                    loss_fct = CrossEntropyLossSoft()
+
                 masked_lm_loss = loss_fct(
                     prediction_scores.view(-1, self.config.vocab_size),
                     labels.view(-1, self.config.vocab_size),

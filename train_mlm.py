@@ -63,7 +63,7 @@ from custom_layers import custom_bert, custom_mobile_bert
 import plotly.graph_objects as go
 from more_itertools import unique_everseen
 from utils import count_parameters, check_path, get_current_datetime
-
+from loss import *
 import transformers
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 
@@ -433,6 +433,36 @@ def parse_args():
         default=0,
         help=f"Conditional layerwise attention and feature map transfer for in-place distillation",
     )
+
+    parser.add_argument(
+        "--alpha_divergence", 
+        type=bool,
+        default=False,
+        help=f"Enable Alpha Divergence KL loss",
+    )
+
+    parser.add_argument(
+        "--alpha_min", 
+        type=float, 
+        default=-1,
+        help=f"Alpha min value", 
+    )
+
+    parser.add_argument(
+        "--alpha_max",
+        type=float,
+        default=1,
+        help=f"Alpha max value",
+    )
+
+    parser.add_argument(
+        "--beta_clip",
+        type=float,
+        default=5,        
+        help=f"The clip value for alpha divergence", 
+        )
+
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -443,6 +473,9 @@ def parse_args():
     # Sanity checks
 
     if args.layerwise_distillation:
+        assert args.inplace_distillation
+
+    if args.alpha_divergence:
         assert args.inplace_distillation
 
     if args.inplace_distillation == 1:
@@ -671,6 +704,13 @@ def main():
         # for attention transfer and feature transfer enable these.
         global_config.output_attentions = True
         global_config.output_hidden_states = True
+
+    global_config.alpha_divergence = args.alpha_divergence
+
+    if args.alpha_divergence:
+        global_config.alpha_min = args.alpha_min
+        global_config.alpha_max = args.alpha_max
+        global_config.beta_clip = args.beta_clip
 
     # TODO: decouple mixing and mobilebert model declarato
     if args.mixing == "mobilebert":
@@ -1166,7 +1206,7 @@ def main():
                 loss = outputs.loss
 
                 if args.inplace_distillation:
-
+                    
                     (
                         smallest_student_loss,
                         smallest_student_losses_dict,
