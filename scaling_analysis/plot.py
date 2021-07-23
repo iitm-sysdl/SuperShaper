@@ -29,7 +29,19 @@ random["config"] = random["config"].map(convert_to_dict)
 
 
 params_lst = []
+hover_templates = [] 
 # model = BertForMaskedLM(config=ikd["config"][0])
+
+sampling_dimensions = [
+       "sample_hidden_size",
+       "sample_num_attention_heads",
+       "sample_intermediate_size",
+       "sample_num_hidden_layers",
+   ]
+
+hidden_size_lst = []
+inter_lst = []
+hidden_layers_lst = []
 
 for index, row in tqdm(ikd.iterrows()):
     config = row["config"]
@@ -39,15 +51,43 @@ for index, row in tqdm(ikd.iterrows()):
     params = calculate_params_from_config(config)
     params_lst.append(params)
 
+    hidden_size_lst.append(getattr(config,"sample_hidden_size"))
+    hidden_layers_lst.append(getattr(config, "sample_num_hidden_layers"))
+
+    hover_templates.append(
+           "<br>".join(
+               [
+                   f"{key}: {getattr(config, key)}"
+                   for key in sampling_dimensions
+               ]
+           )
+       )
+
+config_dict = {"sample_hidden_size": 768,
+                      "sample_num_attention_heads": 12,
+                      "sample_intermediate_size": 3072,
+                      "sample_num_hidden_layers": 12,
+              }
+
+
+hover_templates_global = [
+            "<br>".join(
+                [
+                    f"{key}: {config_dict[key]}"
+                    for key in config_dict
+                ]
+            )
+        ]
+
 
 ikd["params"] = params_lst
 biased["params"] = params_lst
 random["params"] = params_lst
 
 
-ikd.to_csv("attention_best_ikd.csv", index=False)
-biased.to_csv("attention_best_biased.csv", index=False)
-random.to_csv("attention_best_random.csv", index=False)
+#ikd.to_csv("attention_best_ikd.csv", index=False)
+#biased.to_csv("attention_best_biased.csv", index=False)
+#random.to_csv("attention_best_random.csv", index=False)
 
 
 fig = go.Figure()  # create a plotly figure
@@ -57,7 +97,10 @@ fig.add_trace(
         x=ikd["params"].tolist(),
         y=ikd["perplexity"].tolist(),
         mode="markers",
+        hovertext=hover_templates,
+        marker=dict(size=4),# color=hidden_layers_lst),
         # font_size=15,
+        opacity=1,
         name="Biased Sampling+IKD",
     )
 )
@@ -66,7 +109,11 @@ fig.add_trace(
         x=biased["params"].tolist(),
         y=biased["perplexity"].tolist(),
         mode="markers",
+        hovertext=hover_templates,
+        marker=dict(size=4),# color=hidden_layers_lst),
+
         # font_size=15,
+        opacity=1,
         name="Biased Sampling",
     )
 )
@@ -75,6 +122,9 @@ fig.add_trace(
         x=random["params"].tolist(),
         y=random["perplexity"].tolist(),
         mode="markers",
+        hovertext=hover_templates,
+        marker=dict(size=4),# color=hidden_layers_lst),
+        opacity=1,
         # font_size=15,
         name="Random Sampling",
     )
@@ -93,7 +143,8 @@ fig.add_trace(
         y=ikd_per,
         mode="markers",
         marker_symbol="star",
-        # font_size=18,
+        hovertext = hover_templates_global,
+        marker=dict(size=15),
         name="Biased Sampling+IKD Super",
     )
 )
@@ -103,7 +154,8 @@ fig.add_trace(
         y=biased_per,
         mode="markers",
         marker_symbol="star",
-        # font_size=18,
+        hovertext = hover_templates_global,
+        marker=dict(size=15),
         name="Biased Sampling Super",
     )
 )
@@ -113,7 +165,8 @@ fig.add_trace(
         y=random_per,
         mode="markers",
         marker_symbol="star",
-        # font_size=18,
+        hovertext = hover_templates_global,
+        marker=dict(size=15),
         name="Random Sampling Super",
     )
 )
@@ -121,4 +174,4 @@ fig.add_trace(
 fig.update_layout(xaxis_title="Parameters", yaxis_title="Perplexity")
 
 fig.show()
-fig.write_image("spread_pareto.pdf")
+fig.write_image("spread_pareto.html")
