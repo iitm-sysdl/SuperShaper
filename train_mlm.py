@@ -26,7 +26,7 @@ import wandb
 import plotly.express as px
 from datetime import datetime
 from collections import defaultdict, OrderedDict as OD
-
+import loss
 
 import numpy as np
 import datasets
@@ -507,114 +507,6 @@ def parse_args():
     assert args.k_sampling > 0
 
     return args
-
-
-def compute_layerwise_distillation(
-    teacher_hidden_states,
-    student_hidden_states,
-    teacher_attention_maps,
-    student_attention_maps,
-    track_layerwise_loss=False,
-):
-
-    student_fkt = 0.0
-    student_akt = 0.0
-    if track_layerwise_loss:
-        layer_wise_fkt = []
-        layer_wise_akt = []
-    else:
-        layer_wise_fkt = None
-        layer_wise_akt = None
-
-    non_trainable_layernorm = nn.LayerNorm(
-        teacher_hidden_states[-1].shape[1:], elementwise_affine=False
-    )
-    for teacher_hidden, student_hidden in zip(
-        teacher_hidden_states, student_hidden_states
-    ):
-        teacher_hidden = non_trainable_layernorm(teacher_hidden.detach())
-        student_hidden = non_trainable_layernorm(student_hidden)
-        fkt = nn.MSELoss()(teacher_hidden, student_hidden)
-        student_fkt = student_fkt + fkt
-        if track_layerwise_loss:
-            layer_wise_fkt.append(fkt)
-
-    for (teacher_attention, student_attention) in zip(
-        teacher_attention_maps, student_attention_maps
-    ):
-        # attentions are aleready in probabilities, hence no softmax
-        student_attention = student_attention.clamp(min=1e-4).log()
-        student_kl = -(teacher_attention.detach() * student_attention)
-        akt = torch.mean(torch.sum(student_kl, axis=-1))
-        student_akt = student_akt + akt
-        if track_layerwise_loss:
-            layer_wise_akt.append(akt)
-
-    return student_akt, student_fkt, layer_wise_akt, layer_wise_fkt
-
-
-def compute_student_loss(
-    model,
-    batch,
-    teacher_hidden_states,
-    teacher_attention_maps,
-    args,
-    track_layerwise_loss=False,
-):
-
-    outputs = model(**batch, use_soft_loss=True)
-    loss = outputs.loss
-    student_hidden_states = outputs.hidden_states
-    student_attention_maps = outputs.attentions
-
-    student_mlm_loss = loss
-    student_mlm_loss = student_mlm_loss / args.gradient_accumulation_steps
-
-    overall_loss = student_mlm_loss
-
-    losses = {
-        "overall_loss": overall_loss,
-        "student_distill_loss": 0,
-        "student_mlm_loss": student_mlm_loss,
-        "student_feature_knowledge_transfer_loss": 0,
-        "student_attention_knowledge_transfer_loss": 0,
-        "layer_wise_akt": [],
-        "layer_wise_fkt": [],
-    }
-
-    if args.layerwise_distillation:
-        (
-            student_akt,
-            student_fkt,
-            layer_wise_akt,
-            layer_wise_fkt,
-        ) = compute_layerwise_distillation(
-            # the official mobilbeBert repo skips the first layer
-            # teacher_hidden_states[1:],
-            # student_hidden_states[1:],
-            # teacher_attention_maps[1:],
-            # student_attention_maps[1:],
-            teacher_hidden_states,
-            student_hidden_states,
-            teacher_attention_maps,
-            student_attention_maps,
-            track_layerwise_loss=track_layerwise_loss,
-        )
-
-        student_distill_loss = 0.5 * student_fkt + 0.5 * student_akt
-        student_distill_loss = student_distill_loss / args.gradient_accumulation_steps
-
-        overall_loss = overall_loss + student_distill_loss
-
-        losses["overall_loss"] = overall_loss
-        losses["student_distill_loss"] = student_distill_loss
-        losses["student_feature_knowledge_transfer_loss"] = student_fkt
-        losses["student_attention_knowledge_transfer_loss"] = student_akt
-        losses["layer_wise_akt"] = layer_wise_akt
-        losses["layer_wise_fkt"] = layer_wise_fkt
-
-    return overall_loss, losses
-
 
 def main():
     args = parse_args()
@@ -1241,48 +1133,75 @@ def main():
 
             track_loss = step % args.logging_steps == 0 and step > 0
 
-            if args.inplace_distillation:
+            ### Applying Sandwich Rule ###
+            if args.sampling_rule == "sandwich":
 
-                # supertransformer
+                ## Sample Supertransformer
                 model.set_sample_config(global_config)
                 outputs = model(**batch)
                 loss = outputs.loss
-                teacher_hidden_states = outputs.hidden_states
-                teacher_attention_maps = outputs.attentions
 
                 teacher_mlm_loss = loss
-                teacher_mlm_loss = teacher_mlm_loss / args.gradient_accumulation_steps
-
-                # logger.info(f"Teacher_mlm_loss: {teacher_mlm_loss}")
-
+                teacher_mlm_loss = teacher_mlm_loss / args.gradient_accum_steps
                 accelerator.backward(teacher_mlm_loss)
-                # logits are of shape batch_size, sequence_length, config.vocab_size
-                # hence applying softmanx to last dim
-                soft_targets = torch.nn.functional.softmax(
-                    outputs.logits.detach(), dim=-1
-                )
 
-                # replace the labels in our batch to soft_targets
-                batch["labels"] = soft_targets
+                if args.inplace_distillation:
+                    teacher_hidden_states = outputs.hidden_states
+                    teacher_attention_maps = outputs.attentions
 
+                    # logits are of shape batch_size, sequence_length, config.vocab_size
+                    # hence applying softmanx to last dim
+                    soft_targets = torch.nn.functional.softmax(
+                        outputs.logits.detach(), dim=-1
+                    )
+
+                    # replace the labels in our batch to soft_targets
+                    batch["labels"] = soft_targets
+
+
+
+                ## Sample Smallest Subtransformer
                 model.set_sample_config(super_config_small)
-                (
-                    smallest_student_loss,
-                    smallest_student_losses_dict,
-                ) = compute_student_loss(
-                    model,
-                    batch,
-                    teacher_hidden_states,
-                    teacher_attention_maps,
-                    args,
-                    track_layerwise_loss=track_loss,
-                )
+                outputs = model(**batch)
+                loss = outputs.loss
+
+                if args.inplace_distillation:
+
+                    (
+                        smallest_student_loss,
+                        smallest_student_losses_dict,
+                    ) = compute_student_loss(
+                        model,
+                        batch,
+                        teacher_hidden_states,
+                        teacher_attention_maps,
+                        args,
+                        track_layerwise_loss=track_loss,
+                    )
+                else:
+
+                    smallest_mlm_loss = loss
+                    smallest_mlm_loss = (
+                        smallest_mlm_loss / args.gradient_accumulation_steps
+                    )
+                
                 accelerator.backward(smallest_student_loss)
 
-                for idx in range(args.pop_size):
+            ## Sample "n" subtransformers based on sampling_type: random, biased-params, etc.
+            ## This happens regardless of sandwich rule is applied or not! Allows for Conventional Sampling
+            
+            for idx in range(args.pop_size):
+
+                if args.sampling_type != "none":
                     super_config = super_configs[idx]
                     model.set_sample_config(super_config)
-                    (
+
+                outputs = model(**batch)
+                loss = outputs.loss
+                
+                if args.inplace_distillation:
+
+                   (
                         sampled_student_loss,
                         sampled_student_losses_dict,
                     ) = compute_student_loss(
@@ -1293,47 +1212,11 @@ def main():
                         args,
                         track_layerwise_loss=track_loss,
                     )
-                    accelerator.backward(sampled_student_loss)
+                else:
+                    sampled_student_loss = loss / args.gradient_accumulation_steps
 
-                # gradient clipping
-                # accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+                accelerator.backward(sampled_student_loss)
 
-            else:
-                if args.sampling_rule == "sandwich":
-
-                    # supertransformer
-                    model.set_sample_config(global_config)
-                    outputs = model(**batch)
-                    loss = outputs.loss
-                    teacher_mlm_loss = loss
-                    teacher_mlm_loss = (
-                        teacher_mlm_loss / args.gradient_accumulation_steps
-                    )
-
-                    accelerator.backward(teacher_mlm_loss)
-
-                    # smallest subtransformer
-                    model.set_sample_config(super_config_small)
-                    outputs = model(**batch)
-                    loss = outputs.loss
-                    smallest_mlm_loss = loss
-                    smallest_mlm_loss = (
-                        smallest_mlm_loss / args.gradient_accumulation_steps
-                    )
-
-                    accelerator.backward(smallest_mlm_loss)
-
-                # random_subtransformers
-                for idx in range(args.pop_size):
-
-                    if args.sampling_type != "none":
-                        super_config = super_configs[idx]
-                        model.set_sample_config(super_config)
-
-                    outputs = model(**batch)
-                    loss = outputs.loss
-                    loss = loss / args.gradient_accumulation_steps
-                    accelerator.backward(loss)
 
             if (
                 step % args.gradient_accumulation_steps == 0
