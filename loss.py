@@ -1,10 +1,10 @@
-import torch 
+import torch
 import torch.nn as nn
 from torch.nn.modules.loss import _Loss
 
 
-
 def compute_layerwise_distillation(
+    args,
     teacher_hidden_states,
     student_hidden_states,
     teacher_attention_maps,
@@ -36,13 +36,12 @@ def compute_layerwise_distillation(
 
     loss_alpha_div = AdaptiveLossSoft(args.alpha_min, args.alpha_max, args.beta_clip)
 
-
     for (teacher_attention, student_attention) in zip(
         teacher_attention_maps, student_attention_maps
     ):
         # attentions are already in probabilities, hence no softmax
         if args.alpha_divergence:
-            #TODO - Check if the reduction is mean or sum
+            # TODO - Check if the reduction is mean or sum
             student_akt = loss_alpha_div(teacher_attention, student_attention)
         else:
             student_attention = student_attention.clamp(min=1e-4).log()
@@ -57,15 +56,14 @@ def compute_layerwise_distillation(
 
 
 def compute_student_loss(
-    model,
-    batch,
+    outputs,
     teacher_hidden_states,
     teacher_attention_maps,
     args,
     track_layerwise_loss=False,
 ):
 
-    outputs = model(**batch, use_soft_loss=True)
+    # outputs = model(**batch, use_soft_loss=True)
     loss = outputs.loss
     student_hidden_states = outputs.hidden_states
     student_attention_maps = outputs.attentions
@@ -97,6 +95,7 @@ def compute_student_loss(
             # student_hidden_states[1:],
             # teacher_attention_maps[1:],
             # student_attention_maps[1:],
+            args,
             teacher_hidden_states,
             student_hidden_states,
             teacher_attention_maps,
@@ -118,13 +117,16 @@ def compute_student_loss(
 
     return overall_loss, losses
 
+
 ## Alpha Divergence loss codes adapted from https://github.com/facebookresearch/AlphaNet ##
 def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=True):
     assert isinstance(alpha, float)
     if logits:
         q_prob = torch.nn.functional.softmax(q_logits, dim=1).detach()
         p_prob = torch.nn.functional.softmax(p_logits, dim=1).detach()
-        q_log_prob = torch.nn.functional.log_softmax(q_logits, dim=1) #gradient is only backpropagated here
+        q_log_prob = torch.nn.functional.log_softmax(
+            q_logits, dim=1
+        )  # gradient is only backpropagated here
     else:
         q_prob = q_logits.detach()
         p_prob = p_logits.detach()
@@ -147,14 +149,17 @@ def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=True):
         f_base = 1.0 / alpha / (alpha - 1.0)
         rho_f = iw_alpha / alpha + f_base
 
-    loss = torch.sum(q_prob * (f - f_base), dim=1) 
+    loss = torch.sum(q_prob * (f - f_base), dim=1)
     grad_loss = -torch.sum(q_prob * rho_f * q_log_prob, dim=1)
     return loss, grad_loss
 
+
 """
-It's often necessary to clip the maximum 
+It's often necessary to clip the maximum
 gradient value (e.g., 1.0) when using this adaptive KD loss
 """
+
+
 class AdaptiveLossSoft(torch.nn.modules.loss._Loss):
     def __init__(self, alpha_min=-1.0, alpha_max=1.0, iw_clip=5.0, logits=True):
         super(AdaptiveLossSoft, self).__init__()
@@ -166,18 +171,23 @@ class AdaptiveLossSoft(torch.nn.modules.loss._Loss):
     def forward(self, output, target, alpha_min=None, alpha_max=None):
         alpha_min = alpha_min or self.alpha_min
         alpha_max = alpha_max or self.alpha_max
-        
-        loss_left, grad_loss_left = f_divergence(output, target, alpha_min, iw_clip=self.iw_clip, logits=self.logits)
-        loss_right, grad_loss_right = f_divergence(output, target, alpha_max, iw_clip=self.iw_clip, logits=self.logits)
+
+        loss_left, grad_loss_left = f_divergence(
+            output, target, alpha_min, iw_clip=self.iw_clip, logits=self.logits
+        )
+        loss_right, grad_loss_right = f_divergence(
+            output, target, alpha_max, iw_clip=self.iw_clip, logits=self.logits
+        )
 
         ind = torch.gt(loss_left, loss_right).float()
         loss = ind * grad_loss_left + (1.0 - ind) * grad_loss_right
 
-        if self.reduction == 'mean':
+        if self.reduction == "mean":
             return loss.mean()
-        elif self.reduction == 'sum':
+        elif self.reduction == "sum":
             return loss.sum()
         return loss
+
 
 def ce_soft(pred, soft_target):
     logsoftmax = nn.LogSoftmax()

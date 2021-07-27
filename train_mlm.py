@@ -435,33 +435,32 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--alpha_divergence", 
-        type=bool,
-        default=False,
+        "--alpha_divergence",
+        type=int,
+        default=0,
         help=f"Enable Alpha Divergence KL loss",
     )
 
     parser.add_argument(
-        "--alpha_min", 
-        type=float, 
-        default=-1,
-        help=f"Alpha min value", 
+        "--alpha_min",
+        type=float,
+        default=-1.0,
+        help=f"Alpha min value",
     )
 
     parser.add_argument(
         "--alpha_max",
         type=float,
-        default=1,
+        default=1.0,
         help=f"Alpha max value",
     )
 
     parser.add_argument(
         "--beta_clip",
         type=float,
-        default=5,        
-        help=f"The clip value for alpha divergence", 
-        )
-
+        default=5.0,
+        help=f"The clip value for alpha divergence",
+    )
 
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
@@ -540,6 +539,7 @@ def parse_args():
     assert args.k_sampling > 0
 
     return args
+
 
 def main():
     args = parse_args()
@@ -1096,7 +1096,7 @@ def main():
 
     best_val_perplexity = 1000000
     logger.info("=============================")
-    logger.info(f"Statring training from epoch {completed_epochs}")
+    logger.info(f"Starting training from epoch {completed_epochs}")
     logger.info(f"Training till epoch  {args.num_train_epochs}")
     logger.info("=============================")
 
@@ -1186,6 +1186,7 @@ def main():
                 accelerator.backward(teacher_mlm_loss)
 
                 if args.inplace_distillation:
+
                     teacher_hidden_states = outputs.hidden_states
                     teacher_attention_maps = outputs.attentions
 
@@ -1198,55 +1199,51 @@ def main():
                     # replace the labels in our batch to soft_targets
                     batch["labels"] = soft_targets
 
-
-
                 ## Sample Smallest Subtransformer
                 model.set_sample_config(super_config_small)
-                outputs = model(**batch)
+                outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
 
                 if args.inplace_distillation:
-                    
+
                     (
                         smallest_student_loss,
                         smallest_student_losses_dict,
                     ) = compute_student_loss(
-                        model,
-                        batch,
+                        outputs,
                         teacher_hidden_states,
                         teacher_attention_maps,
                         args,
                         track_layerwise_loss=track_loss,
                     )
                 else:
-
-                    smallest_mlm_loss = loss
-                    smallest_mlm_loss = (
-                        smallest_mlm_loss / args.gradient_accumulation_steps
+                    # TODO: Terminology consistency needs to be maintained - technically not a student!
+                    smallest_student_loss = loss
+                    smallest_student_loss = (
+                        smallest_student_loss / args.gradient_accumulation_steps
                     )
-                
+
                 accelerator.backward(smallest_student_loss)
 
             ## Sample "n" subtransformers based on sampling_type: random, biased-params, etc.
             ## This happens regardless of sandwich rule is applied or not! Allows for Conventional Sampling
-            
+
             for idx in range(args.pop_size):
 
                 if args.sampling_type != "none":
                     super_config = super_configs[idx]
                     model.set_sample_config(super_config)
 
-                outputs = model(**batch)
+                outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
-                
+
                 if args.inplace_distillation:
 
-                   (
+                    (
                         sampled_student_loss,
                         sampled_student_losses_dict,
                     ) = compute_student_loss(
-                        model,
-                        batch,
+                        outputs,
                         teacher_hidden_states,
                         teacher_attention_maps,
                         args,
@@ -1256,7 +1253,6 @@ def main():
                     sampled_student_loss = loss / args.gradient_accumulation_steps
 
                 accelerator.backward(sampled_student_loss)
-
 
             if (
                 step % args.gradient_accumulation_steps == 0
@@ -1275,15 +1271,15 @@ def main():
                             wandb.log(
                                 {
                                     "Supertransformer mlm loss": teacher_mlm_loss.item(),
-                                    "Smallest mlm loss": smallest_mlm_loss.item(),
-                                    "Subtransformer mlm loss": loss.item(),
+                                    "Smallest mlm loss": smallest_student_loss.item(),
+                                    "Subtransformer mlm loss": sampled_student_loss.item(),
                                 }
                             )
                         else:
 
                             wandb.log(
                                 {
-                                    "Subtransformer mlm loss": loss.item(),
+                                    "Subtransformer mlm loss": sampled_student_loss.item(),
                                 }
                             )
                     else:

@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.nn.modules.loss import _Loss
 from collections import OrderedDict
 
+
 def flatten_list(nested_list):
     """Flatten an arbitrarily nested list, without recursion (to avoid
     stack overflows). Returns a new list, the original list is unchanged.
@@ -114,6 +115,3 @@ def check_path(path, error_message_template="Specified path - {} does not exist"
 
 def get_current_datetime():
     return datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
-
-
-
