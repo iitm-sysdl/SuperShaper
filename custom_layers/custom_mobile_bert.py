@@ -61,8 +61,8 @@ from custom_layers.custom_linear import CustomLinear
 from custom_layers.custom_layernorm import CustomLayerNorm, CustomNoNorm
 from custom_layers.custom_bert import BertEmbeddings
 from copy import deepcopy
-from utils import CrossEntropyLossSoft
-
+from loss import CrossEntropyLossSoft
+from loss import *
 
 logger = logging.get_logger(__name__)
 

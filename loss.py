@@ -1,3 +1,9 @@
+import torch 
+import torch.nn as nn
+from torch.nn.modules.loss import _Loss
+
+
+
 def compute_layerwise_distillation(
     teacher_hidden_states,
     student_hidden_states,
@@ -149,8 +155,8 @@ def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=True):
 It's often necessary to clip the maximum 
 gradient value (e.g., 1.0) when using this adaptive KD loss
 """
-class AdaptiveLossSoft(torch.nn.modules.loss._Loss, logits=True):
-    def __init__(self, alpha_min=-1.0, alpha_max=1.0, iw_clip=5.0):
+class AdaptiveLossSoft(torch.nn.modules.loss._Loss):
+    def __init__(self, alpha_min=-1.0, alpha_max=1.0, iw_clip=5.0, logits=True):
         super(AdaptiveLossSoft, self).__init__()
         self.alpha_min = alpha_min
         self.alpha_max = alpha_max
