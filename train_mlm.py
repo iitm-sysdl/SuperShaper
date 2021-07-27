@@ -1182,7 +1182,7 @@ def main():
                 loss = outputs.loss
 
                 teacher_mlm_loss = loss
-                teacher_mlm_loss = teacher_mlm_loss / args.gradient_accum_steps
+                teacher_mlm_loss = teacher_mlm_loss / args.gradient_accumulation_steps
                 accelerator.backward(teacher_mlm_loss)
 
                 if args.inplace_distillation:
