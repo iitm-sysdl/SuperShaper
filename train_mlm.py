@@ -585,8 +585,11 @@ def main():
         str_name += "_ip_distill"
         if args.layerwise_distillation:
             str_name += "_layerwise_distill"
+        if args.alpha_divergence:
+            str_name += "_alpha_div"
     else:
         str_name += "_pretraining"
+
     if accelerator.is_main_process:
         wandb.init(
             project="super-pretraining",
