@@ -182,6 +182,7 @@ class AdaptiveLossSoft(torch.nn.modules.loss._Loss):
         ind = torch.gt(loss_left, loss_right).float()
         loss = ind * grad_loss_left + (1.0 - ind) * grad_loss_right
 
+        # reduction is mean by default https://pytorch-enhance.readthedocs.io/en/latest/_modules/torch/nn/modules/loss.html
         if self.reduction == "mean":
             return loss.mean()
         elif self.reduction == "sum":
