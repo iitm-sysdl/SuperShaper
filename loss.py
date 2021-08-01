@@ -33,8 +33,10 @@ def compute_layerwise_distillation(
         student_fkt = student_fkt + fkt
         if track_layerwise_loss:
             layer_wise_fkt.append(fkt)
-
-    loss_alpha_div = AdaptiveLossSoft(args.alpha_min, args.alpha_max, args.beta_clip)
+    # the attention maps already have softmax applied, hence we pass logits = False
+    loss_alpha_div = AdaptiveLossSoft(
+        args.alpha_min, args.alpha_max, args.beta_clip, logits=False
+    )
 
     for (teacher_attention, student_attention) in zip(
         teacher_attention_maps, student_attention_maps
@@ -130,7 +132,7 @@ def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=True):
     else:
         q_prob = q_logits.detach()
         p_prob = p_logits.detach()
-        p_prob = p_prob.view(p_prob.shape[0], -1) ### Getting the correct view
+        p_prob = p_prob.view(p_prob.shape[0], -1)  ### Getting the correct view
         q_log_prob = q_logits.log()
 
     importance_ratio = p_prob / q_prob
@@ -198,13 +200,16 @@ def ce_soft(pred, soft_target):
 
 #  https://github.com/pytorch/pytorch/issues/11959
 class CrossEntropyLossSoft(_Loss):
-    def forward(self, preds, target, reduction="mean"):
+    def forward(self, preds, target_logits, reduction="mean"):
         """
         :param input: (batch, *)
         :param target: (batch, *) same shape as input, each item must be a valid distribution: target[i, :].sum() == 1.
         """
         logprobs = torch.nn.functional.log_softmax(
             preds.view(preds.shape[0], -1), dim=1
+        )
+        target = torch.nn.functional.softmax(
+            target_logits.view(target_logits.shape[0], -1).detach(), dim=1
         )
         batchloss = -torch.sum(target.view(target.shape[0], -1) * logprobs, dim=1)
         if reduction == "none":

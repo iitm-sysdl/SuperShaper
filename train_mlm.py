@@ -1194,13 +1194,10 @@ def main():
                     teacher_attention_maps = outputs.attentions
 
                     # logits are of shape batch_size, sequence_length, config.vocab_size
-                    # hence applying softmanx to last dim
-                    soft_targets = torch.nn.functional.softmax(
-                        outputs.logits.detach(), dim=-1
-                    )
+                    soft_logits = outputs.logits.detach()
 
                     # replace the labels in our batch to soft_targets
-                    batch["labels"] = soft_targets
+                    batch["labels"] = soft_logits
 
                 ## Sample Smallest Subtransformer
                 model.set_sample_config(super_config_small)

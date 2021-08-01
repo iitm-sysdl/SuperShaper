@@ -2408,7 +2408,12 @@ class BertForMaskedLM(BertPreTrainedModel):
         if labels is not None:
             if use_soft_loss:
                 if self.config.alpha_divergence:
-                    loss_fct = AdaptiveLossSoft(self.config.alpha_min, self.config.alpha_max, self.config.beta_clip,logits=False)
+                    loss_fct = AdaptiveLossSoft(
+                        self.config.alpha_min,
+                        self.config.alpha_max,
+                        self.config.beta_clip,
+                        logits=True, # both predictions and target are logits (non-softmaxed)
+                    )
                 else:
                     loss_fct = CrossEntropyLossSoft()
 
