@@ -241,7 +241,7 @@ def parse_args():
         type=str,
         required=True,
         help=f"specifies how to mix the tokens in bertlayers",
-        choices=["attention", "gmlp", "fnet", "mobilebert"],
+        choices=["attention", "gmlp", "fnet", "mobilebert", "bert-bottleneck"],
     )
     parser.add_argument(
         "--tiny_attn",
@@ -395,7 +395,7 @@ def main():
     #     logger.warning("You are instantiating a new config instance from scratch.")
 
     global_config = get_supertransformer_config(
-        args.model_name_or_path, tiny_attn=args.tiny_attn, mixing=args.mixing
+        args.model_name_or_path, mixing=args.mixing
     )
 
     if args.tokenizer_name:
@@ -631,9 +631,6 @@ def main():
         subtransformer_config = sampler.sample_subtransformer(
             randomize=True,
             rand_seed=_seed,
-            tiny_attn=False,
-            config=global_config,
-            sampling_type="random",
         )["random_subtransformers"][0]
         model.set_sample_config(subtransformer_config)
         eval_metric = validate_subtransformer(
