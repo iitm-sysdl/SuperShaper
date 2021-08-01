@@ -119,7 +119,7 @@ def compute_student_loss(
 
 
 ## Alpha Divergence loss codes adapted from https://github.com/facebookresearch/AlphaNet ##
-def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=False):
+def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=True):
     assert isinstance(alpha, float)
     if logits:
         q_prob = torch.nn.functional.softmax(q_logits, dim=1).detach()
@@ -130,6 +130,7 @@ def f_divergence(q_logits, p_logits, alpha, iw_clip=1e3, logits=False):
     else:
         q_prob = q_logits.detach()
         p_prob = p_logits.detach()
+        p_prob = p_prob.view(p_prob.shape[0], -1) ### Getting the correct view
         q_log_prob = q_logits.log()
 
     importance_ratio = p_prob / q_prob
@@ -161,7 +162,7 @@ gradient value (e.g., 1.0) when using this adaptive KD loss
 
 
 class AdaptiveLossSoft(torch.nn.modules.loss._Loss):
-    def __init__(self, alpha_min=-1.0, alpha_max=1.0, iw_clip=5.0, logits=False):
+    def __init__(self, alpha_min=-1.0, alpha_max=1.0, iw_clip=5.0, logits=True):
         super(AdaptiveLossSoft, self).__init__()
         self.alpha_min = alpha_min
         self.alpha_max = alpha_max
