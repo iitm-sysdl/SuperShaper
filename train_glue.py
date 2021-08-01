@@ -48,12 +48,12 @@ from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
 from sampling import (
-    sample_subtransformer,
+    Sampler,
     get_supertransformer_config,
     show_random_elements,
     show_args,
 )
-from custom_layers import custom_bert
+from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
 from utils import count_parameters, check_path, get_current_datetime
@@ -134,13 +134,13 @@ def parse_args():
     parser.add_argument(
         "--per_device_train_batch_size",
         type=int,
-        default=4,
+        default=32,
         help="Batch size (per device) for the training dataloader.",
     )
     parser.add_argument(
         "--per_device_eval_batch_size",
         type=int,
-        default=32,
+        default=64,
         help="Batch size (per device) for the evaluation dataloader.",
     )
     parser.add_argument(
@@ -150,7 +150,7 @@ def parse_args():
         help="Initial learning rate (after the potential warmup period) to use.",
     )
     parser.add_argument(
-        "--weight_decay", type=float, default=0.1, help="Weight decay to use."
+        "--weight_decay", type=float, default=0.01, help="Weight decay to use."
     )
     parser.add_argument(
         "--num_train_epochs",
@@ -236,7 +236,7 @@ def parse_args():
         type=str,
         required=True,
         help=f"specifies how to mix the tokens in bertlayers",
-        choices=["attention", "gmlp", "fnet"],
+        choices=["attention", "gmlp", "fnet", "mobilebert", "bert-bottleneck"],
     )
     parser.add_argument(
         "--resume_from_checkpoint_dir",
@@ -260,6 +260,14 @@ def parse_args():
         "--debug",
         action="store_true",
         help="If passed, use 100 samples of dataset to quickly run and check code.",
+    )
+
+    parser.add_argument(
+        "--sampling_type",
+        type=str,
+        default="random",
+        help=f"The sampling type for super-transformer",
+        choices=["none", "naive_params", "biased_params", "random"],
     )
 
     args = parser.parse_args()
@@ -288,10 +296,9 @@ def parse_args():
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
 
-    if args.tiny_attn == 1:
-        assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
-
-    args = parser.parse_args()
+    if args.sampling_type == "none":
+        # if we are not sampling, dont test random subtransformers every n epochs
+        args.eval_random_subtransformers = False
 
     # Sanity checks
     if (
@@ -336,7 +343,8 @@ def parse_args():
     if args.resume_from_checkpoint_dir is not None:
 
         args.optim_scheduler_states_path = os.path.join(
-            args.resume_from_checkpoint_dir, "optimizer_scheduler.pt"
+            args.resume_from_checkpoint_dir,
+            "optimizer_scheduler.pt",
         )
         check_path(args.resume_from_checkpoint_dir)
         check_path(args.optim_scheduler_states_path)
@@ -421,6 +429,16 @@ def main():
             name=args.task_name.split("/")[-1].strip() + "_" + str_name,
         )
 
+    if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
+        dataset_name = args.task_name.split("/")[-1].strip()
+        args.output_dir += (
+            "/" + dataset_name + "_" + str_name + "_" + get_current_datetime()
+        )
+        args.optim_scheduler_states_path = os.path.join(
+            args.output_dir, "{}/optimizer_scheduler.pt"
+        )
+        os.makedirs(args.output_dir, exist_ok=True)
+
     # Get the datasets: you can either provide your own CSV/JSON training and evaluation files (see below)
     # or specify a GLUE benchmark task (the dataset will be downloaded automatically from the datasets Hub).
 
@@ -482,9 +500,7 @@ def main():
     # config = AutoConfig.from_pretrained(
     #     args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name
     # )
-    global_config = get_supertransformer_config(
-        "bert-base-cased", tiny_attn=args.tiny_attn, mixing=args.mixing
-    )
+    global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
 
     tokenizer = AutoTokenizer.from_pretrained(
         "bert-base-cased", use_fast=not args.use_slow_tokenizer
@@ -498,16 +514,19 @@ def main():
         )
         global_config.max_seq_length = tokenizer.model_max_length
 
-    # add mixing to the config
-    global_config.mixing = args.mixing
-    global_config.tiny_attn = args.tiny_attn
     global_config.num_labels = num_labels
     # global_config.hidden_dropout_prob = 0
 
-    model = custom_bert.BertForSequenceClassification.from_pretrained(
-        args.model_name_or_path,
-        config=global_config,
-    )
+    if args.mixing == "mobilebert":
+        model = custom_mobile_bert.MobileBertForSequenceClassification.from_pretrained(
+            args.model_name_or_path, config=global_config
+        )
+    else:
+        model = custom_bert.BertForSequenceClassification.from_pretrained(
+            args.model_name_or_path,
+            config=global_config,
+        )
+
     logger.info(summary(model, depth=4, verbose=0))
 
     # Preprocessing the datasets
@@ -745,28 +764,137 @@ def main():
         wandb.watch(model)
 
     best_val_acc = 0
-    sampler = Sampler("random", "none", args.mixing, global_config)
+    sampler = Sampler(args.sampling_type, "none", args.mixing, global_config)
+
+    if args.eval_random_subtransformers:
+        if args.mixing == "mobilebert":
+            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
+                "sample_intra_bottleneck_size"
+            )
+            diverse_subtransformers = diverse_num_intra_subs
+            marker_colors = ["black"] * len(diverse_num_intra_subs)
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+                "sample_intra_bottleneck_size",
+            ]
+        elif args.mixing == "bert-bottleneck":
+            diverse_num_intra_subs = sampler.get_diverse_subtransformers(
+                "sample_hidden_size"
+            )
+            diverse_subtransformers = diverse_num_intra_subs
+            marker_colors = ["black"] * len(diverse_num_intra_subs)
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+        else:
+            diverse_hidden_state_subs = sampler.get_diverse_subtransformers(
+                "sample_hidden_size"
+            )
+            diverse_attention_subs = sampler.get_diverse_subtransformers(
+                "sample_num_attention_heads"
+            )
+            diverse_intermediate_state_subs = sampler.get_diverse_subtransformers(
+                "sample_intermediate_size"
+            )
+            diverse_num_hidden_subs = sampler.get_diverse_subtransformers(
+                "sample_num_hidden_layers"
+            )
+
+            diverse_subtransformers = (
+                diverse_hidden_state_subs
+                + diverse_attention_subs
+                + diverse_intermediate_state_subs
+            )
+            marker_colors = (
+                ["yellow"] * len(diverse_hidden_state_subs)
+                + ["green"] * len(diverse_attention_subs)
+                + ["blue"] * len(diverse_intermediate_state_subs)
+                + ["red"] * len(diverse_num_hidden_subs)
+            )
+            sampling_dimensions = [
+                "sample_hidden_size",
+                "sample_num_attention_heads",
+                "sample_intermediate_size",
+                "sample_num_hidden_layers",
+            ]
+
+    best_metric = 0
+    logger.info("=============================")
+    logger.info(f"Starting training from epoch {completed_epochs}")
+    logger.info(f"Training till epoch  {args.num_train_epochs}")
+    logger.info("=============================")
 
     for epoch in range(completed_epochs, args.num_train_epochs):
+        # first evaluate random subtransformers before starting training
+        if args.eval_random_subtransformers and completed_epochs % 1 == 0:
+            hover_templates = []
+            label_perplex = []
+            for i, config in enumerate(diverse_subtransformers):
+                model.set_sample_config(config)
+
+                eval_metric = validate_subtransformer(
+                    model,
+                    eval_dataloader,
+                    accelerator,
+                    len(eval_dataset),
+                    args.per_device_eval_batch_size,
+                    args.pad_to_max_length,
+                )
+                # eval_metric['validation_random_seed'] = random_seed
+                # label_lst.append([eval_metric['accuracy'], random_seed])
+                # label_lst.append([random_seed, eval_metric['accuracy']])
+                hover_templates.append(
+                    "<br>".join(
+                        [
+                            f"{key}: {getattr(config, key)}"
+                            for key in sampling_dimensions
+                        ]
+                        # adding the evaluation metrics to print
+                        + [f"{key}: {eval_metric[key]}" for key in eval_metric]
+                    )
+                )
+                label_perplex.append(eval_metric["accuracy"])
+                # label_seed.append(random_seed)
+                # accelerator.print(eval_metric)
+                # wandb.log(eval_metric)
+
+            if accelerator.is_main_process:
+                ## If plotting using Custom Plotly
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Bar(
+                        x=np.arange(len(diverse_subtransformers)),
+                        y=label_perplex,
+                        hovertext=hover_templates,
+                        marker_color=marker_colors,
+                    )
+                )
+                fig.update_layout(
+                    title="Relative Performance Order",
+                    xaxis_title="Random Seed",
+                    yaxis_title="Perplexity",
+                )
+                wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
         model.train()
         seed = -1
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            super_config = sampler.sample_subtransformer(
-                limit_subtransformer_choices=False,
-                randomize=True,
-                rand_seed=seed,
-                tiny_attn=args.tiny_attn,
-                config=global_config,
-            )["random_subtranformers"][0]
-            model.set_sample_config(super_config)
+            if args.sampling_type != "none":
+                super_config = sampler.sample_subtransformer(
+                    limit_subtransformer_choices=False,
+                    randomize=True,
+                    rand_seed=seed,
+                    config=global_config,
+                )["random_subtranformers"][0]
 
-            # super_config.max_seq_length = config.max_seq_length
-            # super_config.mixing = config.mixing
-            # super_config.num_hidden_layers = super_config.sample_num_hidden_layers
-            # subnet = model.get_active_subnet(super_config)
-
-            # logger.info(subnet)
+                model.set_sample_config(super_config)
 
             outputs = model(**batch)
             loss = outputs.loss
@@ -788,8 +916,10 @@ def main():
             if completed_steps >= args.max_train_steps:
                 break
 
-        # change to supertransformer config
-        model.set_sample_config(global_config)
+        if args.sampling_type == "none":
+            # change to supertransformer config
+            model.set_sample_config(global_config)
+
         eval_metric = validate_subtransformer(
             model, args.task_name, eval_dataloader, accelerator
         )
@@ -833,67 +963,6 @@ def main():
                     "==========================================================================="
                 )
                 break
-
-        # TODO: make this similar to train_mlm
-        # if args.eval_random_subtransformers and completed_epochs % 5 == 0:
-        # hover_templates = []
-        # label_acc = []
-        # sampling_dimensions = [
-        #     "sample_hidden_size",
-        #     "sample_num_attention_heads",
-        #     "sample_intermediate_size",
-        #     "sample_num_hidden_layers",
-        #     "random_seed",
-        # ]
-        # for i in range(args.num_subtransformers_monitor):
-        #     random_seed = rand_seed_lst[i]
-        #     config = sample_subtransformer(
-        #         False,
-        #         randomize=True,
-        #         rand_seed=random_seed,
-        #         tiny_attn=args.tiny_attn,
-        #         config=global_config,
-        #     )
-
-        #     config.random_seed = random_seed
-        #     model.set_sample_config(config)
-
-        #     eval_metric = validate_subtransformer(
-        #         model, args.task_name, eval_dataloader, accelerator
-        #     )
-        #     # eval_metric['validation_random_seed'] = random_seed
-        #     # label_lst.append([eval_metric['accuracy'], random_seed])
-        #     # label_lst.append([random_seed, eval_metric['accuracy']])
-        #     hover_templates.append(
-        #         "<br>".join(
-        #             [
-        #                 f"{key}: {getattr(config, key)}"
-        #                 for key in sampling_dimensions
-        #             ]
-        #         )
-        #     )
-        #     label_acc.append(eval_metric["accuracy"])
-        #     # label_seed.append(random_seed)
-        #     # accelerator.print(eval_metric)
-        #     # wandb.log(eval_metric)
-
-        # if accelerator.is_main_process:
-        #     ## If plotting using Custom Plotly
-        #     fig = go.Figure()
-
-        #     fig.add_trace(
-        #         go.Bar(
-        #             x=np.arange(len(rand_seed_lst)),
-        #             y=label_acc,
-        #             hovertext=hover_templates,
-        #         )
-        #     )
-        #     fig.update_layout(
-        #         title="Relative Performance Order",
-        #         xaxis_title="Random Seed",
-        #         yaxis_title="Accuracy",
-        #     )
-        #     wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set
