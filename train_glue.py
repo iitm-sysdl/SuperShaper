@@ -693,6 +693,8 @@ def main():
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
 
+    model.set_sample_config(global_config)
+
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -840,11 +842,9 @@ def main():
 
                 eval_metric = validate_subtransformer(
                     model,
+                    args.task_name,
                     eval_dataloader,
                     accelerator,
-                    len(eval_dataset),
-                    args.per_device_eval_batch_size,
-                    args.pad_to_max_length,
                 )
                 # eval_metric['validation_random_seed'] = random_seed
                 # label_lst.append([eval_metric['accuracy'], random_seed])
@@ -888,11 +888,8 @@ def main():
             seed += 1
             if args.sampling_type != "none":
                 super_config = sampler.sample_subtransformer(
-                    limit_subtransformer_choices=False,
-                    randomize=True,
-                    rand_seed=seed,
-                    config=global_config,
-                )["random_subtranformers"][0]
+                    randomize=True, rand_seed=seed, pop_size=1
+                )["random_subtransformers"][0]
 
                 model.set_sample_config(super_config)
 
@@ -915,10 +912,6 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
-
-        if args.sampling_type == "none":
-            # change to supertransformer config
-            model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
             model, args.task_name, eval_dataloader, accelerator
@@ -950,7 +943,7 @@ def main():
                         "scaler": accelerator.scaler.state_dict(),
                         "accuracy": early_stopping.best_score,
                     },
-                    args.optim_scheduler_states_path,
+                    args.optim_scheduler_states_path.format("best_model"),
                 )
             if early_stopping.early_stop:
                 logger.info(

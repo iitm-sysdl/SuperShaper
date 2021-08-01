@@ -1545,7 +1545,9 @@ class BertPooler(nn.Module):
 
     def set_sample_config(self, config):
         if isinstance(config.sample_hidden_size, list):
-            sample_hidden_size = config.sample_hidden_size[-1]
+            # For bert bottleneck, sample_hidden_size is a list of bert bottleneck choices
+            # this is not needed for pooler layer and hence we set it to full hidden size
+            sample_hidden_size = config.hidden_size
         else:
             sample_hidden_size = config.sample_hidden_size
         self.dense.set_sample_config(sample_hidden_size, sample_hidden_size)
@@ -2412,7 +2414,7 @@ class BertForMaskedLM(BertPreTrainedModel):
                         self.config.alpha_min,
                         self.config.alpha_max,
                         self.config.beta_clip,
-                        logits=True, # both predictions and target are logits (non-softmaxed)
+                        logits=True,  # both predictions and target are logits (non-softmaxed)
                     )
                 else:
                     loss_fct = CrossEntropyLossSoft()
@@ -2594,7 +2596,10 @@ class BertForSequenceClassification(BertPreTrainedModel):
         self.init_weights()
 
     def set_sample_config(self, config):
-        sample_hidden_size = config.sample_hidden_size
+        if isinstance(config.sample_hidden_size, list):
+            sample_hidden_size = config.hidden_size
+        else:
+            sample_hidden_size = config.sample_hidden_size
         self.bert.set_sample_config(config)
         self.classifier.set_sample_config(sample_hidden_size, config.num_labels)
 

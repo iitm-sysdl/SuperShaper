@@ -68,10 +68,10 @@ class CustomLinear(nn.Linear):
             self.sample_in_dim,
             self.sample_out_dim,
             self.bias_sample,
-            #self.uniform_,  #Vin: Check if these cause some issues down the line
-            #self.non_linear,
+            # self.uniform_,  #Vin: Check if these cause some issues down the line
+            # self.non_linear,
         )
-        #self._sample_parameters()
+        # self._sample_parameters()
         sub_layer.weight.data.copy_(self.samples["weight"])
         if self.bias_val:
             sub_layer.bias.data.copy_(self.samples["bias"])
