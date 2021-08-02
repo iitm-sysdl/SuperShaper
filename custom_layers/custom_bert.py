@@ -607,7 +607,7 @@ class SpatialUnit(nn.Module):
 
         gate = F.conv1d(gate, weight, bias)
 
-        if exists(gate_res):
+        if gate_res is not None:
             gate = gate + gate_res
 
         return self.act(gate) * res
