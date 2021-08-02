@@ -282,6 +282,12 @@ def parse_args():
         default=None,
         help=f"The path to a subtransformer configration",
     )
+    parser.add_argument(
+        "--wandb_suffix",
+        type=str,
+        default=None,
+        help=f"suffix for wandb",
+    )
 
     args = parser.parse_args()
 
@@ -446,6 +452,9 @@ def main():
     )
     if args.subtransformer_config_path:
         str_name += "_custom_subtransformer"
+
+    if args.wandb_suffix:
+        str_name += "_" + args.wandb_suffix
 
     if args.debug:
         str_name = "debugging"
