@@ -417,7 +417,11 @@ def main():
     if args.seed is not None:
         set_seed(args.seed)
 
-    str_name = args.mixing + "_tiny_attn" if args.tiny_attn == 1 else args.mixing
+    str_name = (
+        args.mixing + "_tiny_attn"
+        if args.tiny_attn == 1
+        else args.mixing + "_" + args.sampling_type + "_K=" + str(args.k_sampling)
+    )
 
     if args.debug:
         str_name = "debugging"

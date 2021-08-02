@@ -51,29 +51,38 @@ def count_parameters(model):
 
 # verify with this https://github.com/google-research/bert/issues/656
 def calculate_params(
-    emb_dim,
+    emb_dims,
     num_attention_heads,
     d_ff_list,
     num_enc,
     vocab_size=28996,
     add_output_emb_layer=True,
     add_embs_dim=True,
+    bottleneck=True,
+    max_emb_dim=768,
 ):
 
-    layer_norm_params = 2 * emb_dim
+    if not bottleneck:
+        assert not isinstance(emb_dims, list)
+        emb_dims = [emb_dims] * num_enc
+        max_emb_dim = emb_dims[-1]
 
-    if add_embs_dim:
-        # vocab_size + position_embeddings + token_type_embeddings
-        emb_params = (vocab_size + 512 + 2) * emb_dim + layer_norm_params
-    else:
-        # for scaling laws dont add emb_dim and output emb dimension
-        emb_params = 0
-        add_output_emb_layer = False
+    emb_params = (vocab_size + 512 + 2) * max_emb_dim + 2 * max_emb_dim
+
+    # if add_embs_dim:
+    #     # vocab_size + position_embeddings + token_type_embeddings
+    #     emb_params = (vocab_size + 512 + 2) * emb_dim + 2 * emb_dim
+    # else:
+    #     # for scaling laws dont add emb_dim and output emb dimension
+    #     emb_params = 0
+    #     add_output_emb_layer = False
 
     assert len(d_ff_list) == num_enc
     per_layer_params = 0
 
-    for d_ff in d_ff_list:
+    for d_ff, emb_dim in zip(d_ff_list, emb_dims):
+        # weight and bias in layernorm
+        layer_norm_params = 2 * emb_dim
 
         per_layer_params += (
             4
@@ -82,10 +91,14 @@ def calculate_params(
             )  # q, k,v and fc layer and their biases in bertattention
             + 2 * (emb_dim * d_ff)  # intermediate and bertouput
             + (d_ff + emb_dim)  # intermediate and bertoutput bias terms
-            + 2 * layer_norm_params  # layernorms
+            + 2 * layer_norm_params  # 2 layernorms in a transformer block
         )
+        if bottleneck:
+            # for bottlenck params
+            per_layer_params += 2 * (emb_dim * emb_dim + emb_dim)
+
     # BertPredictionHeadTransform parameters
-    output_emb_params = (emb_dim * emb_dim) + emb_dim + layer_norm_params
+    output_emb_params = (max_emb_dim * max_emb_dim) + max_emb_dim + layer_norm_params
 
     if add_output_emb_layer:
         output_emb_layer = vocab_size * emb_dim + vocab_size
