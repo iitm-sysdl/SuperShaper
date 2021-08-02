@@ -119,6 +119,7 @@ def calculate_params_from_config(config, scaling_laws=False):
         config.vocab_size,
         add_output_emb_layer=True,
         add_embs_dim=add_embs_dim,
+        bottleneck = (config.mixing == "bert-bottleneck"),
     )
 
 
