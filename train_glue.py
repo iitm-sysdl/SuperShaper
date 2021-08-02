@@ -56,7 +56,14 @@ from sampling import (
 from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
-from utils import count_parameters, check_path, get_current_datetime
+from utils import (
+    count_parameters,
+    check_path,
+    get_current_datetime,
+    read_json,
+    calculate_params_from_config,
+    millify,
+)
 
 from torchinfo import summary
 
@@ -269,6 +276,12 @@ def parse_args():
         help=f"The sampling type for super-transformer",
         choices=["none", "naive_params", "biased_params", "random"],
     )
+    parser.add_argument(
+        "--subtransformer_config_path",
+        type=str,
+        default=None,
+        help=f"The path to a subtransformer configration",
+    )
 
     args = parser.parse_args()
 
@@ -354,6 +367,15 @@ def parse_args():
         # overwrite on the same directory
         args.output_dir = args.resume_from_checkpoint_dir
 
+    if args.subtransformer_config_path:
+        check_path(args.subtransformer_config_path)
+        assert (
+            args.sampling_type == "none"
+        ), "sampling_type is not supported when providing custom_subtransformer_config"
+        assert (
+            args.eval_random_subtransformers == 0
+        ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
+
     return args
 
 
@@ -420,8 +442,10 @@ def main():
     str_name = (
         args.mixing + "_tiny_attn"
         if args.tiny_attn == 1
-        else args.mixing + "_" + args.sampling_type + "_K=" + str(args.k_sampling)
+        else args.mixing + "_" + args.sampling_type
     )
+    if args.subtransformer_config_path:
+        str_name += "_custom_subtransformer"
 
     if args.debug:
         str_name = "debugging"
@@ -520,6 +544,22 @@ def main():
 
     global_config.num_labels = num_labels
     # global_config.hidden_dropout_prob = 0
+
+    if args.subtransformer_config_path is not None:
+        subtransformer_config = read_json(args.subtransformer_config_path)
+        for key, value in subtransformer_config.items():
+            # update global_config with attributes of subtransformer_config
+            setattr(global_config, key, value)
+
+        logger.info(
+            "=================================================================="
+        )
+        logger.info(
+            f"Number of parameters in custom config is {millify(calculate_params_from_config(global_config, scaling_laws=False, add_output_emb_layer=False))}"
+        )
+        logger.info(
+            "=================================================================="
+        )
 
     if args.mixing == "mobilebert":
         model = custom_mobile_bert.MobileBertForSequenceClassification.from_pretrained(

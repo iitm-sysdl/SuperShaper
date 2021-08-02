@@ -6,6 +6,23 @@ import torch
 import torch.nn as nn
 from torch.nn.modules.loss import _Loss
 from collections import OrderedDict
+import json
+
+import math
+
+millnames = ["", " Thousand", " Million", " Billion", " Trillion"]
+
+
+def millify(n):
+    n = float(n)
+    millidx = max(
+        0,
+        min(
+            len(millnames) - 1, int(math.floor(0 if n == 0 else math.log10(abs(n)) / 3))
+        ),
+    )
+
+    return "{:.0f}{}".format(n / 10 ** (3 * millidx), millnames[millidx])
 
 
 def flatten_list(nested_list):
@@ -108,7 +125,9 @@ def calculate_params(
     return emb_params + per_layer_params + output_emb_params + output_emb_layer
 
 
-def calculate_params_from_config(config, scaling_laws=False):
+def calculate_params_from_config(
+    config, scaling_laws=False, add_output_emb_layer=False
+):
     add_embs_dim = scaling_laws != True
 
     return calculate_params(
@@ -117,9 +136,9 @@ def calculate_params_from_config(config, scaling_laws=False):
         config.sample_intermediate_size,
         config.sample_num_hidden_layers,
         config.vocab_size,
-        add_output_emb_layer=True,
+        add_output_emb_layer=add_output_emb_layer,
         add_embs_dim=add_embs_dim,
-        bottleneck = (config.mixing == "bert-bottleneck"),
+        bottleneck=(config.mixing == "bert-bottleneck"),
     )
 
 
@@ -129,3 +148,8 @@ def check_path(path, error_message_template="Specified path - {} does not exist"
 
 def get_current_datetime():
     return datetime.now().strftime("%d-%m-%Y-%H-%M-%S")
+
+
+def read_json(path):
+    with open(path, "r") as f:
+        return json.load(f)
