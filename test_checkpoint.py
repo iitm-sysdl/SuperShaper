@@ -38,7 +38,7 @@ from sampling import (
 from custom_layers import custom_bert
 
 import plotly.graph_objects as go
-from utils import check_path
+from utils import check_path, read_json, millify, calculate_params_from_config
 from tqdm import tqdm
 from torchinfo import summary
 
@@ -263,6 +263,12 @@ def parse_args():
         default=None,
         help=f"Directory storing the checkpoint",
     )
+    parser.add_argument(
+        "--subtransformer_config_path",
+        type=str,
+        default=None,
+        help=f"The path to a subtransformer configration",
+    )
 
     args = parser.parse_args()
     args.model_name_or_path = "bert-base-cased"
@@ -443,6 +449,22 @@ def main():
         global_config.normalization_type = "layer_norm"
         global_config.num_feedforward_networks = 1
 
+    if args.subtransformer_config_path is not None:
+        subtransformer_config = read_json(args.subtransformer_config_path)
+        for key, value in subtransformer_config.items():
+            # update global_config with attributes of subtransformer_config
+            setattr(global_config, key, value)
+
+        logger.info(
+            "=================================================================="
+        )
+        logger.info(
+            f"Number of parameters in custom config is {millify(calculate_params_from_config(global_config, scaling_laws=False, add_output_emb_layer=False))}"
+        )
+        logger.info(
+            "=================================================================="
+        )
+
     model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
@@ -617,8 +639,13 @@ def main():
     # this is already set by set_seed function which we call above
     # but doing this again just to be sure
     random.seed(args.seed)
-    # sample args.num_subtransformers_eval random seeds from 1e6
-    random_seeds = random.choices(np.arange(1e6), k=args.num_subtransformers_eval)
+
+    if args.subtransformer_config_path is not None:
+        # some dummy seeed list of len 1
+        random_seeds = [args.seed]
+    else:
+        # sample args.num_subtransformers_eval random seeds from 1e6
+        random_seeds = random.choices(np.arange(1e6), k=args.num_subtransformers_eval)
 
     subtranformer_peplexities = []
     subtranformer_accuracies = []
@@ -628,10 +655,13 @@ def main():
     sampler = Sampler("random", "none", args.mixing, global_config)
 
     for idx, _seed in enumerate(tqdm(random_seeds)):
-        subtransformer_config = sampler.sample_subtransformer(
-            randomize=True,
-            rand_seed=_seed,
-        )["random_subtransformers"][0]
+        if args.subtransformer_config_path is not None:
+            subtransformer_config = global_config
+        else:
+            subtransformer_config = sampler.sample_subtransformer(
+                randomize=True,
+                rand_seed=_seed,
+            )["random_subtransformers"][0]
         model.set_sample_config(subtransformer_config)
         eval_metric = validate_subtransformer(
             model,
@@ -654,17 +684,19 @@ def main():
         f"Subtransformer average stats: val_perplexity: {mean(subtranformer_peplexities):.2f}, val_loss: {mean(subtranformer_losses):.2f}, val_accuracy:  {mean(subtranformer_accuracies):.2f}"
     )
 
-    # dictionary of lists
-    dict = {
-        "config": subtranformer_configs,
-        "loss": subtranformer_losses,
-        "perplexity": subtranformer_peplexities,
-        "accuracy": subtranformer_accuracies,
-    }
+    # no need to save stats if we are evaluating one subtransformer config
+    if args.subtransformer_config_path is None:
+        # dictionary of lists
+        dict = {
+            "config": subtranformer_configs,
+            "loss": subtranformer_losses,
+            "perplexity": subtranformer_peplexities,
+            "accuracy": subtranformer_accuracies,
+        }
 
-    df = pd.DataFrame(dict)
-    csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
-    df.to_csv(csv_path, index=False)
+        df = pd.DataFrame(dict)
+        csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
+        df.to_csv(csv_path, index=False)
 
 
 if __name__ == "__main__":

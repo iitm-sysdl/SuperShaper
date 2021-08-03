@@ -62,7 +62,14 @@ from custom_layers import custom_bert, custom_mobile_bert
 
 import plotly.graph_objects as go
 from more_itertools import unique_everseen
-from utils import count_parameters, check_path, get_current_datetime
+from utils import (
+    count_parameters,
+    check_path,
+    get_current_datetime,
+    read_json,
+    calculate_params_from_config,
+    millify,
+)
 from loss import *
 import transformers
 from transformers.models.bert.modeling_bert import BertForMaskedLM
@@ -462,6 +469,13 @@ def parse_args():
         help=f"The clip value for alpha divergence",
     )
 
+    parser.add_argument(
+        "--subtransformer_config_path",
+        type=str,
+        default=None,
+        help=f"The path to a subtransformer configration",
+    )
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -537,6 +551,15 @@ def parse_args():
         args.output_dir = args.resume_from_checkpoint_dir
 
     assert args.k_sampling > 0
+
+    if args.subtransformer_config_path:
+        check_path(args.subtransformer_config_path)
+        assert (
+            args.sampling_type == "none"
+        ), "sampling_type is not supported when providing custom_subtransformer_config"
+        assert (
+            args.eval_random_subtransformers == 0
+        ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
 
     return args
 
@@ -714,6 +737,22 @@ def main():
         global_config.alpha_min = args.alpha_min
         global_config.alpha_max = args.alpha_max
         global_config.beta_clip = args.beta_clip
+
+    if args.subtransformer_config_path is not None:
+        subtransformer_config = read_json(args.subtransformer_config_path)
+        for key, value in subtransformer_config.items():
+            # update global_config with attributes of subtransformer_config
+            setattr(global_config, key, value)
+
+        logger.info(
+            "=================================================================="
+        )
+        logger.info(
+            f"Number of parameters in custom config is {millify(calculate_params_from_config(global_config, scaling_laws=False, add_output_emb_layer=False))}"
+        )
+        logger.info(
+            "=================================================================="
+        )
 
     # TODO: decouple mixing and mobilebert model declarato
     if args.mixing == "mobilebert":
@@ -1033,7 +1072,7 @@ def main():
     )
 
     if accelerator.is_main_process:
-        wandb.watch(model, log="all", log_freq=100)
+        wandb.watch(model, log=None, log_freq=100)
 
     sampler = Sampler(
         args.sampling_type, args.sampling_rule, args.mixing, global_config
