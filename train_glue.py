@@ -818,7 +818,6 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model)
 
-    best_val_acc = 0
     sampler = Sampler(args.sampling_type, "none", args.mixing, global_config)
 
     if args.eval_random_subtransformers:
@@ -884,7 +883,7 @@ def main():
     logger.info(f"Starting training from epoch {completed_epochs}")
     logger.info(f"Training till epoch  {args.num_train_epochs}")
     logger.info("=============================")
-
+    best_val_acc = 0
     for epoch in range(completed_epochs, args.num_train_epochs):
         # first evaluate random subtransformers before starting training
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
@@ -971,8 +970,13 @@ def main():
         )
         logger.info(f"epoch {epoch}: {eval_metric}")
 
+        ## Logging all the eval metrics + best accuracy for ease of tracking
         if accelerator.is_main_process:
             wandb.log(eval_metric)
+            if best_val_acc <= eval_metric["accuracy"]:
+                best_val_acc = eval_metric["accuracy"]
+            wandb.log({"Best Accuracy": best_val_acc})
+
         completed_epochs += 1
 
         if args.output_dir is not None:
