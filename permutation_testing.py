@@ -4,6 +4,7 @@ import math
 import os
 import random
 import wandb
+from copy import deepcopy
 
 
 import plotly.express as px
@@ -60,120 +61,147 @@ from transformers.models.bert.modeling_bert import BertForMaskedLM
 from torchinfo import summary
 
 
-def rewire_model(model, config):
-    def compute_permutation_order(value, gradient, reduce_dim=0):
-        importance = torch.mean(torch.abs(gradient * value), dim=reduce_dim)
-        permutation_indices = torch.argsort(importance, descending=True)
-        return permutation_indices
+def inverse_permutation(permutation_order):
+    inv = torch.empty_like(permutation_order)
+    inv[permutation_order] = torch.arange(
+        permutation_order.size(0), device=permutation_order.device
+    )
 
-    def permute_weights(weights, permutation_order, mode="col"):
-        print(weights.shape)
-        print(permutation_order.shape)
-        print(mode)
-        if mode == "col":
-            permuted_weights = weights[:, permutation_order]
-        elif mode == "row":
-            permuted_weights = weights[permutation_order, :]
-        elif mode == "bias":
-            permuted_weights = weights[permutation_order]
+    return inv
+
+
+class BackHook:
+    def __init__(self, max_steps=1000):
+        self.grad_input = {}
+        self.grad_output = {}
+        self.layer_num = 0
+        self.max_steps = max_steps
+        self.steps = 0
+
+    def __call__(self, module, grad_in, grad_out):
+        print("calling")
+        self.steps += 1
+
+        grad_out = torch.abs(grad_out[0])
+        if not hasattr(module, "name"):
+            setattr(module, "name", self.layer_num)
+            self.grad_output[self.layer_num] = grad_out
+            self.layer_num += 1
         else:
-            raise ValueError(f"Unknown mode: {mode}")
-        return permuted_weights
+            # take mean along batch dimension
+            layer_num = getattr(module, "name")
+            self.grad_output[layer_num] = torch.mean(
+                torch.stack([self.grad_output[layer_num], grad_out]), dim=0
+            )
+        if self.steps == self.max_steps:
+            # self.steps = 0
+            layer_num = getattr(module, "name")
+            grad_output = self.grad_output[layer_num]
+            importance_order = torch.argsort(grad_output, descending=True)
+            setattr(module, "importance_order", importance_order)
+            setattr(
+                module, "inv_importance_order", inverse_permutation(importance_order)
+            )
+
+
+def rewire_model(model, config):
+    def permute_linear(
+        W, permutation, dim="col", permute_weight=False, permute_bias=False
+    ):
+        """
+        Permute linear layer
+
+        :param W: weight matrix
+        :param permutation: permutation order for the weights
+        :param dim: 'row' or 'col'
+        :param permute_bias: whether to permute the bias
+
+        """
+        _W = deepcopy(W)
+        if permute_bias:
+            _W.bias.data.copy_(_W.bias[permutation])
+
+        if permute_weight:
+            if dim == "col":
+                _W.weight.data.copy_(_W.weight[:, permutation])
+            elif dim == "row":
+                _W.weight.data.copy_(_W.weight[permutation, :])
+            else:
+                raise NotImplementedError
+
+        return _W
 
     with torch.no_grad():
         num_layers = config.num_hidden_layers
         emb_dim = config.hidden_size
-        emb_weight = model.bert.embeddings.word_embeddings.weight
-        emb_grad = model.bert.embeddings.word_embeddings.weight.grad
+        embeddings = model.bert.embeddings.word_embeddings
 
-        weight_permutation_order = compute_permutation_order(
-            emb_weight, emb_grad, reduce_dim=0
+        assert model.bert.embeddings.word_embeddings.importance_order is not None
+
+        weight_permutation_order = (
+            model.bert.embeddings.word_embeddings.importance_order
         )
-        # we dont change bias permutation order here
-        # bias_permutation_order = torch.arange(emb_dim)
 
-        emb_weight = permute_weights(emb_weight, weight_permutation_order)
-
-        model.state_dict()["bert.embeddings.word_embeddings.weight"].data.copy_(
-            emb_weight
+        _ = permute_linear(
+            embeddings,
+            weight_permutation_order,
+            dim="col",
+            permute_weight=True,
+            permute_bias=False,
         )
 
         for i in range(num_layers):
-            # recalculate permutation order for new layers from the input bottleneck
-            if i:
-                current_weight_permutation_order = compute_permutation_order(
-                    model.bert.encoder.layer[i].input_bottleneck.weight,
-                    model.bert.encoder.layer[i].input_bottleneck.weight.grad,
-                    reduce_dim=0,
-                )
-                # current_bias_permutation_order = compute_permutation_order(
-                #    model.bert.encoder.layer[i].input_bottleneck.bias,
-                #    model.bert.encoder.layer[i].input_bottleneck.bias.grad,
-                #    reduce_dim=-1,
-                # )
-
-                # compose both permutations to get one permutation order
-                weight_permutation_order = current_weight_permutation_order[
-                    weight_permutation_order
-                ]
-                # bias_permutation_order = current_bias_permutation_order[
-                #    bias_permutation_order
-                # ]
 
             keys_to_permute = [
-                (f"bert.encoder.layer.{i}.input_bottleneck.weight", "col"),
-                # (f"bert.encoder.layer.{i}.input_bottleneck.bias", "bias"),
-                (f"bert.encoder.layer.{i}.attention.self.query.weight", "row"),
-                (f"bert.encoder.layer.{i}.attention.self.query.bias", "bias"),
-                (f"bert.encoder.layer.{i}.attention.self.key.weight", "row"),
-                (f"bert.encoder.layer.{i}.attention.self.key.bias", "bias"),
-                (f"bert.encoder.layer.{i}.attention.self.value.weight", "row"),
-                (f"bert.encoder.layer.{i}.attention.self.value.bias", "bias"),
-                (f"bert.encoder.layer.{i}.attention.output.dense.weight", "col"),
-                # (f"bert.encoder.layer.{i}.attention.output.dense.bias", "bias"),
-                (f"bert.encoder.layer.{i}.output.dense.weight", "row"),
-                (f"bert.encoder.layer.{i}.output.dense.bias", "bias"),
-                (f"bert.encoder.layer.{i}.intermediate.dense.weight", "col"),
-                # (f"bert.encoder.layer.{i}.intermediate.dense.bias", "bias"),
+                (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                (
+                    f"bert.encoder.layer.{i}.attention.output.dense",
+                    "row",
+                ),
+                (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                (f"bert.encoder.layer.{i}.output.dense", "row"),
             ]
 
             for key_mode in keys_to_permute:
                 key, mode = key_mode
-                print(key)
+
+                module = getattr(model, key)
 
                 if i == 0 and "input_bottleneck" in key:
                     continue
-
-                if "weight" in key:
-                    weight = permute_weights(
-                        model.state_dict()[key], weight_permutation_order, mode=mode
+                if mode == "row":
+                    weight_permutation_order = module.importance_order
+                    permute_bias = True
+                else:
+                    permute_bias = False
+                    # Column permutaion weights are not registered for backward hooks
+                    # This is because, columns just use the permutation orders computed
+                    # on their previous layers with embedding output dimension.
+                    # Thus, they will not have their own imporatance order or
+                    # inverse importance order
+                    # So we use the prev importance order and assign it to them
+                    # for ease of use in custom_bert script
+                    setattr(module, "importance_order", weight_permutation_order)
+                    setattr(
+                        module,
+                        "inv_importance_order",
+                        inverse_permutation(weight_permutation_order),
                     )
-                    model.state_dict()[key].data.copy_(weight)
-                elif "bias" in key:
-                    bias = permute_weights(
-                        model.state_dict()[key], weight_permutation_order, mode=mode
-                    )
-                    model.state_dict()[key].data.copy_(bias)
 
-        # TODO: check this modes
-        keys_to_permute = [
-            (f"cls.predictions.transform.dense.weight", "row"),
-            (f"cls.predictions.transform.dense.bias", "bias"),
-            (f"cls.predictions.decoder.weight", "col"),
-            # (f"cls.predictions.decoder.bias", "bias"),
-        ]
-        for key_mode in keys_to_permute:
-            key, mode = key_mode
-            if "weight" in key:
-                weight = permute_weights(
-                    model.state_dict()[key], weight_permutation_order, mode=mode
+                _ = permute_linear(
+                    module,
+                    weight_permutation_order,
+                    dim=mode,
+                    permute_bias=permute_bias,
                 )
-                model.state_dict()[key].data.copy_(weight)
-            elif "bias" in key:
-                bias = permute_weights(
-                    model.state_dict()[key], weight_permutation_order, mode=mode
-                )
-                model.state_dict()[key].data.copy_(bias)
+        # final importance order is stored
+        setattr(
+            model.bert,
+            "inv_importance_order",
+            inverse_permutation(weight_permutation_order),
+        )
 
 
 if __name__ == "__main__":
@@ -193,11 +221,25 @@ if __name__ == "__main__":
     )
 
     global_config.max_seq_length = max_seq_len
+    global_config.rewire = True
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased", use_fast=True)
     model = custom_bert.BertForMaskedLM.from_pretrained(
         "bert-base-cased", config=global_config
     )
+    model = custom_bert.BertForMaskedLM.from_pretrained(
+        "bert-base-cased", config=global_config
+    )
+
+    identity = torch.eye(global_config.hidden_size)
+
+    for key in model.state_dict().keys():
+        if "input_bottleneck.weight" in key or "output_bottleneck.weight" in key:
+            model.state_dict()[key].data.copy_(identity)
+        elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
+            model.state_dict()[key].data.zero_()
+
+    print("BERT-Bottleneck Initiliazed with BERT-base")
     raw_datasets = load_dataset("wikitext", "wikitext-2-v1")
     padding = False
     column_names = raw_datasets["train"].column_names
@@ -312,8 +354,30 @@ if __name__ == "__main__":
 
     model.train()
 
+    print("validating perplexity before rewiring")
+    eval_metric = validate_subtransformer(
+        model, eval_dataloader, accelerator, len(eval_dataset), batch_size, False
+    )
+    print(eval_metric["perplexity"])
+
     max_steps = 4
     nsteps = max_steps / (batch_size * torch.cuda.device_count())
+
+    bhookfn = BackHook(max_steps=max_steps)
+
+    model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
+
+    for i in range(global_config.num_hidden_layers):
+
+        keys_to_hook = [
+            f"bert.encoder.layer.{i}.attention.output.dense",
+            f"bert.encoder.layer.{i}.output.dense",
+        ]
+
+        for key in keys_to_hook:
+            module = getattr(model, key)
+            module.register_backward_hook(bhookfn)
+    print(f"Calculating gradients for {max_steps} with hooks: ")
     for step, batch in enumerate(tqdm(train_dataloader)):
         outputs = model(**batch)
 
@@ -330,10 +394,6 @@ if __name__ == "__main__":
         if step == nsteps:
             break
 
-    eval_metric = validate_subtransformer(
-        model, eval_dataloader, accelerator, len(eval_dataset), batch_size, False
-    )
-    print(eval_metric["perplexity"])
     rewire_model(model, global_config)
     eval_metric = validate_subtransformer(
         model, eval_dataloader, accelerator, len(eval_dataset), batch_size, False

@@ -528,6 +528,7 @@ class BertSelfAttention(nn.Module):
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.dense = CustomLinear(config.hidden_size, config.hidden_size)
         self.LayerNorm = NORM2FN[config.normalization_type](
             config.hidden_size, eps=config.layer_norm_eps
@@ -560,6 +561,10 @@ class BertSelfOutput(nn.Module):
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
+        if self.config.rewire:
+            if hasattr(self.dense, "importance_order"):
+                # reorder the input_tensor according to the new importance order
+                input_tensor = self.dense.importance_order(hidden_states)
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
@@ -1088,6 +1093,7 @@ class BertDense(nn.Module):
 class BertAttention(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.self = BertSelfAttention(config)
         self.output = BertSelfOutput(config)
         self.pruned_heads = set()
@@ -1145,6 +1151,19 @@ class BertAttention(nn.Module):
             past_key_value,
             output_attentions,
         )
+        if self.config.rewire:
+            if hasattr(self.self.query, "inv_importance_order"):
+                inv_importance_order_q = self.self.query.inv_importance_order
+                inv_importance_order_k = self.self.key.inv_importance_order
+                inv_importance_order_v = self.self.value.inv_importance_order
+                assert (
+                    inv_importance_order_q
+                    == inv_importance_order_k
+                    == inv_importance_order_v
+                )
+                # inverse the permutation before applying it in residual
+                hidden_states = hidden_states[:, inv_importance_order_q]
+
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[
             1:
@@ -2006,6 +2025,9 @@ class BertModel(BertPreTrainedModel):
             return_dict=return_dict,
         )
         sequence_output = encoder_outputs[0]
+        if self.config.rewire:
+            if hasattr(self, "inv_importance_order"):
+                sequence_output = sequence_output[:, self.inv_importance_order]
         pooled_output = (
             self.pooler(sequence_output) if self.pooler is not None else None
         )

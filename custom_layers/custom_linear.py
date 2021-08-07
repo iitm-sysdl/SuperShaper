@@ -93,6 +93,10 @@ class CustomLinear(nn.Linear):
 
         return weight_numel + bias_numel
 
+    @property
+    def module_str(self):
+        return "Linear(%d, %d)" % (self.sample_in_dim, self.sample_out_dim)
+
 
 def sample_weight(weight, sample_in_dim, sample_out_dim):
     sample_weight = weight[:, :sample_in_dim]

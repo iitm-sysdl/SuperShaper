@@ -476,6 +476,20 @@ def parse_args():
         help=f"The path to a subtransformer configration",
     )
 
+    parser.add_argument(
+        "--rewire",
+        type=int,
+        default=0,
+        help=f"Whether to rewire model",
+    )
+
+    parser.add_argument(
+        "--rewired_model_checkpoint_dir",
+        type=str,
+        default=None,
+        help=f"Path to rewired model checkpoint",
+    )
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -561,6 +575,15 @@ def parse_args():
             args.eval_random_subtransformers == 0
         ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
 
+    if args.rewire:
+        assert (
+            args.rewired_model_checkpoint_dir is not None
+        ), "Rewired model checkpoint path cannot be None if rewire is set to True"
+        check_path(args.rewired_model_checkpoint_dir)
+
+        if args.resume_from_checkpoint_dir is not None:
+            args.resume_from_checkpoint_dir = args.rewired_model_checkpoint_dir
+
     return args
 
 
@@ -604,6 +627,7 @@ def main():
         if args.tiny_attn == 1
         else args.mixing + "_" + args.sampling_type + "_K=" + str(args.k_sampling)
     )
+    str_name = "rewired_" + str_name if args.rewire else str_name
     if args.inplace_distillation:
         str_name += "_ip_distill"
         if args.layerwise_distillation:
@@ -738,6 +762,11 @@ def main():
         global_config.alpha_max = args.alpha_max
         global_config.beta_clip = args.beta_clip
 
+    if args.rewire:
+        global_config.rewire = True
+    else:
+        global_config.rewire = False
+
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
         for key, value in subtransformer_config.items():
@@ -807,6 +836,15 @@ def main():
         )
     else:
         model = custom_bert.BertForMaskedLM(global_config)
+
+    # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
+    if args.rewire and args.resume_from_checkpoint_dir is None:
+        # load the rewiring weights
+        checkpoints = torch.load(
+            os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints)
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
