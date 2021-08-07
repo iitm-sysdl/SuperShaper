@@ -5,6 +5,7 @@ import os
 import random
 import wandb
 from copy import deepcopy
+from operator import attrgetter
 
 
 import plotly.express as px
@@ -166,8 +167,8 @@ def rewire_model(model, config):
 
             for key_mode in keys_to_permute:
                 key, mode = key_mode
-
-                module = getattr(model, key)
+                
+                module = attrgetter(key)(model)
 
                 if i == 0 and "input_bottleneck" in key:
                     continue
@@ -207,7 +208,7 @@ def rewire_model(model, config):
 if __name__ == "__main__":
 
     max_seq_len = 64
-    batch_size = 4
+    batch_size = 128
 
     param = DistributedDataParallelKwargs(
         find_unused_parameters=True, check_reduction=False
@@ -222,6 +223,7 @@ if __name__ == "__main__":
 
     global_config.max_seq_length = max_seq_len
     global_config.rewire = True
+    
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased", use_fast=True)
     model = custom_bert.BertForMaskedLM.from_pretrained(
@@ -317,7 +319,7 @@ if __name__ == "__main__":
     eval_dataloader = DataLoader(
         eval_dataset,
         collate_fn=data_collator,
-        batch_size=batch_size,
+        batch_size=512,
         num_workers=1,
         pin_memory=True,
     )
@@ -352,31 +354,40 @@ if __name__ == "__main__":
         num_training_steps=10,
     )
 
-    model.train()
 
     print("validating perplexity before rewiring")
-    eval_metric = validate_subtransformer(
-        model, eval_dataloader, accelerator, len(eval_dataset), batch_size, False
-    )
-    print(eval_metric["perplexity"])
+    #eval_metric = validate_subtransformer(
+    #    model, eval_dataloader, accelerator, len(eval_dataset), 512, False
+    #)
+    #print(eval_metric["perplexity"])
 
-    max_steps = 4
+    max_steps = 128
     nsteps = max_steps / (batch_size * torch.cuda.device_count())
+    
+    model.train()
 
-    bhookfn = BackHook(max_steps=max_steps)
+    bhookfn = BackHook(max_steps=nsteps)
 
     model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
 
-    for i in range(global_config.num_hidden_layers):
+    for name, module in model.named_modules():
+        if(isinstance(module, nn.Linear)):
+            if 'output.dense' in name:
+                module.register_backward_hook(bhookfn)
 
-        keys_to_hook = [
-            f"bert.encoder.layer.{i}.attention.output.dense",
-            f"bert.encoder.layer.{i}.output.dense",
-        ]
 
-        for key in keys_to_hook:
-            module = getattr(model, key)
-            module.register_backward_hook(bhookfn)
+    #for i in range(global_config.num_hidden_layers):
+
+    #    keys_to_hook = [
+    #        f"bert.encoder.layer.{i}.attention.output.dense",
+    #        f"bert.encoder.layer.{i}.output.dense",
+    #    ]
+
+    #    for key in keys_to_hook:
+    #        module = getattr(model, key)
+    #        module.register_backward_hook(bhookfn)
+
+
     print(f"Calculating gradients for {max_steps} with hooks: ")
     for step, batch in enumerate(tqdm(train_dataloader)):
         outputs = model(**batch)
