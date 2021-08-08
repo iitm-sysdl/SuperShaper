@@ -94,7 +94,7 @@ class BackHook:
                 torch.stack([self.grad_output[layer_num], grad_out]), dim=0
             )
         if self.steps >= self.max_steps:
-            print("Max steps achieved")
+            #print("Max steps achieved")
             layer_num = getattr(module, "name")
             grad_output = self.grad_output[layer_num]
             grad_output = grad_output.view(-1, grad_output.shape[-1])
@@ -119,7 +119,8 @@ def rewire_model(model, config):
         :param permute_bias: whether to permute the bias
 
         """
-        _W = deepcopy(W)
+        #_W = deepcopy(W)
+        _W = W
         if permute_bias:
             _W.bias.data.copy_(_W.bias[permutation])
 

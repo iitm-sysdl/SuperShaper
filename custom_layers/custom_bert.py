@@ -1157,13 +1157,13 @@ class BertAttention(nn.Module):
                 inv_importance_order_q = self.self.query.inv_importance_order
                 inv_importance_order_k = self.self.key.inv_importance_order
                 inv_importance_order_v = self.self.value.inv_importance_order
-                assert (
-                    inv_importance_order_q
-                    == inv_importance_order_k
-                    == inv_importance_order_v
-                )
+                #assert (
+                #    inv_importance_order_q
+                #    == inv_importance_order_k
+                #    == inv_importance_order_v
+                #)
                 # inverse the permutation before applying it in residual
-                hidden_states = hidden_states[:, inv_importance_order_q]
+                hidden_states = hidden_states[:, :, inv_importance_order_q]
 
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[
@@ -2028,7 +2028,7 @@ class BertModel(BertPreTrainedModel):
         sequence_output = encoder_outputs[0]
         if self.config.rewire:
             if hasattr(self, "inv_importance_order"):
-                sequence_output = sequence_output[:, self.inv_importance_order]
+                sequence_output = sequence_output[:, :, self.inv_importance_order]
         pooled_output = (
             self.pooler(sequence_output) if self.pooler is not None else None
         )
