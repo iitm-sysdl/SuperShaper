@@ -111,8 +111,12 @@ def validate_subtransformer(
         return true_predictions, true_labels
 
     losses = []
+    progress_bar = tqdm(
+        range(0, len(eval_dataloader)),
+        disable=not accelerator.is_local_main_process,
+    )
     model.eval()
-    for step, batch in enumerate(tqdm(eval_dataloader)):
+    for step, batch in enumerate(eval_dataloader):
         # We could avoid this line since we set the accelerator with `device_placement=True`.
         with torch.no_grad():
             outputs = model(**batch)
@@ -137,6 +141,7 @@ def validate_subtransformer(
             predictions=preds,
             references=refs,
         )  # predictions and preferences are expected to be a nested list of labels, not label_ids
+        progress_bar.update(1)
 
     losses = torch.cat(losses)
     losses = losses[:len_eval_dataset]
@@ -962,7 +967,9 @@ def main():
     if args.c4_dir is not None:
         # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
         tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
-    train_dataset = tokenized_datasets["train"]
+
+    # restrict train dataset to have num_sentences_for_rewiring sentences
+    train_dataset = tokenized_datasets["train"][: args.num_sentences_for_rewiring]
     eval_dataset = tokenized_datasets["validation"]
 
     # Log a few random samples from the training set:

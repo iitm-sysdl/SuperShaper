@@ -375,13 +375,6 @@ class BertSelfAttention(nn.Module):
             self.sample_num_attention_heads * self.sample_attention_head_size
         )
 
-        # print(
-        #     f"Changing num_attention heads from {self.num_attention_heads} -> {self.sample_num_attention_heads}"
-        # )
-        # print(
-        #     f"Changing attention head size from {self.attention_head_size} -> {self.sample_attention_head_size}"
-        # )
-
         self.query.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         self.key.set_sample_config(sample_hidden_size, self.sample_all_head_size)
         self.value.set_sample_config(sample_hidden_size, self.sample_all_head_size)
@@ -441,11 +434,6 @@ class BertSelfAttention(nn.Module):
             value_layer = self.transpose_for_scores(self.value(hidden_states))
 
         query_layer = self.transpose_for_scores(mixed_query_layer)
-        #print("embeddings: ", hidden_states)
-        #print("query weight shape: ", self.query.weight.shape)
-        #print("query weight first row: ", self.query.weight[0, :])
-        #print("query biad: ", self.query.bias)
-        #print("query output: ", mixed_query_layer) 
 
         if self.is_decoder:
             # if cross_attention save Tuple(torch.Tensor, torch.Tensor) of all cross attention key/value_states.
@@ -569,8 +557,7 @@ class BertSelfOutput(nn.Module):
         if self.config.rewire:
             if hasattr(self.dense, "importance_order"):
                 # reorder the input_tensor according to the new importance order
-                #input_tensor = self.dense.importance_order(hidden_states)
-                #print("W_o imporatnce order for residual")
+                # input_tensor = self.dense.importance_order(hidden_states)
                 input_tensor = input_tensor[:, :, self.dense.importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
@@ -746,7 +733,6 @@ class BertMobile(nn.Module):
         output_attentions=False,
     ):
         if self.is_identity_layer:
-            # print("Returning without any operations")
             return (hidden_states,)
 
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
@@ -1063,7 +1049,6 @@ class BertDense(nn.Module):
     ):
 
         if self.is_identity_layer:
-            # print("Returning without any operations")
             return (hidden_states,)
 
         residual = hidden_states
@@ -1158,19 +1143,18 @@ class BertAttention(nn.Module):
             past_key_value,
             output_attentions,
         )
-        #print("WQKV output: ", self_outputs[0])
         if self.config.rewire:
             if hasattr(self.self.query, "inv_importance_order"):
                 inv_importance_order_q = self.self.query.inv_importance_order
                 inv_importance_order_k = self.self.key.inv_importance_order
                 inv_importance_order_v = self.self.value.inv_importance_order
-                assert torch.equal(inv_importance_order_q, inv_importance_order_k) and torch.equal(inv_importance_order_q, inv_importance_order_v)
+                assert torch.equal(
+                    inv_importance_order_q, inv_importance_order_k
+                ) and torch.equal(inv_importance_order_q, inv_importance_order_v)
                 # inverse the permutation before applying it in residual
-                # print("inverse permutation in WQKV in residual")
                 hidden_states = hidden_states[:, :, inv_importance_order_q]
 
         attention_output = self.output(self_outputs[0], hidden_states)
-        #print("W_o outputs: ", attention_output)
         outputs = (attention_output,) + self_outputs[
             1:
         ]  # add attentions if we output them
@@ -1192,8 +1176,6 @@ class BertIntermediate(nn.Module):
         self.dense.set_sample_config(sample_hidden_size, sample_intermediate_size)
 
     def forward(self, hidden_states):
-        # print(hidden_states.shape)
-        # print(self.dense.samples["weight"].shape)
         hidden_states = self.dense(hidden_states)
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
@@ -1230,13 +1212,9 @@ class BertOutput(nn.Module):
         hidden_states = self.dropout(hidden_states)
         if self.config.rewire:
             if hasattr(self.dense, "importance_order"):
-                #print("applying importance at intermediate W_2 for residual")
                 input_tensor = input_tensor[:, :, self.dense.importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
 
-        #if self.config.rewire:
-            #if hasattr(self.dense, "inv_importance_order"):
-                #hidden_states = hidden_states[:, :, self.dense.inv_importance_order]
         return hidden_states
 
 
@@ -1264,6 +1242,7 @@ class BertLayer(nn.Module):
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
         self.is_identity_layer = False
+
     def set_sample_config(self, config, is_identity_layer=False):
         if is_identity_layer:
             self.is_identity_layer = True
@@ -1316,12 +1295,10 @@ class BertLayer(nn.Module):
         output_attentions=False,
     ):
         if self.is_identity_layer:
-            # print("Returning without any operations")
             return (hidden_states, None, None)
 
         if self.use_bottleneck:
             hidden_states = self.input_bottleneck(hidden_states)
-        #print("evrey layer inputs: ", hidden_states[0, 1, :10])
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = (
             past_key_value[:2] if past_key_value is not None else None
@@ -1392,15 +1369,14 @@ class BertLayer(nn.Module):
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
-        #print("BertIntermediateOutput W1: ", intermediate_output)
         if self.config.rewire:
             if hasattr(self.intermediate.dense, "inv_importance_order"):
                 # undo permutation before adding in residual
-                # print(f"undoing permutation at intermediate input W_1 for residual")
-                attention_output = attention_output[:, :, self.intermediate.dense.inv_importance_order]
+                attention_output = attention_output[
+                    :, :, self.intermediate.dense.inv_importance_order
+                ]
         layer_output = self.output(intermediate_output, attention_output)
 
-        #print("BertLayerOutput W2: ", layer_output)
         return layer_output
 
 
@@ -2052,7 +2028,6 @@ class BertModel(BertPreTrainedModel):
         if self.config.rewire:
             if hasattr(self, "inv_importance_order"):
                 sequence_output = sequence_output[:, :, self.inv_importance_order]
-                #print(self.inv_importance_order[:10])
         pooled_output = (
             self.pooler(sequence_output) if self.pooler is not None else None
         )
@@ -2451,13 +2426,7 @@ class BertForMaskedLM(BertPreTrainedModel):
         )
 
         sequence_output = outputs[0]
-        #print("Final_output: ", sequence_output[0,0,200:210], "Mean of tensor: ", sequence_output.mean())
-        #print("cls weights:")
-        #print("cls pred bias: ", self.cls.predictions.bias[:10], " Mean : ", self.cls.predictions.bias.mean())
-        #print("cls pred transform dense: ", self.cls.predictions.transform.dense.weight[0, :10], " Mean : ", self.cls.predictions.transform.dense.weight.mean())
-        #print(" cls.predictions.decoder.weight : ", self.cls.predictions.decoder.weight[0, :10], " Mean : ", self.cls.predictions.decoder.weight.mean())
         prediction_scores = self.cls(sequence_output)
-        #print("Prediction: ", prediction_scores[0,:10], "Mean of tensor: ", prediction_scores.mean() )
 
         masked_lm_loss = None
         if labels is not None:
