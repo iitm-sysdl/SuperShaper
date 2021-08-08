@@ -564,7 +564,8 @@ class BertSelfOutput(nn.Module):
         if self.config.rewire:
             if hasattr(self.dense, "importance_order"):
                 # reorder the input_tensor according to the new importance order
-                input_tensor = self.dense.importance_order(hidden_states)
+                #input_tensor = self.dense.importance_order(hidden_states)
+                input_tensor = hidden_states[:, :, self.dense.importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 

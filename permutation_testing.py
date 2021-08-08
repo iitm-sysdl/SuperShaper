@@ -6,7 +6,7 @@ import random
 import wandb
 from copy import deepcopy
 from operator import attrgetter
-
+import time
 
 import plotly.express as px
 from datetime import datetime
@@ -80,7 +80,6 @@ class BackHook:
         self.steps = 0
 
     def __call__(self, module, grad_in, grad_out):
-        print("calling")
         self.steps += 1
 
         grad_out = torch.abs(grad_out[0])
@@ -94,10 +93,12 @@ class BackHook:
             self.grad_output[layer_num] = torch.mean(
                 torch.stack([self.grad_output[layer_num], grad_out]), dim=0
             )
-        if self.steps == self.max_steps:
-            # self.steps = 0
+        if self.steps >= self.max_steps:
+            print("Max steps achieved")
             layer_num = getattr(module, "name")
             grad_output = self.grad_output[layer_num]
+            grad_output = grad_output.view(-1, grad_output.shape[-1])
+            grad_output = torch.mean(grad_output, dim=0)
             importance_order = torch.argsort(grad_output, descending=True)
             setattr(module, "importance_order", importance_order)
             setattr(
@@ -137,10 +138,11 @@ def rewire_model(model, config):
         emb_dim = config.hidden_size
         embeddings = model.bert.embeddings.word_embeddings
 
-        assert model.bert.embeddings.word_embeddings.importance_order is not None
+
+        assert embeddings.importance_order is not None
 
         weight_permutation_order = (
-            model.bert.embeddings.word_embeddings.importance_order
+            embeddings.importance_order
         )
 
         _ = permute_linear(
@@ -362,12 +364,10 @@ if __name__ == "__main__":
     #print(eval_metric["perplexity"])
 
     max_steps = 128
-    nsteps = max_steps / (batch_size * torch.cuda.device_count())
-    
+    nsteps = int(max_steps / (batch_size * torch.cuda.device_count()))
     model.train()
 
-    bhookfn = BackHook(max_steps=nsteps)
-
+    bhookfn = BackHook(max_steps=nsteps*global_config.num_hidden_layers)
     model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
 
     for name, module in model.named_modules():
@@ -390,10 +390,12 @@ if __name__ == "__main__":
 
     print(f"Calculating gradients for {max_steps} with hooks: ")
     for step, batch in enumerate(tqdm(train_dataloader)):
+        
         outputs = model(**batch)
-
         loss = outputs.loss
         loss.backward()
+
+
 
         # mul = torch.mean(
         #    model.bert.embeddings.word_embeddings.weight
