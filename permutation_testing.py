@@ -97,6 +97,7 @@ class BackHook:
             #print("Max steps achieved")
             layer_num = getattr(module, "name")
             grad_output = self.grad_output[layer_num]
+            # print(grad_output.shape)
             grad_output = grad_output.view(-1, grad_output.shape[-1])
             grad_output = torch.mean(grad_output, dim=0)
             importance_order = torch.argsort(grad_output, descending=True)
@@ -104,6 +105,8 @@ class BackHook:
             setattr(
                 module, "inv_importance_order", inverse_permutation(importance_order)
             )
+            # print(importance_order)
+            # print()
 
 
 def rewire_model(model, config):
@@ -317,14 +320,14 @@ if __name__ == "__main__":
         collate_fn=data_collator,
         batch_size=batch_size,
         num_workers=1,
-        pin_memory=True,
+        #pin_memory=True,
     )
     eval_dataloader = DataLoader(
         eval_dataset,
         collate_fn=data_collator,
         batch_size=512,
         num_workers=1,
-        pin_memory=True,
+        #pin_memory=True,
     )
 
     no_decay = ["bias", "LayerNorm.weight"]
@@ -359,10 +362,10 @@ if __name__ == "__main__":
 
 
     print("validating perplexity before rewiring")
-    #eval_metric = validate_subtransformer(
-    #    model, eval_dataloader, accelerator, len(eval_dataset), 512, False
-    #)
-    #print(eval_metric["perplexity"])
+    eval_metric = validate_subtransformer(
+        model, eval_dataloader, accelerator, len(eval_dataset), 512, False
+    )
+    print(eval_metric["perplexity"])
 
     max_steps = 128
     nsteps = int(max_steps / (batch_size * torch.cuda.device_count()))

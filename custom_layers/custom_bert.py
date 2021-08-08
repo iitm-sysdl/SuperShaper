@@ -1157,11 +1157,7 @@ class BertAttention(nn.Module):
                 inv_importance_order_q = self.self.query.inv_importance_order
                 inv_importance_order_k = self.self.key.inv_importance_order
                 inv_importance_order_v = self.self.value.inv_importance_order
-                #assert (
-                #    inv_importance_order_q
-                #    == inv_importance_order_k
-                #    == inv_importance_order_v
-                #)
+                assert torch.equal(inv_importance_order_q, inv_importance_order_k) and torch.equal(inv_importance_order_q, inv_importance_order_v)
                 # inverse the permutation before applying it in residual
                 hidden_states = hidden_states[:, :, inv_importance_order_q]
 
@@ -1197,6 +1193,7 @@ class BertIntermediate(nn.Module):
 class BertOutput(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.dense = CustomLinear(config.intermediate_size, config.hidden_size)
         self.LayerNorm = NORM2FN[config.normalization_type](
             config.hidden_size, eps=config.layer_norm_eps
@@ -1222,13 +1219,21 @@ class BertOutput(nn.Module):
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
+        if self.config.rewire:
+            if hasattr(self.dense, "importance_order"):
+                input_tensor = input_tensor[:, :, self.dense.importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
+
+        #if self.config.rewire:
+            #if hasattr(self.dense, "inv_importance_order"):
+                #hidden_states = hidden_states[:, :, self.dense.inv_importance_order]
         return hidden_states
 
 
 class BertLayer(nn.Module):
     def __init__(self, config):
         super().__init__()
+        self.config = config
         self.chunk_size_feed_forward = config.chunk_size_feed_forward
         self.seq_len_dim = 1
         self.use_bottleneck = config.mixing == "bert-bottleneck"
@@ -1249,7 +1254,6 @@ class BertLayer(nn.Module):
         self.intermediate = BertIntermediate(config)
         self.output = BertOutput(config)
         self.is_identity_layer = False
-
     def set_sample_config(self, config, is_identity_layer=False):
         if is_identity_layer:
             self.is_identity_layer = True
@@ -1377,6 +1381,10 @@ class BertLayer(nn.Module):
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
+        if self.config.rewire:
+            if hasattr(self.intermediate, "inv_importance_order"):
+                # undo permutation before adding in residual
+                attention_outputs = attention_outputs[:, :, self.intermediate.inv_importance_order]
         layer_output = self.output(intermediate_output, attention_output)
         return layer_output
 
