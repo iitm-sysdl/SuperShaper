@@ -112,7 +112,7 @@ def validate_subtransformer(
 
     losses = []
     model.eval()
-    for step, batch in enumerate(eval_dataloader):
+    for step, batch in enumerate(tqdm(eval_dataloader)):
         # We could avoid this line since we set the accelerator with `device_placement=True`.
         with torch.no_grad():
             outputs = model(**batch)

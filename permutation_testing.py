@@ -60,7 +60,7 @@ import transformers
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 
 from torchinfo import summary
-
+from utils import rsetattr
 
 def inverse_permutation(permutation_order):
     inv = torch.empty_like(permutation_order)
@@ -111,7 +111,7 @@ class BackHook:
 
 def rewire_model(model, config):
     def permute_linear(
-        W, permutation, dim="col", permute_weight=False, permute_bias=False
+        W, permutation, dim="col", permute_weight=True, permute_bias=False
     ):
         """
         Permute linear layer
@@ -122,20 +122,21 @@ def rewire_model(model, config):
         :param permute_bias: whether to permute the bias
 
         """
-        #_W = deepcopy(W)
-        _W = W
         if permute_bias:
-            _W.bias.data.copy_(_W.bias[permutation])
+            W.bias.data.copy_(W.bias[permutation])
 
         if permute_weight:
             if dim == "col":
-                _W.weight.data.copy_(_W.weight[:, permutation])
+                W.weight.data.copy_(W.weight[:, permutation])
             elif dim == "row":
-                _W.weight.data.copy_(_W.weight[permutation, :])
+                W.weight.data.copy_(W.weight[permutation, :])
+            elif dim == "layernorm":
+                W.weight.data.copy_(W.weight[permutation])
             else:
                 raise NotImplementedError
 
-        return _W
+
+        return W
 
     with torch.no_grad():
         num_layers = config.num_hidden_layers
@@ -148,14 +149,55 @@ def rewire_model(model, config):
         weight_permutation_order = (
             embeddings.importance_order
         )
+        #weight_permutation_order = torch.arange(config.hidden_size)
+
+        #weight_permutation_order[0] = torch.tensor(1)
+        #weight_permutation_order[1] = torch.tensor(0)
+        #weight_permutation_order = torch.tensor([2,3,4,0,1,5,7,8,9,6,10,11])
+        #print("Before permuting: ", model.bert.embeddings.word_embeddings.weight[:5, :])
+        
+        #_ = permute_linear(
+        #    embeddings,
+        #    weight_permutation_order,
+        #    dim="col",
+        #    permute_weight=True,
+        #    permute_bias=False,
+        #)
+        #
+        #_ = permute_linear(
+        #    model.bert.embeddings.position_embeddings,
+        #    weight_permutation_order,
+        #    dim="col",
+        #    permute_weight=True,
+        #    permute_bias=False,
+        #    )
+        #_ = permute_linear(
+        #    model.bert.embeddings.token_type_embeddings,
+        #    weight_permutation_order,
+        #    dim="col",
+        #    permute_weight=True,
+        #    permute_bias=False,)
+        #_ = permute_linear(
+        #    model.bert.embeddings.LayerNorm,
+        #    weight_permutation_order,
+        #    dim="layernorm",
+        #    permute_weight=True,
+        #    permute_bias=True)
 
         _ = permute_linear(
-            embeddings,
-            weight_permutation_order,
-            dim="col",
-            permute_weight=True,
-            permute_bias=False,
-        )
+                model.bert.encoder.layer[0].input_bottleneck,
+                weight_permutation_order,
+                dim="row",
+                permute_weight=True,
+                permute_bias=False,)
+
+        #print(weight_permutation_order)
+        #print("Module after permuting: ", _embeddings.weight[:5, :])
+        #print("After permuting: ", model.bert.embeddings.word_embeddings.weight[:5, :])
+
+        #print('before query: ', model.bert.encoder.layer[0].attention.self.query.weight)
+        #print('before key: ', model.bert.encoder.layer[0].attention.self.key.weight)
+        #print('before value: ', model.bert.encoder.layer[0].attention.self.value.weight)
 
         for i in range(num_layers):
 
@@ -167,19 +209,24 @@ def rewire_model(model, config):
                     f"bert.encoder.layer.{i}.attention.output.dense",
                     "row",
                 ),
+                (f"bert.encoder.layer.{i}.attention.output.LayerNorm", "layernorm"),
                 (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
                 (f"bert.encoder.layer.{i}.output.dense", "row"),
+                (f"bert.encoder.layer.{i}.output.LayerNorm", "layernorm"),
             ]
-
             for key_mode in keys_to_permute:
                 key, mode = key_mode
-                
                 module = attrgetter(key)(model)
+                #print("before", module.weight[0, :5])
 
                 if i == 0 and "input_bottleneck" in key:
                     continue
                 if mode == "row":
+                    #module.importance_order = torch.tensor([1,0,3,2,4,5,6,7,8,9,10,11])
+                    module.importance_order = weight_permutation_order
                     weight_permutation_order = module.importance_order
+                    permute_bias = True
+                elif mode == "layernorm":
                     permute_bias = True
                 else:
                     permute_bias = False
@@ -197,12 +244,21 @@ def rewire_model(model, config):
                         inverse_permutation(weight_permutation_order),
                     )
 
-                _ = permute_linear(
+                #print(module, module.importance_order)
+
+                #print("weight permutation order: ", weight_permutation_order[:5])
+                new_module = permute_linear(
                     module,
                     weight_permutation_order,
                     dim=mode,
                     permute_bias=permute_bias,
                 )
+                rsetattr(model, key, new_module)
+                module = attrgetter(key)(model)
+                # print("After: ", module.weight[0, :5])
+        #print('After query: ', model.bert.encoder.layer[0].attention.self.query.weight)
+        #print('After key: ', model.bert.encoder.layer[0].attention.self.key.weight)
+        #print('After value: ', model.bert.encoder.layer[0].attention.self.value.weight)
         # final importance order is stored
         setattr(
             model.bert,
@@ -229,15 +285,24 @@ if __name__ == "__main__":
 
     global_config.max_seq_length = max_seq_len
     global_config.rewire = True
+
+    #global_config.hidden_size = 12
+    #global_config.num_hidden_layers = 1
+    #global_config.sample_hidden_layers = 1
+    #global_config.sample_hidden_size = [12] * global_config.num_hidden_layers
+    #global_config.intermediate_size = 6
+    #global_config.sample_intermediate_size = [6] * global_config.num_hidden_layers
+    global_config.hidden_dropout_prob = 0.0
+    global_config.sample_hidden_dropout_prob = 0.0
+    global_config.attention_probs_dropout_prob = 0.0
+    global_config.sample_attention_probs_dropout_prob = 0.0
+
     
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-cased", use_fast=True)
-    model = custom_bert.BertForMaskedLM.from_pretrained(
-        "bert-base-cased", config=global_config
+    model = custom_bert.BertForMaskedLM.from_pretrained("bert-base-cased", config=global_config
     )
-    model = custom_bert.BertForMaskedLM.from_pretrained(
-        "bert-base-cased", config=global_config
-    )
+
 
     identity = torch.eye(global_config.hidden_size)
 
@@ -366,8 +431,14 @@ if __name__ == "__main__":
         model, eval_dataloader, accelerator, len(eval_dataset), 512, False
     )
     print(eval_metric["perplexity"])
+    #for step, batch in enumerate(tqdm(train_dataloader)):
+    #    print(batch["input_ids"].double().mean())
+    #    outputs = model(**batch)
+    #    print(outputs.logits.mean())
+    #    break
+    
 
-    max_steps = 128
+    max_steps = 10000
     nsteps = int(max_steps / (batch_size * torch.cuda.device_count()))
     model.train()
 
@@ -394,25 +465,20 @@ if __name__ == "__main__":
 
     print(f"Calculating gradients for {max_steps} with hooks: ")
     for step, batch in enumerate(tqdm(train_dataloader)):
-        
+        #print(batch["input_ids"].double().mean())
         outputs = model(**batch)
+        #print(outputs.logits.mean())
         loss = outputs.loss
         loss.backward()
 
-
-
-        # mul = torch.mean(
-        #    model.bert.embeddings.word_embeddings.weight
-        #    * model.bert.embeddings.word_embeddings.weight.grad,
-        #    dim=0,
-        # )
-
-        # mul_sort = torch.sort(mul, descending=True)
-        if step == nsteps:
-            break
-
+        break
+    print("Rewiring model: ")
     rewire_model(model, global_config)
+    #outputs = model(**batch)
+
+    #print(outputs.logits.mean())
+    model.eval()
     eval_metric = validate_subtransformer(
-        model, eval_dataloader, accelerator, len(eval_dataset), batch_size, False
+        model, eval_dataloader, accelerator, len(eval_dataset), 512, False
     )
     print(eval_metric["perplexity"])
