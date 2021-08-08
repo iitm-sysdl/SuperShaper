@@ -46,6 +46,7 @@ from transformers import (
     get_scheduler,
     set_seed,
 )
+from operator import attrgetter
 
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
@@ -767,10 +768,7 @@ def main():
         global_config.alpha_max = args.alpha_max
         global_config.beta_clip = args.beta_clip
 
-    if args.rewire:
-        global_config.rewire = True
-    else:
-        global_config.rewire = False
+    global_config.rewire = args.rewire
 
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
@@ -843,18 +841,31 @@ def main():
         model = custom_bert.BertForMaskedLM(global_config)
 
     # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
-    if args.rewire and args.resume_from_checkpoint_dir is None:
+    if args.rewire:
         # load the rewiring weights
         checkpoints = torch.load(
             os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
             map_location="cpu",
         )
-        model.load_state_dict(checkpoints)
+        model.load_state_dict(checkpoints, strict=False)
+        # hacky way to load the importance order without introducing these
+        # into __init__ of all classes and introducing problems with other
+        # checkpoints
+        for key in checkpoints.keys():
+            if "inv_importance_order" in key:
+                module_str = key.split(".inv_importance_order")[0]
+                module = attrgetter(module_str)(model)
+                module.register_buffer("inv_importance_order", checkpoints[key])
+            elif "importance_order" in key:
+                module_str = key.split(".importance_order")[0]
+                module = attrgetter(module_str)(model)
+                module.register_buffer("importance_order", checkpoints[key])
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
 
-    if args.resume_from_checkpoint_dir is not None:
+    # if args.rewire is True, we would load it differently
+    if args.resume_from_checkpoint_dir is not None and not args.rewire:
         logger.info("Loading model weights from checkpoint ..")
         # we load the model before preparing
         # see this for details: https://github.com/huggingface/accelerate/issues/95

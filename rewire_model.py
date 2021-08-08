@@ -106,9 +106,9 @@ class BackHook:
             grad_output = grad_output.view(-1, grad_output.shape[-1])
             grad_output = torch.mean(grad_output, dim=0)
             importance_order = torch.argsort(grad_output, descending=True)
-            setattr(module, "importance_order", importance_order)
-            setattr(
-                module, "inv_importance_order", inverse_permutation(importance_order)
+            module.register_buffer("importance_order", importance_order)
+            module.register_buffer(
+                "inv_importance_order", inverse_permutation(importance_order)
             )
             # logger.info(importance_order)
             # logger.info()
@@ -195,9 +195,8 @@ def rewire_model(model, config):
                     # inverse importance order
                     # So we use the prev importance order and assign it to them
                     # for ease of use in custom_bert script
-                    setattr(module, "importance_order", weight_permutation_order)
-                    setattr(
-                        module,
+                    module.register_buffer("importance_order", weight_permutation_order)
+                    module.register_buffer(
                         "inv_importance_order",
                         inverse_permutation(weight_permutation_order),
                     )
@@ -211,10 +210,8 @@ def rewire_model(model, config):
                 rsetattr(model, key, new_module)
                 module = attrgetter(key)(model)
         # final importance order is stored
-        setattr(
-            model.bert,
-            "inv_importance_order",
-            inverse_permutation(weight_permutation_order),
+        model.bert.register_buffer(
+            "inv_importance_order", inverse_permutation(weight_permutation_order)
         )
 
 
@@ -721,6 +718,7 @@ if __name__ == "__main__":
     rewire_model(model, global_config)
 
     model.eval()
+
     eval_metric = validate_subtransformer(
         model,
         eval_dataloader,
