@@ -1164,7 +1164,7 @@ class BertAttention(nn.Module):
         )
         if self.config.rewire:
             if hasattr(self.self.query, "inv_importance_order"):
-                inv_importance_order_q = self.self.query.sample_inv_importance_order
+                inv_importance_order_q = self.self.query.sample_inv_importance_order_q
 
                 # inverse the permutation before applying it in residual
                 hidden_states = hidden_states[:, :, inv_importance_order_q]
@@ -1908,17 +1908,16 @@ class BertModel(BertPreTrainedModel):
         config_class=_CONFIG_FOR_DOC,
     )
     def set_sample_config(self, config):
-        sample_hidden_size = config.sample_hidden_size
         self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
         if self.pooler is not None:
             self.pooler.set_sample_config(config)
 
-        if self.config.rewire:
-            if hasattr(self, "inv_importance_order"):
-                self.sample_inv_importance_order = self.inv_importance_order[
-                    :sample_hidden_size
-                ]
+        #if self.config.rewire:
+        #    if hasattr(self, "inv_importance_order"):
+        #        self.sample_inv_importance_order = self.inv_importance_order[
+        #            :sample_hidden_size
+        #        ]
 
     def get_active_subnet(self, config):
         subnet = BertModel(config)
@@ -2064,7 +2063,7 @@ class BertModel(BertPreTrainedModel):
         if self.config.rewire:
             if hasattr(self, "inv_importance_order"):
                 sequence_output = sequence_output[
-                    :, :, self.sample_inv_importance_order
+                    :, :, self.inv_importance_order
                 ]
         pooled_output = (
             self.pooler(sequence_output) if self.pooler is not None else None
