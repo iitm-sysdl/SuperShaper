@@ -15,15 +15,19 @@ millnames = ["", " Thousand", " Million", " Billion", " Trillion"]
 
 # taken from https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-subobjects-chained-properties
 def rsetattr(obj, attr, val):
-    pre, _, post = attr.rpartition('.')
+    pre, _, post = attr.rpartition(".")
     return setattr(rgetattr(obj, pre) if pre else obj, post, val)
 
+
 # using wonder's beautiful simplification: https://stackoverflow.com/questions/31174295/getattr-and-setattr-on-nested-objects/31174427?noredirect=1#comment86638618_31174427
+
 
 def rgetattr(obj, attr, *args):
     def _getattr(obj, attr):
         return getattr(obj, attr, *args)
-    return functools.reduce(_getattr, [obj] + attr.split('.'))
+
+    return functools.reduce(_getattr, [obj] + attr.split("."))
+
 
 def millify(n):
     n = float(n)
@@ -165,3 +169,10 @@ def get_current_datetime():
 def read_json(path):
     with open(path, "r") as f:
         return json.load(f)
+
+
+# taken from https://github.com/pytorch/pytorch/issues/3025#issuecomment-392601780
+def in1d(ar1, ar2):
+    mask = ar2.new_zeros((max(ar1.max(), ar2.max()) + 1,), dtype=torch.bool)
+    mask[ar2.unique()] = True
+    return mask[ar1]
