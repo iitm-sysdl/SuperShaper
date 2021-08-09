@@ -557,11 +557,12 @@ class BertSelfOutput(nn.Module):
                         :sample_hidden_size
                     ]
                     final_importance_indices = in1d(
-                        prev_layer_importance_order, self.dense.sample_importance_order
-                    )
-                    self.dense.sample_importance_order = prev_layer_importance_order[
-                        final_importance_indices
-                    ]
+                        self.dense.sample_importance_order, prev_layer_importance_order
+                    ).nonzero().squeeze()
+                    self.dense.sample_importance_order = final_importance_indices
+                    #prev_layer_importance_order[
+                    #    final_importance_indices
+                    #]
 
     def get_active_subnet(self, config):
         sublayer = BertSelfOutput(config)
@@ -1121,8 +1122,8 @@ class BertAttention(nn.Module):
             if not self.invert_importance_order and hasattr(
                 self.self.query, "inv_importance_order"
             ):
-                prev_layer_importance_order = self.query.importance_order
-                prev_layer_inv_importance_order = self.query.inv_importance_order
+                prev_layer_importance_order = self.self.query.importance_order
+                prev_layer_inv_importance_order = self.self.query.inv_importance_order
 
         sample_hidden_size = config.sample_hidden_size
         self.self.set_sample_config(config)
@@ -1181,10 +1182,10 @@ class BertAttention(nn.Module):
         )
         if self.config.rewire:
             if self.invert_importance_order:
-                inv_importance_order_q = self.self.query.inv_importance_order_q
+                inv_importance_order = self.self.query.inv_importance_order
 
                 # inverse the permutation before applying it in residual
-                hidden_states = hidden_states[:, :, inv_importance_order_q]
+                hidden_states = hidden_states[:, :, inv_importance_order]
 
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[
@@ -1245,17 +1246,15 @@ class BertOutput(nn.Module):
 
                 # sliced training
                 if prev_layer_importance_order is not None:
-
                     self.dense.sample_importance_order = self.dense.importance_order[
                         :sample_hidden_size
                     ]
 
                     final_importance_indices = in1d(
-                        prev_layer_importance_order, self.dense.sample_importance_order
-                    )
-                    self.dense.sample_importance_order = prev_layer_importance_order[
-                        final_importance_indices
-                    ]
+                        self.dense.sample_importance_order, prev_layer_importance_order
+                    ).nonzero().squeeze()
+                    self.dense.sample_importance_order = final_importance_indices
+
 
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
@@ -1322,16 +1321,15 @@ class BertLayer(nn.Module):
                 self.config.hidden_size == self.config.sample_hidden_size
             )
             # for sliced training
-            if not self.invert_importance_order and hasattr(
-                self.intermediate, "inv_importance_order"
-            ):
+            if self.invert_importance_order is False and hasattr(
+                self.intermediate.dense, "inv_importance_order"
+            ):  
                 prev_layer_importance_order = self.intermediate.dense.importance_order
                 prev_layer_inv_importance_order = (
                     self.intermediate.dense.inv_importance_order
                 )
 
         self.intermediate.set_sample_config(config)
-
         self.output.set_sample_config(
             config, prev_layer_importance_order=prev_layer_importance_order
         )
