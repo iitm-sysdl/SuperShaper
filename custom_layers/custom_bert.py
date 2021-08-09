@@ -543,6 +543,13 @@ class BertSelfOutput(nn.Module):
         # reinitialing the module and using this in the forward function
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
+        if self.config.rewire:
+            if hasattr(self.dense, "importance_order"):
+                # slicing importance order
+                self.dense.sample_importance_order = self.dense.importance_order[
+                    :sample_hidden_size
+                ]
+
     def get_active_subnet(self, config):
         sublayer = BertSelfOutput(config)
 
@@ -558,7 +565,7 @@ class BertSelfOutput(nn.Module):
             if hasattr(self.dense, "importance_order"):
                 # reorder the input_tensor according to the new importance order
                 # input_tensor = self.dense.importance_order(hidden_states)
-                input_tensor = input_tensor[:, :, self.dense.importance_order]
+                input_tensor = input_tensor[:, :, self.dense.sample_importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
@@ -1091,8 +1098,20 @@ class BertAttention(nn.Module):
         self.pruned_heads = set()
 
     def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
         self.self.set_sample_config(config)
         self.output.set_sample_config(config)
+        if self.config.rewire:
+            if hasattr(self.self.query, "inv_importance_order"):
+                self.self.query.sample_inv_importance_order_q = (
+                    self.self.query.inv_importance_order[:sample_hidden_size]
+                )
+                self.self.key.sample_inv_importance_order_k = (
+                    self.self.key.inv_importance_order[:sample_hidden_size]
+                )
+                self.self.value.sample_inv_importance_order_v = (
+                    self.self.value.inv_importance_order[:sample_hidden_size]
+                )
 
     def prune_heads(self, heads):
         if len(heads) == 0:
@@ -1145,12 +1164,8 @@ class BertAttention(nn.Module):
         )
         if self.config.rewire:
             if hasattr(self.self.query, "inv_importance_order"):
-                inv_importance_order_q = self.self.query.inv_importance_order
-                inv_importance_order_k = self.self.key.inv_importance_order
-                inv_importance_order_v = self.self.value.inv_importance_order
-                assert torch.equal(
-                    inv_importance_order_q, inv_importance_order_k
-                ) and torch.equal(inv_importance_order_q, inv_importance_order_v)
+                inv_importance_order_q = self.self.query.sample_inv_importance_order
+
                 # inverse the permutation before applying it in residual
                 hidden_states = hidden_states[:, :, inv_importance_order_q]
 
@@ -1207,12 +1222,19 @@ class BertOutput(nn.Module):
         # reinitialing the module and using this in the forward function
         self.dropout = nn.Dropout(sample_hidden_dropout_prob)
 
+        if self.config.rewire:
+            if hasattr(self.dense, "importance_order"):
+                self.dense.sample_importance_order = self.dense.importance_order[
+                    :sample_hidden_size
+                ]
+
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         if self.config.rewire:
             if hasattr(self.dense, "importance_order"):
-                input_tensor = input_tensor[:, :, self.dense.importance_order]
+                importance_order = self.dense.sample_importance_order
+                input_tensor = input_tensor[:, :, importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
 
         return hidden_states
@@ -1244,6 +1266,7 @@ class BertLayer(nn.Module):
         self.is_identity_layer = False
 
     def set_sample_config(self, config, is_identity_layer=False):
+        sample_hidden_size = config.sample_hidden_size
         if is_identity_layer:
             self.is_identity_layer = True
             return
@@ -1261,6 +1284,11 @@ class BertLayer(nn.Module):
             self.crossattention.set_sample_config(config)
         self.intermediate.set_sample_config(config)
         self.output.set_sample_config(config)
+        if self.config.rewire:
+            if hasattr(self.intermediate.dense, "inv_importance_order"):
+                self.intermediate.dense.sample_inv_importance_order = (
+                    self.intermediate.dense.importance_order[:sample_hidden_size]
+                )
 
     def get_active_subnet(self, config):
         sublayer = BertLayer(config)
@@ -1371,10 +1399,11 @@ class BertLayer(nn.Module):
         intermediate_output = self.intermediate(attention_output)
         if self.config.rewire:
             if hasattr(self.intermediate.dense, "inv_importance_order"):
+                inv_importance_order = (
+                    self.intermediate.dense.sample_inv_importance_order
+                )
                 # undo permutation before adding in residual
-                attention_output = attention_output[
-                    :, :, self.intermediate.dense.inv_importance_order
-                ]
+                attention_output = attention_output[:, :, inv_importance_order]
         layer_output = self.output(intermediate_output, attention_output)
 
         return layer_output
@@ -1879,10 +1908,17 @@ class BertModel(BertPreTrainedModel):
         config_class=_CONFIG_FOR_DOC,
     )
     def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
         self.embeddings.set_sample_config(config)
         self.encoder.set_sample_config(config)
         if self.pooler is not None:
             self.pooler.set_sample_config(config)
+
+        if self.config.rewire:
+            if hasattr(self, "inv_importance_order"):
+                self.sample_inv_importance_order = self.inv_importance_order[
+                    :sample_hidden_size
+                ]
 
     def get_active_subnet(self, config):
         subnet = BertModel(config)
@@ -2027,7 +2063,9 @@ class BertModel(BertPreTrainedModel):
         sequence_output = encoder_outputs[0]
         if self.config.rewire:
             if hasattr(self, "inv_importance_order"):
-                sequence_output = sequence_output[:, :, self.inv_importance_order]
+                sequence_output = sequence_output[
+                    :, :, self.sample_inv_importance_order
+                ]
         pooled_output = (
             self.pooler(sequence_output) if self.pooler is not None else None
         )

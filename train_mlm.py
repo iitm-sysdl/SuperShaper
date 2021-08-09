@@ -979,8 +979,7 @@ def main():
         # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
         tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
 
-    # restrict train dataset to have num_sentences_for_rewiring sentences
-    train_dataset = tokenized_datasets["train"][: args.num_sentences_for_rewiring]
+    train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
 
     # Log a few random samples from the training set:
