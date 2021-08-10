@@ -1320,8 +1320,8 @@ class BertLayer(nn.Module):
                 self.config.hidden_size == self.config.sample_hidden_size
             )
             # for sliced training
-            if not self.invert_importance_order and hasattr(
-                self.intermediate, "inv_importance_order"
+            if self.invert_importance_order is False and hasattr(
+                self.intermediate.dense, "inv_importance_order"
             ):
                 prev_layer_importance_order = self.intermediate.dense.importance_order
                 # prev_layer_inv_importance_order = (
