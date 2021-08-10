@@ -1118,7 +1118,7 @@ class BertAttention(nn.Module):
             self.invert_importance_order = (
                 self.config.hidden_size == self.config.sample_hidden_size
             )
-            if not self.invert_importance_order and hasattr(
+            if self.invert_importance_order is False and hasattr(
                 self.self.query, "inv_importance_order"
             ):
                 prev_layer_importance_order = self.self.query.importance_order
