@@ -172,7 +172,15 @@ def read_json(path):
 
 
 # taken from https://github.com/pytorch/pytorch/issues/3025#issuecomment-392601780
-def in1d(ar1, ar2):
+def get_overlap_order(ar1, ar2):
+    # ar1 is the bigger matrix
+    # ar2 is the sliced matrix
+    # we get overlapping values' order in ar2
+
+    assert ar1.shape[-1] >= ar2.shape[-1]
+
     mask = ar2.new_zeros((max(ar1.max(), ar2.max()) + 1,), dtype=torch.bool)
     mask[ar2.unique()] = True
-    return mask[ar1]
+    indexes = mask[ar1].nonzero().squeeze()
+    overlapping_elements = ar1[indexes]
+    return ar2.argsort()[overlapping_elements.argsort()]
