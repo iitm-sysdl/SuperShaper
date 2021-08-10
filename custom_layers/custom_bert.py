@@ -1121,8 +1121,8 @@ class BertAttention(nn.Module):
             if not self.invert_importance_order and hasattr(
                 self.self.query, "inv_importance_order"
             ):
-                prev_layer_importance_order = self.query.importance_order
-                # prev_layer_inv_importance_order = self.query.inv_importance_order
+                prev_layer_importance_order = self.self.query.importance_order
+                # prev_layer_inv_importance_order = self.self.query.inv_importance_order
 
         sample_hidden_size = config.sample_hidden_size
         self.self.set_sample_config(config)
@@ -1181,10 +1181,10 @@ class BertAttention(nn.Module):
         )
         if self.config.rewire:
             if self.invert_importance_order:
-                inv_importance_order_q = self.self.query.inv_importance_order_q
+                inv_importance_order = self.self.query.inv_importance_order
 
                 # inverse the permutation before applying it in residual
-                hidden_states = hidden_states[:, :, inv_importance_order_q]
+                hidden_states = hidden_states[:, :, inv_importance_order]
 
         attention_output = self.output(self_outputs[0], hidden_states)
         outputs = (attention_output,) + self_outputs[
