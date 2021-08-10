@@ -1113,11 +1113,12 @@ class BertAttention(nn.Module):
     def set_sample_config(self, config):
         prev_layer_importance_order = None
         # prev_layer_inv_importance_order = None
-
+        sample_hidden_size = config.sample_hidden_size
         if self.config.rewire:
             self.invert_importance_order = (
-                self.config.hidden_size == self.config.sample_hidden_size
+                self.config.hidden_size == sample_hidden_size
             )
+            
             if self.invert_importance_order is False and hasattr(
                 self.self.query, "inv_importance_order"
             ):
@@ -1317,7 +1318,7 @@ class BertLayer(nn.Module):
 
         if self.config.rewire:
             self.invert_importance_order = (
-                self.config.hidden_size == self.config.sample_hidden_size
+                self.config.hidden_size == sample_hidden_size
             )
             # for sliced training
             if self.invert_importance_order is False and hasattr(
