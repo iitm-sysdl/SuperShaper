@@ -1179,7 +1179,7 @@ class BertAttention(nn.Module):
         )
         if self.config.rewire:
             if self.invert_importance_order and hasattr(
-                "self.self.query", "inv_importance_order"
+                self.self.query, "inv_importance_order"
             ):
                 inv_importance_order = self.self.query.inv_importance_order
 

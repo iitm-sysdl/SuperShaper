@@ -90,7 +90,7 @@ class BackHook:
         # like stack etc once they are uniform
         grad_out = torch.mean(torch.abs(grad_out[0]), dim=1)
         if not hasattr(module, "name"):
-            # setattr(module, "name", self.layer_num)
+            setattr(module, "name", self.layer_num)
             # setattr(module, "steps", 0)
             self.grad_output[self.layer_num] = grad_out
             self.layer_num += 1
@@ -111,7 +111,9 @@ class BackHook:
             grad_output = torch.mean(grad_output, dim=0)
             importance_order = torch.argsort(grad_output, descending=True)
             # print(f"steps: {self.steps}, max_steps: {self.max_steps}")
-            # print(f"layer num {layer_num}, imp order {importance_order[:10]}")
+            # print(
+            #     f"module {module} layer num {layer_num}, imp order {importance_order[:10]}"
+            # )
             module.register_buffer("importance_order", importance_order)
             module.register_buffer(
                 "inv_importance_order", inverse_permutation(importance_order)
@@ -186,8 +188,6 @@ def rewire_model(model, config):
                 if i == 0 and "input_bottleneck" in key:
                     continue
                 if mode == "row":
-
-                    module.importance_order = weight_permutation_order
                     weight_permutation_order = module.importance_order
                     permute_bias = True
                 elif mode == "layernorm":
@@ -206,6 +206,8 @@ def rewire_model(model, config):
                         "inv_importance_order",
                         inverse_permutation(weight_permutation_order),
                     )
+
+                print(key, weight_permutation_order[:10])
 
                 new_module = permute_linear(
                     module,
