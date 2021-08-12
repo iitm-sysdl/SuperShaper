@@ -557,7 +557,6 @@ class BertSelfOutput(nn.Module):
                     prev_layer_importance_order = prev_layer_importance_order[
                         :sample_hidden_size
                     ]
-                    self.dense.sample_importance_order = self.dense.importance_order
                     final_importance_indices = get_overlap_order(
                         self.dense.sample_importance_order, prev_layer_importance_order
                     )
@@ -575,7 +574,7 @@ class BertSelfOutput(nn.Module):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         if self.config.rewire:
-            if hasattr(self.dense, "importance_order"):
+            if hasattr(self.dense, "sample_importance_order"):
                 # reorder the input_tensor according to the new importance order
                 # input_tensor = self.dense.importance_order(hidden_states)
                 input_tensor = input_tensor[:, :, self.dense.sample_importance_order]
@@ -1115,10 +1114,8 @@ class BertAttention(nn.Module):
         # prev_layer_inv_importance_order = None
         sample_hidden_size = config.sample_hidden_size
         if self.config.rewire:
-            self.invert_importance_order = (
-                self.config.hidden_size == sample_hidden_size
-            )
-            
+            self.invert_importance_order = self.config.hidden_size == sample_hidden_size
+
             if self.invert_importance_order is False and hasattr(
                 self.self.query, "inv_importance_order"
             ):
@@ -1181,7 +1178,9 @@ class BertAttention(nn.Module):
             output_attentions,
         )
         if self.config.rewire:
-            if self.invert_importance_order:
+            if self.invert_importance_order and hasattr(
+                "self.self.query", "inv_importance_order"
+            ):
                 inv_importance_order = self.self.query.inv_importance_order
 
                 # inverse the permutation before applying it in residual
@@ -1260,7 +1259,7 @@ class BertOutput(nn.Module):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
         if self.config.rewire:
-            if hasattr(self.dense, "importance_order"):
+            if hasattr(self.dense, "sample_importance_order"):
                 importance_order = self.dense.sample_importance_order
                 input_tensor = input_tensor[:, :, importance_order]
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
@@ -1317,9 +1316,7 @@ class BertLayer(nn.Module):
         # prev_layer_inv_importance_order = None
 
         if self.config.rewire:
-            self.invert_importance_order = (
-                self.config.hidden_size == sample_hidden_size
-            )
+            self.invert_importance_order = self.config.hidden_size == sample_hidden_size
             # for sliced training
             if self.invert_importance_order is False and hasattr(
                 self.intermediate.dense, "inv_importance_order"
@@ -1442,10 +1439,13 @@ class BertLayer(nn.Module):
 
     def feed_forward_chunk(self, attention_output):
         intermediate_output = self.intermediate(attention_output)
-        if self.invert_importance_order:
-            inv_importance_order = self.intermediate.dense.inv_importance_order
-            # undo permutation before adding in residual
-            attention_output = attention_output[:, :, inv_importance_order]
+        if self.config.rewire:
+            if self.invert_importance_order and hasattr(
+                self.intermediate.dense, "inv_importance_order"
+            ):
+                inv_importance_order = self.intermediate.dense.inv_importance_order
+                # undo permutation before adding in residual
+                attention_output = attention_output[:, :, inv_importance_order]
         layer_output = self.output(intermediate_output, attention_output)
 
         return layer_output

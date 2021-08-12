@@ -590,6 +590,9 @@ def parse_args():
         if args.resume_from_checkpoint_dir is not None:
             args.resume_from_checkpoint_dir = args.rewired_model_checkpoint_dir
 
+        ## Temporary Assert until rewiring support is providied for all other BERT variants
+        assert args.mixing == "bert-bottleneck"
+
     return args
 
 

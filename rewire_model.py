@@ -90,14 +90,18 @@ class BackHook:
         # like stack etc once they are uniform
         grad_out = torch.mean(torch.abs(grad_out[0]), dim=1)
         if not hasattr(module, "name"):
-            setattr(module, "name", self.layer_num)
+            # setattr(module, "name", self.layer_num)
+            # setattr(module, "steps", 0)
             self.grad_output[self.layer_num] = grad_out
             self.layer_num += 1
         else:
             layer_num = getattr(module, "name")
+            # steps = getattr(module, "steps")
+            # print(f"computing mean for layer {layer_num}")
             self.grad_output[layer_num] = torch.mean(
                 torch.stack([self.grad_output[layer_num], grad_out]), dim=0
             )
+            # setattr(module, "steps", steps + 1)
         if self.steps >= self.max_steps:
             # logger.info("Max steps achieved")
             layer_num = getattr(module, "name")
@@ -106,6 +110,8 @@ class BackHook:
             grad_output = grad_output.view(-1, grad_output.shape[-1])
             grad_output = torch.mean(grad_output, dim=0)
             importance_order = torch.argsort(grad_output, descending=True)
+            # print(f"steps: {self.steps}, max_steps: {self.max_steps}")
+            # print(f"layer num {layer_num}, imp order {importance_order[:10]}")
             module.register_buffer("importance_order", importance_order)
             module.register_buffer(
                 "inv_importance_order", inverse_permutation(importance_order)
@@ -474,9 +480,9 @@ if __name__ == "__main__":
     global_config = get_supertransformer_config(
         args.model_name_or_path, mixing=args.mixing
     )
+    global_config.rewire = False
 
     global_config.max_seq_length = args.max_seq_length
-    global_config.rewire = True
 
     # make all dropouts zero
     global_config.hidden_dropout_prob = 0.0
@@ -695,7 +701,10 @@ if __name__ == "__main__":
 
     model.train()
 
-    max_steps = len(train_dataloader) * global_config.num_hidden_layers
+    max_steps = len(train_dataloader) * global_config.num_hidden_layers * 2 - (
+        global_config.num_hidden_layers * 2
+    )
+    # print(f"max_steps: {max_steps}")
 
     bhookfn = BackHook(max_steps=max_steps)
     model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
@@ -716,6 +725,10 @@ if __name__ == "__main__":
 
     logger.info("Rewiring model: ")
     rewire_model(model, global_config)
+
+    global_config.rewire = True
+    # to set sample_hidden_size
+    model.set_sample_config(global_config)
 
     model.eval()
 
