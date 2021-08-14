@@ -453,6 +453,7 @@ def get_supertransformer_config(
         config.key_query_shared_bottleneck = False
 
     config.mixing = mixing
+    config.rewire = False
     return config
 
 
