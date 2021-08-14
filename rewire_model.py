@@ -88,6 +88,12 @@ class BackHook:
         # mean along the seq_len dimension
         # different batches have diff seq_lens and hence it ll be easy to deal with them
         # like stack etc once they are uniform
+        for idx, out in enumerate(grad_out):
+            print(f"grad_outputs{idx}: {out.shape}")
+
+        for idx, out in enumerate(grad_in):
+            print(f"grad_inputs{idx}: {out.shape}")
+
         grad_out = torch.mean(torch.abs(grad_out[0]), dim=1)
         if not hasattr(module, "name"):
             setattr(module, "name", self.layer_num)
@@ -366,6 +372,12 @@ def parse_args():
         "--num_sentences_for_rewiring",
         type=int,
         default=10000,
+        help=f"Number of sentences to use for calculating importance values before rewiring",
+    )
+    parser.add_argument(
+        "--rewire_outputs",
+        type=int,
+        default=1,
         help=f"Number of sentences to use for calculating importance values before rewiring",
     )
 
@@ -703,27 +715,65 @@ if __name__ == "__main__":
 
     model.train()
 
-    max_steps = len(train_dataloader) * global_config.num_hidden_layers * 2 - (
-        global_config.num_hidden_layers * 2
-    )
-    # print(f"max_steps: {max_steps}")
+    if args.rewire_outputs:
+        # backhook runs for 2 modules every step. Thats why we run it for global_config.num_hidden_layers * 2
+        # len(train_dataloader) - 1 is the last training step
+        max_steps = (len(train_dataloader) - 1) * global_config.num_hidden_layers * 2
+        # print(f"max_steps: {max_steps}")
+        bhookfn = BackHook(max_steps=max_steps)
+        model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
 
-    bhookfn = BackHook(max_steps=max_steps)
-    model.bert.embeddings.word_embeddings.register_backward_hook(bhookfn)
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                # The following keys need to be backhooked:
+                # "bert.encoder.layer.*.attention.output.dense",
+                # "bert.encoder.layer.*.output.dense",
+                if "output.dense" in name:
+                    module.register_backward_hook(bhookfn)
 
-    for name, module in model.named_modules():
-        if isinstance(module, nn.Linear):
-            # The following keys need to be backhooked:
-            # "bert.encoder.layer.*.attention.output.dense",
-            # "bert.encoder.layer.*.output.dense",
-            if "output.dense" in name:
-                module.register_backward_hook(bhookfn)
-
-    logger.info(f"Calculating gradients for {max_steps} with hooks: ")
+    logger.info(f"Calculating gradients with hooks: ")
     for step, batch in enumerate(tqdm(train_dataloader)):
         outputs = model(**batch)
         loss = outputs.loss
         loss.backward()
+
+    if not args.rewire_outputs:
+
+        word_embeddings = model.bert.embeddings.word_embeddings
+        grad_embeddings = word_embeddings.weight.grad
+        grad_output = torch.abs(grad_embeddings * word_embeddings.weight).mean(dim=0)
+        imp_order = grad_output.sort(descending=True)[1]
+        word_embeddings.register_buffer("importance_order", imp_order)
+        word_embeddings.register_buffer("grad_output", grad_output)
+        word_embeddings.register_buffer(
+            "inv_importance_order", inverse_permutation(imp_order)
+        )
+
+        for i in range(global_config.num_hidden_layers):
+
+            keys = [
+                (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                (
+                    f"bert.encoder.layer.{i}.attention.output.dense",
+                    "row",
+                ),
+                (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                (f"bert.encoder.layer.{i}.output.dense", "row"),
+            ]
+            for key_mode in keys:
+                key, mode = key_mode
+                module = attrgetter(key)(model)
+                grad = module.weight.grad
+                if mode == "row":
+                    grad_output = torch.abs(grad * module.weight).mean(dim=1)
+                    imp_order = grad_output.sort(descending=True)[1]
+                    module.register_buffer("importance_order", imp_order)
+                    module.register_buffer("grad_output", grad_output)
+                    module.register_buffer(
+                        "inv_importance_order", inverse_permutation(imp_order)
+                    )
 
     logger.info("Rewiring model: ")
     rewire_model(model, global_config)
