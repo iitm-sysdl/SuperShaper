@@ -128,7 +128,7 @@ class BackHook:
             # logger.info()
 
 
-def rewire_model(model, config):
+def rewire_model(model, config, aggregate_imp_order=False):
     def permute_linear(
         W, permutation, dim="col", permute_weight=True, permute_bias=False
     ):
@@ -194,6 +194,9 @@ def rewire_model(model, config):
                 if i == 0 and "input_bottleneck" in key:
                     continue
                 if mode == "row":
+                    if aggregate_imp_order:
+                        # we use globally computed imp order for all layers
+                        module.importance_order = weight_permutation_order
                     weight_permutation_order = module.importance_order
                     permute_bias = True
                 elif mode == "layernorm":
@@ -378,7 +381,13 @@ def parse_args():
         "--rewire_outputs",
         type=int,
         default=1,
-        help=f"Number of sentences to use for calculating importance values before rewiring",
+        help=f"Whether to rewire output grads or weights",
+    )
+    parser.add_argument(
+        "--aggregate_imp_order",
+        type=int,
+        default=0,
+        help=f"sum all imp order",
     )
 
     args = parser.parse_args()
@@ -739,15 +748,20 @@ if __name__ == "__main__":
 
     if not args.rewire_outputs:
 
+        imp_orders = []
+
         word_embeddings = model.bert.embeddings.word_embeddings
         grad_embeddings = word_embeddings.weight.grad
         grad_output = torch.abs(grad_embeddings * word_embeddings.weight).mean(dim=0)
         imp_order = grad_output.sort(descending=True)[1]
-        word_embeddings.register_buffer("importance_order", imp_order)
-        word_embeddings.register_buffer("grad_output", grad_output)
-        word_embeddings.register_buffer(
-            "inv_importance_order", inverse_permutation(imp_order)
-        )
+        if not args.aggregate_imp_order:
+            word_embeddings.register_buffer("importance_order", imp_order)
+            word_embeddings.register_buffer("grad_output", grad_output)
+            word_embeddings.register_buffer(
+                "inv_importance_order", inverse_permutation(imp_order)
+            )
+        else:
+            imp_orders.append(grad_output)
 
         for i in range(global_config.num_hidden_layers):
 
@@ -769,14 +783,37 @@ if __name__ == "__main__":
                 if mode == "row":
                     grad_output = torch.abs(grad * module.weight).mean(dim=1)
                     imp_order = grad_output.sort(descending=True)[1]
+                    if not args.aggregate_imp_order:
+                        module.register_buffer("importance_order", imp_order)
+                        module.register_buffer("grad_output", grad_output)
+                        module.register_buffer(
+                            "inv_importance_order", inverse_permutation(imp_order)
+                        )
+                    else:
+                        imp_orders.append(grad_output)
+
+                elif mode == "col" and args.aggregate_imp_order:
+                    grad_output = torch.abs(grad * module.weight).mean(dim=0)
+                    imp_orders.append(grad_output)
+
+        if args.aggregate_imp_order:
+            imp_order = torch.stack(imp_orders, dim=0)
+            imp_order = imp_order.sum(dim=0).sort(descending=True)[1]
+            word_embeddings.register_buffer("importance_order", imp_order)
+            word_embeddings.register_buffer(
+                "inv_importance_order", inverse_permutation(imp_order)
+            )
+            for key_mode in keys:
+                key, mode = key_mode
+                module = attrgetter(key)(model)
+                if mode == "row":
                     module.register_buffer("importance_order", imp_order)
-                    module.register_buffer("grad_output", grad_output)
                     module.register_buffer(
                         "inv_importance_order", inverse_permutation(imp_order)
                     )
 
     logger.info("Rewiring model: ")
-    rewire_model(model, global_config)
+    rewire_model(model, global_config, args.aggregate_imp_order)
 
     global_config.rewire = True
     # to set sample_hidden_size
