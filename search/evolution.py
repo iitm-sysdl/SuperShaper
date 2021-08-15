@@ -29,6 +29,8 @@ import time
 #from tester import Tester
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 from utils import calculate_params_from_config
+from predictor import Predictor
+
 
 ## Add sampling folder to the PYTHONPATH
 from sampling import (
@@ -66,6 +68,7 @@ class EvolSearch:
         self.perplexity_predictor = perplexity_predictor
         self.gene_len = None
         self.time_budget = time_budget
+        self.population_size = population_size
 
         self.parent_size = parent_size
         self.mutation_size = mutation_size
@@ -111,6 +114,17 @@ class EvolSearch:
             
 
         return space
+    
+    def fitness_fn(self, feature): ## This is just temporary, we can remove this for a a more general implementation 
+        feature = feature or self.features 
+
+        feature = np.array(feature)
+        feature = np.reshape(feature, (1, feature.shape[0]))
+
+        score = self.perplexity_predictor.predict(feature)
+
+        return score
+
 
     def arch2feature(self, config=None):
         config = config or self.config
@@ -125,6 +139,7 @@ class EvolSearch:
                 features.append(attr)
 
         self.features = features
+
         return features
 
     def feature2arch(self, feature_in):
@@ -151,6 +166,9 @@ class EvolSearch:
     def satisfy_constraints(self, feature_in): 
         satisfy = None
         feature = feature_in or self.features
+        
+        feature = np.array(feature)
+        feature = np.reshape(feature, (1,feature.shape[0])) ## Weird but seems necessary
 
         ## This simple composition of multiple-objectives is a very slow process -> TODO: Use something like NSGA-II
         for constraints in self.constraints_set:
@@ -158,7 +176,7 @@ class EvolSearch:
                 assert self.latency_predictor is not None
 
                 lat = self.latency_predictor.predict(feature)
-                if lat <= self.constraints_set[constraints] or if self.constraints_set[constraints] == -1:
+                if lat <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
                     satisfy = True
                 else:
                     return False
@@ -166,7 +184,7 @@ class EvolSearch:
                 assert self.perplexity_predictor is not None
 
                 perp = self.perplexity_predictor.predict(feature)
-                if perp <= self.constraints_set[constraints]:
+                if perp <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
                     satisfy = True
                 else:
                     return False
@@ -176,22 +194,32 @@ class EvolSearch:
                     satisfy = True
                 else:
                     return False
+            elif 'none' in constraints: ## Trivially True
+                return True
 
         if satisfy is None:
             raise NotImplementedError
 
         return satisfy
     
-    def random_sample_arch(self):
+    def random_sample_arch(self, config=None):
         space = self.get_search_space()
-        num_hidden_layers = space["num_hidden_layers"][0]
+        
+        config = config or copy.deepcopy(self.config) 
 
-        return {
+        num_hidden_layers = space["sample_num_hidden_layers"][0]
+        
+        tmp_dict = {
             "sample_hidden_size": random.choices(space["sample_hidden_size"], k=num_hidden_layers),
             "sample_num_attention_heads": random.choices(space["sample_num_attention_heads"], k=num_hidden_layers),
             "sample_intermediate_size": random.choices(space["sample_intermediate_size"], k=num_hidden_layers),
-            "sample_num_hidden_layers": random.choices(space["sample_num_hidden_layers"], k=num_hidden_layers),
+            "sample_num_hidden_layers": random.choices(space["sample_num_hidden_layers"], k=1),
         }
+
+        for keys in tmp_dict.keys():
+            setattr(config, keys, tmp_dict[keys])
+
+        return config
 
     def random_sample(self):
         population = []
@@ -215,11 +243,14 @@ class EvolSearch:
         return population
 
     def evaluate_fitness(self, population):
+        assert self.fitness_fn is not None
+
         eval_archs = []
         fitness_fn = self.fitness_fn
 
         for p in population: 
-            score = fitness_fn(self.feature2arch(p))
+            #score = fitness_fn(self.feature2arch(p))
+            score = fitness_fn(p)
             #score = self.tester.get_fitness(self.feature2arch(p), fitness_fn)
             eval_archs.append(score)
 
@@ -260,11 +291,11 @@ class EvolSearch:
 
             sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
 
-            self.best_config = self.feature2arch(population[sorted_ind[0]])
+            self.best_config = self.feature2arch(population[sorted_ind[0].item()])
             print(f"| Config for highest accuracy model: {self.best_config}")
 
-            parents_next_iter  =  [population[m] for m in sorted_ind]
-            parents_next_score =  [fitness_scores[m] for m in sorted_ind]
+            parents_next_iter  =  [population[m.item()] for m in sorted_ind]
+            parents_next_score =  [fitness_scores[m.item()] for m in sorted_ind]
 
             mutations = [] 
             k = 0
@@ -306,8 +337,23 @@ def test():
     fitness_set = None,
     ckpt_path = None, 
     accelerator = None,     
+
+    constraints_set = { 'perplexity' : -1 } ## Just specifying an unbounded value to begin with
+    perplexity_predictor = Predictor(ckpt='./perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
+    perplexity_predictor.load_ckpt()
     
-    evolution = EvolSearch(population_size, parent_size, mutation_size, crossover_size, task, mutation_prob, time_budget, search_space_config, bert_config)
+    evolution = EvolSearch(population_size, 
+                           parent_size, 
+                           mutation_size, 
+                           crossover_size, 
+                           task, 
+                           mutation_prob, 
+                           time_budget, 
+                           search_space_config, 
+                           bert_config,
+                           constraints_set = constraints_set, 
+                           perplexity_predictor = perplexity_predictor
+                           )
 
     ### Testing Get Search Space ### 
     space = evolution.get_search_space()
@@ -341,6 +387,11 @@ def test():
 
     print("--------------------------------------")
 
+    ### Testing Random Sampling and Evolutionary Search ### 
+    sampled_population = evolution.random_sample()
+    print(sampled_population)
+
+    print(evolution.run_evo_search())
 
 if __name__ == "__main__":
     test()
