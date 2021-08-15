@@ -3020,6 +3020,20 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
         self.init_weights()
 
+    def set_sample_config(self, config):
+        sample_hidden_size = config.sample_hidden_size
+        if config.mixing == "bert-bottleneck":
+            sample_hidden_size = config.hidden_size
+        self.bert.set_sample_config(config)
+        self.qa_outputs.set_sample_config(sample_hidden_size, config.num_labels)
+
+    def get_active_subnet(self, config):
+        subnet = BertForMaskedLM(config)
+        # subnet.set_sample_config(config)
+        subnet.bert = self.bert.get_active_subnet(config)
+        subnet.cls = self.cls.get_active_subnet(config)
+        # subnet.classifier = self.classifier.get_active_subnet()
+
     @add_start_docstrings_to_model_forward(
         BERT_INPUTS_DOCSTRING.format("batch_size, sequence_length")
     )
