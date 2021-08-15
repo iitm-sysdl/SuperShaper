@@ -8,6 +8,45 @@ from scipy.stats import spearmanr
 import math
 from sklearn.utils import shuffle
 import plotly.graph_objects as go
+import json
+from transformers import BertConfig
+
+## Move this to utils later ## 
+def convert_to_dict(string):
+    _dict = json.loads(
+        string.replace("BertConfig ", "").replace("\n", "").replace('""', '"')
+    )
+    return BertConfig(**_dict)
+
+
+def generate_dataset(features_file, pred_type='perplexity'):
+    df = pd.read_csv(features_file) 
+    df["config"] = df["config"].map(convert_to_dict)
+
+    feature_dict = {
+        "sample_hidden_size": [],
+        "sample_num_attention_heads": [],
+        "sample_intermediate_size": [],
+        "sample_num_hidden_layers": [],
+        pred_type: [],
+
+    }
+    
+    for index, row in df.iterrows():
+        cfg = row["config"]
+
+        for key in feature_dict.keys():
+            if key == pred_type:
+                feature_dict[key].append(row["perplexity"])
+            else:
+                attr = getattr(cfg, key)
+                feature_dict[key].append(attr)
+    
+    return pd.DataFrame.from_dict(feature_dict)
+
+def row_mapper(row):
+    return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"]])
+
 
 class Predictor():
     def __init__(self, dataset_path=None, ckpt=None, pred_type='latency', model_type='xgb'):
@@ -50,33 +89,37 @@ class Predictor():
     def store_ckpt(self, str_path):
         self.model.save_model(str_path)
 
-    def read_dataset(self):
-        assert self.dataset_path is not None
+    def read_dataset(self, df=None):
 
-        df = pd.read_csv(self.dataset_path)
+        if self.dataset_path is not None:
+            assert df is None
+            df = pd.read_csv(self.dataset_path)
 
         ## Figure out how to normalize
         #df = df / df.max() ## Normalizing 
         
-        df_features = df.drop([pred_type], axis=1)
+        df_features = df.drop([self.pred_type], axis=1)
         df_metric = df.drop(self.keys, axis=1)
-
-        features = df_features.to_numpy()
+         
         metric = df_metric.to_numpy()
+        
+        df_features["merged_features"] = df_features.apply(row_mapper, axis=1)
 
+        features = np.vstack(df_features["merged_features"].tolist())
+        
         self.dataset = (features, metric)
 
         return self.dataset
 
-    def train(self, dataset, split=0.7):
+    def train(self, dataset=None, split=0.7):
         dataset = dataset or self.dataset
 
         features, metric = dataset
         
         trainf = features[:int(split*len(features))]
-        trainy = time[:int(split*len(features))]
+        trainy = metric[:int(split*len(features))]
         testf = features[int(split*len(features)):]
-        testy = time[int(split*len(features)):]
+        testy = metric[int(split*len(features)):]
 
         if self.model_type == 'lgbm':
             lgbm_train_data = self.model.Dataset(trainf, label=trainy)
@@ -92,7 +135,7 @@ class Predictor():
         testScore = math.sqrt(mean_squared_error(testy, test_predict))
 
         r2_score_test = sklearn.metrics.r2_score(testy, test_predict)
-        s_coefficient, pvalue = spearmanr(testy, testPredict)
+        s_coefficient, pvalue = spearmanr(testy, test_predict)
         
         print("R2 Score: %f, Spearman Coefficient: %f, PValue: %f"%(r2_score_test, s_coefficient, pvalue))
 
@@ -110,15 +153,17 @@ class Predictor():
 
         fig.update_layout(xaxis_title="Actual Metric", yaxis_title="Predicted Metric", height=700, width=1000)
         
-        fig.write_image("./metrics.pdf")
+        fig.write_image("./metrics_"+self.pred_type+"_.pdf")
     
     def predict(self, feature_in):
         return self.model.predict(feature_in)
 
 
 def test():
-    pass
-
+    df = generate_dataset('./subtransformer_stats.csv')
+    predictor = Predictor(pred_type='perplexity', model_type='xgb')
+    predictor.read_dataset(df)
+    predictor.train()
 
 if __name__ == "__main__":
     test()
