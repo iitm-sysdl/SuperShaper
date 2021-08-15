@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from accelerate import Accelerator, DistributedType
 from datasets import load_dataset, load_metric
+import copy
 from transformers import (
     AdamW,
     AutoTokenizer,
@@ -25,10 +26,17 @@ import os
 from pprint import pprint
 import pandas as pd
 import time
-from tester import Tester
+#from tester import Tester
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 from utils import calculate_params_from_config
 
+## Add sampling folder to the PYTHONPATH
+from sampling import (
+    Sampler,
+    get_supertransformer_config,
+    show_random_elements,
+    show_args,
+)
 
 class EvolSearch:
     def __init__(
@@ -44,47 +52,63 @@ class EvolSearch:
         bert_config=None,
         constraints_set=None,
         latency_predictor = None,
+        perplexity_predictor = None,
         fitness_set = None,
         ckpt_path = None, 
         accelerator = None, 
     ):
 
-    self.search_space_config = search_space_config
-    self.config = bert_config
-    self.features = None
-    self.constraints_set = constraints_set
-    self.latency_predictor = latency_predictor
-    self.gene_len = None
-    self.time_budget = time_budget
+        self.search_space_config = search_space_config
+        self.config = bert_config
+        self.features = None
+        self.constraints_set = constraints_set
+        self.latency_predictor = latency_predictor
+        self.perplexity_predictor = perplexity_predictor
+        self.gene_len = None
+        self.time_budget = time_budget
 
-    self.parent_size = parent_size
-    self.mutation_size = mutation_size
-    self.crossover_size = crossover_size
+        self.parent_size = parent_size
+        self.mutation_size = mutation_size
+        self.crossover_size = crossover_size
 
-    self.mutation_prob = mutation_prob
+        self.mutation_prob = mutation_prob
+        self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers"]
 
     def get_search_space(self):
         space = {
             "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
-            "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers+1, 2))
+            #"sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers+1, 2))
+            "sample_num_hidden_layers": [12]
         } 
 
         if self.search_space_config == 'bert-bottleneck':
             space["sample_hidden_size"] = [120, 240, 360, 480, 540, 600, 768] 
-            space["sample_num_attention_heads"] = [12]
-            space["sample_intermediate_size"] = [3072]
+            space["sample_num_attention_heads"] = [6,8,12]
+            space["sample_intermediate_size"] = [1024,2048,3072]
             space["sample_num_hidden_layers"] = [12]
-        elif self.search_space_config is not 'bert-bottleneck' and self.search_space_config is not 'attention':
+        elif self.search_space_config != 'bert-bottleneck' and self.search_space_config != 'attention':
             raise NotImplementedError
 
         gene_len = 0
-        num_hidden_layers = space["sample_num_hidden_layers"]
-        for key in space:
-            gene_len += len(space[key])*num_hidden_layers
+        num_hidden_layers = space["sample_num_hidden_layers"][0]
 
+        ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
+        gene_len = (len(space.keys()) - 1) * num_hidden_layers + 1
         self.gene_len = gene_len
+        
+        self.gene_choice = []
+        for key in self.keys:
+            if key == "sample_num_hidden_layers":
+                break
+
+            for i in range(num_hidden_layers):
+                self.gene_choice.append(space[key])
+                
+        
+        self.gene_choice.append(space["sample_num_hidden_layers"])
+            
 
         return space
 
@@ -92,12 +116,13 @@ class EvolSearch:
         config = config or self.config
         features = []
 
-        for key in config:
-            if 'sample_' in key:
-                if isinstance(config[key], list):
-                    features += config[key]
-                else:
-                    features.append(config[key])
+        ## Have the features arranged layerwise
+        for key in self.keys:
+            attr = getattr(config, key)
+            if isinstance(attr, list):
+                features += attr
+            else:
+                features.append(attr)
 
         self.features = features
         return features
@@ -105,18 +130,23 @@ class EvolSearch:
     def feature2arch(self, feature_in):
         features = feature_in or self.features
         feature_cnt = 0 
-        space = self.get_search_space()
-        num_hidden_layers = space["sample_num_hidden_layers"]
+        num_hidden_layers = getattr(self.config, "sample_num_hidden_layers")
 
-        for key in space:
+        arch_config = copy.deepcopy(self.config)
+
+        ## Change config here
+        for key in self.keys:
             if 'sample_num_hidden_layers' in key:
                 continue
 
+            arch_conf_lst = []
             for i in range(num_hidden_layers):
-                space[key][i] = features[feature_cnt]
+                arch_conf_lst.append(features[feature_cnt])
                 feature_cnt += 1
+            
+            setattr(arch_config, key, arch_conf_lst)
 
-        return space
+        return arch_config
 
     def satisfy_constraints(self, feature_in): 
         satisfy = None
@@ -125,12 +155,16 @@ class EvolSearch:
         ## This simple composition of multiple-objectives is a very slow process -> TODO: Use something like NSGA-II
         for constraints in self.constraints_set:
             if 'latency' in constraints: 
+                assert self.latency_predictor is not None
+
                 lat = self.latency_predictor.predict(feature)
                 if lat <= self.constraints_set[constraints]:
                     satisfy = True
                 else:
                     return False
             elif 'perplexity' in constraints: 
+                assert self.perplexity_predictor is not None
+
                 perp = self.perplexity_predictor.predict(feature)
                 if perp <= self.constraints_set[constraints]:
                     satisfy = True
@@ -150,7 +184,7 @@ class EvolSearch:
     
     def random_sample_arch(self):
         space = self.get_search_space()
-        num_hidden_layers = space["num_hidden_layers"]
+        num_hidden_layers = space["num_hidden_layers"][0]
 
         return {
             "sample_hidden_size": random.choices(space["sample_hidden_size"], k=num_hidden_layers),
@@ -163,7 +197,7 @@ class EvolSearch:
         population = []
         cnt = 0
         total = 0
-        self.accelerator.print(f"Randomly sampling architectures")
+        print(f"Randomly sampling architectures")
         
         space = self.get_search_space()
 
@@ -175,7 +209,7 @@ class EvolSearch:
                 population.append(candidate_gene)
                 cnt += 1
             total += 1
-        self.accelerator.print(
+        print(
             f"Only {cnt} out of {total} total generated samples were under given constraints."
         )
         return population
@@ -185,29 +219,33 @@ class EvolSearch:
         fitness_fn = self.fitness_fn
 
         for p in population: 
-            score = self.tester.get_fitness(self.feature2arch(p), fitness_fn)
+            score = fitness_fn(self.feature2arch(p))
+            #score = self.tester.get_fitness(self.feature2arch(p), fitness_fn)
             eval_archs.append(score)
 
         return eval_archs
 
     def crossover(self, genes):
-        crossovered_gene = []
+        crossedover_gene = []
         for i in range(self.gene_len):
             if np.random.uniform() < 0.5:
-                crossovered_gene.append(genes[0][i])
+                crossedover_gene.append(genes[0][i])
             else:
-                crossovered_gene.append(genes[1][i])
+                crossedover_gene.append(genes[1][i])
 
-        return crossovered_gene
+        return crossedover_gene
 
 
-    def mutate(self, gene):
+    def mutate(self, feature_in):
+        feature = feature_in or self.features
+        search_space = self.get_search_space() # Just to ensure self.gene_choice is updated 
+
         mutated_gene = []
         for i in range(self.gene_len):
             if np.random.uniform() < self.mutation_prob:
                 mutated_gene.append(random.choice(self.gene_choice[i]))
             else:
-                mutated_gene.append(gene[i])
+                mutated_gene.append(feature[i])
 
         return mutated_gene
 
@@ -217,13 +255,13 @@ class EvolSearch:
         population = self.random_sample()
 
         for i in range(self.time_budget):
-            self.accelerator.print(f"| Start Iteration {i}:")
-            fitness_scores = self.get_fitness(population)
+            print(f"| Start Iteration {i}:")
+            fitness_scores = self.evaluate_fitness(population)
 
             sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
 
-            self.best_config = self.feature2arch(population[sorted_ind[0])
-            self.accelerator.print(f"| Config for highest accuracy model: {self.best_config}")
+            self.best_config = self.feature2arch(population[sorted_ind[0]])
+            print(f"| Config for highest accuracy model: {self.best_config}")
 
             parents_next_iter  =  [population[m] for m in sorted_ind]
             parents_next_score =  [fitness_scores[m] for m in sorted_ind]
@@ -247,8 +285,62 @@ class EvolSearch:
 
             population = parents_next_iter + mutations + crossovers
 
-        return self.best_config, self.max_acc, self.config_latency
+        return self.best_config
+
+
+def test(): 
+    population_size = 30
+    parent_size = 30
+    mutation_size = 10
+    crossover_size = 10 
+    task = 'mlm'
+    mutation_prob = 0.8 
+    time_budget = 1
+    search_space_config = 'bert-bottleneck'
+
+    bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
+
+    constraints_set=None,
+    perplexity_predictor=None,
+    latency_predictor = None,
+    fitness_set = None,
+    ckpt_path = None, 
+    accelerator = None,     
+    
+    evolution = EvolSearch(population_size, parent_size, mutation_size, crossover_size, task, mutation_prob, time_budget, search_space_config, bert_config)
+
+    ### Testing Get Search Space ### 
+    space = evolution.get_search_space()
+    print(space)
+    print(evolution.gene_len)
+    
+    print("--------------------------------------")
+
+    ### Testing arch2feature and feature2arch ### 
+    gene = evolution.arch2feature(bert_config)
+    print(gene)
+    
+    print("--------------------------------------")
+        
+    gene[0] = gene[1] = gene[-2] = gene[-3] = 256
+    feature = evolution.feature2arch(gene)
+    print(feature)
+    
+    print("--------------------------------------")
+
+    ### Testing Mutation and Crossover ###
+    mutated_gene = evolution.mutate(gene)
+    print(mutated_gene)
+
+    print("--------------------------------------")
+
+    crossedover_gene = evolution.crossover([gene, mutated_gene])
+    print(gene)
+    print(mutated_gene)
+    print(crossedover_gene)
+
+    print("--------------------------------------")
 
 
 if __name__ == "__main__":
-    pass
+    test()
