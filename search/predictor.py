@@ -79,10 +79,10 @@ class Predictor():
         assert self.ckpt is not None
 
         if self.model_type == 'lgbm':
-            self.model = lgbm.Booster(model_file=self.ckpt_path)
+            self.model = lgbm.Booster(model_file=self.ckpt)
         elif self.model_type == 'xgb':
             self.model = XGBRegressor()
-            self.model.load_model(self.ckpt_path)
+            self.model.load_model(self.ckpt)
         else:
             raise NotImplementedError
 
@@ -164,6 +164,7 @@ def test():
     predictor = Predictor(pred_type='perplexity', model_type='xgb')
     predictor.read_dataset(df)
     predictor.train()
+    predictor.store_ckpt('./perplexity_predictor.xgb')
 
 if __name__ == "__main__":
     test()
