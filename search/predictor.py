@@ -137,6 +137,7 @@ class Predictor():
         r2_score_test = sklearn.metrics.r2_score(testy, test_predict)
         s_coefficient, pvalue = spearmanr(testy, test_predict)
         
+        print(f"Number of Training Examples: {trainf.shape} , Test Data: {testf.shape}")
         print("R2 Score: %f, Spearman Coefficient: %f, PValue: %f"%(r2_score_test, s_coefficient, pvalue))
 
         if self.model == 'xgb':
@@ -149,7 +150,8 @@ class Predictor():
         fig = go.Figure()
 
         testy = np.reshape(test_actual, (test_predict.shape[0],))
-        fig.add_trace(go.Scatter(x=test_actual, y=test_predict, mode='markers'))
+
+        fig.add_trace(go.Scatter(x=testy, y=test_predict, mode='markers'))
 
         fig.update_layout(xaxis_title="Actual Metric", yaxis_title="Predicted Metric", height=700, width=1000)
         
