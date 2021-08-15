@@ -158,7 +158,7 @@ class EvolSearch:
                 assert self.latency_predictor is not None
 
                 lat = self.latency_predictor.predict(feature)
-                if lat <= self.constraints_set[constraints]:
+                if lat <= self.constraints_set[constraints] or if self.constraints_set[constraints] == -1:
                     satisfy = True
                 else:
                     return False
