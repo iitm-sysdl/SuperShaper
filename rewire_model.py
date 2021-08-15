@@ -250,9 +250,6 @@ def rewire_model(model, config, aggregate_imp_order=False):
                 if i == 0 and "input_bottleneck" in key:
                     continue
                 if mode == "row":
-                    if aggregate_imp_order:
-                        # we use globally computed imp order for all layers
-                        module.importance_order = weight_permutation_order
                     weight_permutation_order = module.importance_order
                     permute_bias = True
                 elif mode == "layernorm":
@@ -781,7 +778,7 @@ if __name__ == "__main__":
         accelerator,
         len(eval_dataset),
         args.per_device_eval_batch_size,
-        False,
+        args.pad_to_max_length,
     )
     perplexity_before_rewiring = eval_metric["perplexity"]
 
@@ -866,14 +863,27 @@ if __name__ == "__main__":
             word_embeddings.register_buffer(
                 "inv_importance_order", inverse_permutation(imp_order)
             )
-            for key_mode in keys:
-                key, mode = key_mode
-                module = attrgetter(key)(model)
-                if mode == "row":
-                    module.register_buffer("importance_order", imp_order)
-                    module.register_buffer(
-                        "inv_importance_order", inverse_permutation(imp_order)
-                    )
+            for i in range(global_config.num_hidden_layers):
+
+                keys = [
+                    (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                    (
+                        f"bert.encoder.layer.{i}.attention.output.dense",
+                        "row",
+                    ),
+                    (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                    (f"bert.encoder.layer.{i}.output.dense", "row"),
+                ]
+                for key_mode in keys:
+                    key, mode = key_mode
+                    module = attrgetter(key)(model)
+                    if mode == "row":
+                        module.register_buffer("importance_order", imp_order)
+                        module.register_buffer(
+                            "inv_importance_order", inverse_permutation(imp_order)
+                        )
 
     logger.info("Rewiring model: ")
     rewire_model(model, global_config, args.aggregate_imp_order)
@@ -892,7 +902,7 @@ if __name__ == "__main__":
         accelerator,
         len(eval_dataset),
         args.per_device_eval_batch_size,
-        False,
+        args.pad_to_max_length,
     )
     perplexity_after_rewiring = eval_metric["perplexity"]
 
