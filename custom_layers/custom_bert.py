@@ -557,8 +557,11 @@ class BertSelfOutput(nn.Module):
                     prev_layer_importance_order = prev_layer_importance_order[
                         :sample_hidden_size
                     ]
-                    final_importance_indices = get_overlap_order(
-                        self.dense.sample_importance_order, prev_layer_importance_order
+                    # final_importance_indices = get_overlap_order(
+                    #     self.dense.sample_importance_order, prev_layer_importance_order
+                    # )
+                    final_importance_indices = torch.arange(
+                        sample_hidden_size, requires_grad=False
                     )
                     self.dense.sample_importance_order = final_importance_indices
 
@@ -1250,8 +1253,11 @@ class BertOutput(nn.Module):
                         :sample_hidden_size
                     ]
 
-                    final_importance_indices = get_overlap_order(
-                        self.dense.sample_importance_order, prev_layer_importance_order
+                    # final_importance_indices = get_overlap_order(
+                    #     self.dense.sample_importance_order, prev_layer_importance_order
+                    # )
+                    final_importance_indices = torch.arange(
+                        sample_hidden_size, requires_grad=False
                     )
                     self.dense.sample_importance_order = final_importance_indices
 
@@ -1425,7 +1431,6 @@ class BertLayer(nn.Module):
             self.seq_len_dim,
             attention_output,
         )
-
         if self.use_bottleneck:
             layer_output = self.output_bottleneck(layer_output)
 

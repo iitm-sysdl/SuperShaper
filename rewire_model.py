@@ -88,11 +88,11 @@ class BackHook:
         # mean along the seq_len dimension
         # different batches have diff seq_lens and hence it ll be easy to deal with them
         # like stack etc once they are uniform
-        for idx, out in enumerate(grad_out):
-            print(f"grad_outputs{idx}: {out.shape}")
+        # for idx, out in enumerate(grad_out):
+        #     # print(f"grad_outputs{idx}: {out.shape}")
 
-        for idx, out in enumerate(grad_in):
-            print(f"grad_inputs{idx}: {out.shape}")
+        # for idx, out in enumerate(grad_in):
+        #     print(f"grad_inputs{idx}: {out.shape}")
 
         grad_out = torch.mean(torch.abs(grad_out[0]), dim=1)
         if not hasattr(module, "name"):
@@ -154,64 +154,11 @@ def permute_linear(W, permutation, dim="col", permute_weight=True, permute_bias=
     return W
 
 
-def reorient_model(model, config):
-    print("Reorienting Model")
-    num_hidden_layers = config.num_hidden_layers
-    with torch.no_grad():
-
-        for ind in range(num_hidden_layers):
-            print(ind)
-            keys_to_permute = [
-                (f"bert.encoder.layer.{ind}.attention.self.query", "col"),
-                (f"bert.encoder.layer.{ind}.attention.self.key", "col"),
-                (f"bert.encoder.layer.{ind}.attention.self.value", "col"),
-                (
-                    f"bert.encoder.layer.{ind}.attention.output.dense",
-                    "row",
-                ),
-                (f"bert.encoder.layer.{ind}.attention.output.LayerNorm", "layernorm"),
-                (f"bert.encoder.layer.{ind}.intermediate.dense", "col"),
-                (f"bert.encoder.layer.{ind}.output.dense", "row"),
-                (f"bert.encoder.layer.{ind}.output_bottleneck", "row"),
-                (f"bert.encoder.layer.{ind}.output.LayerNorm", "layernorm"),
-            ]
-
-            for keys in keys_to_permute:
-                key, mode = keys
-                module = attrgetter(key)(model)
-
-                if "query" in key:
-                    wq_order = module.importance_order
-
-                if (
-                    "attention.output.dense" in key
-                    or "attention.output.LayerNorm" in key
-                    or "intermediate.dense" in key
-                ):
-                    module.importance_order = wq_order
-
-                if "output.dense" in key or "output.LayerNorm" in key:
-                    module.importance_order = torch.arange(len(module.importance_order))
-
-                if "output_bottleneck" in key:
-                    if ind < num_hidden_layers - 1:
-                        module_next = attrgetter(
-                            f"bert.encoder.layer.{ind+1}.attention.self.query"
-                        )(model)
-
-                        new_module = permute_linear(
-                            module,
-                            module_next.importance_order,
-                            dim="row",
-                            permute_bias=False,
-                        )
-
-                        rsetattr(model, key, new_module)
-
-                        # module.register_buffer("importance_order", module_next.importance_order)
-
-
-def rewire_model(model, config, aggregate_imp_order=False):
+def rewire_model(
+    model,
+    config,
+    layerwise_importance=False,
+):
     with torch.no_grad():
         num_layers = config.num_hidden_layers
         embeddings = model.bert.embeddings.word_embeddings
@@ -229,26 +176,67 @@ def rewire_model(model, config, aggregate_imp_order=False):
         )
 
         for i in range(num_layers):
-
-            keys_to_permute = [
-                (f"bert.encoder.layer.{i}.attention.self.query", "col"),
-                (f"bert.encoder.layer.{i}.attention.self.key", "col"),
-                (f"bert.encoder.layer.{i}.attention.self.value", "col"),
-                (
-                    f"bert.encoder.layer.{i}.attention.output.dense",
-                    "row",
-                ),
-                (f"bert.encoder.layer.{i}.attention.output.LayerNorm", "layernorm"),
-                (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
-                (f"bert.encoder.layer.{i}.output.dense", "row"),
-                (f"bert.encoder.layer.{i}.output.LayerNorm", "layernorm"),
-            ]
+            if layerwise_importance:
+                keys_to_permute = [
+                    (f"bert.encoder.layer.{i}.input_bottleneck", "row"),
+                    (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                    (
+                        f"bert.encoder.layer.{i}.attention.output.dense",
+                        "row",
+                    ),
+                    (f"bert.encoder.layer.{i}.attention.output.LayerNorm", "layernorm"),
+                    (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                    (f"bert.encoder.layer.{i}.output.dense", "row"),
+                    (f"bert.encoder.layer.{i}.output.LayerNorm", "layernorm"),
+                    (f"bert.encoder.layer.{i}.output_bottleneck", "col"),
+                ]
+                # get the weight permutation order for that layer
+                weight_permutation_order = attrgetter(
+                    f"bert.encoder.layer.{i}.input_bottleneck"
+                )(model).importance_order
+            else:
+                keys_to_permute = [
+                    (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                    (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                    (
+                        f"bert.encoder.layer.{i}.attention.output.dense",
+                        "row",
+                    ),
+                    (f"bert.encoder.layer.{i}.attention.output.LayerNorm", "layernorm"),
+                    (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                    (f"bert.encoder.layer.{i}.output.dense", "row"),
+                    (f"bert.encoder.layer.{i}.output.LayerNorm", "layernorm"),
+                ]
             for key_mode in keys_to_permute:
                 key, mode = key_mode
                 module = attrgetter(key)(model)
 
                 if i == 0 and "input_bottleneck" in key:
                     continue
+
+                if layerwise_importance and "output_bottleneck" in key:
+                    if i == num_layers - 1:
+                        # don't permute the last layer
+                        continue
+                    else:
+                        # # output bottlenecks should inv permute the input so that the input order is back to normal
+                        # inv_importance_order = inverse_permutation(
+                        #     weight_permutation_order
+                        # )
+                        # print(key, inv_importance_order[:10])
+                        # permute the output layer
+                        new_module = permute_linear(
+                            module,
+                            weight_permutation_order,
+                            dim=mode,
+                            permute_bias=False,
+                        )
+                        rsetattr(model, key, new_module)
+                        continue
+
                 if mode == "row":
                     weight_permutation_order = module.importance_order
                     permute_bias = True
@@ -278,7 +266,6 @@ def rewire_model(model, config, aggregate_imp_order=False):
                     permute_bias=permute_bias,
                 )
                 rsetattr(model, key, new_module)
-                module = attrgetter(key)(model)
         # final importance order is stored
         model.bert.register_buffer(
             "inv_importance_order", inverse_permutation(weight_permutation_order)
@@ -442,12 +429,11 @@ def parse_args():
         default=0,
         help=f"sum all imp order",
     )
-
     parser.add_argument(
-        "--reorient",
+        "--layerwise_importance",
         type=int,
         default=0,
-        help=f"Number of sentences to use for calculating importance values before rewiring",
+        help=f"sum all imp order",
     )
 
     args = parser.parse_args()
@@ -482,6 +468,11 @@ def parse_args():
         check_path(args.c4_dir)
 
         args.dataset_name = "c4_realnews"
+
+    if args.layerwise_importance:
+        assert (
+            args.rewire_outputs == 1
+        ), "layerwise importance only works with rewire_outputs=1"
 
     return args
 
@@ -806,6 +797,46 @@ if __name__ == "__main__":
         loss = outputs.loss
         loss.backward()
 
+    if args.layerwise_importance and args.rewire_outputs:
+        emb_importance_order = model.bert.embeddings.word_embeddings.importance_order
+
+        for i in range(global_config.num_hidden_layers):
+            keys = [
+                (f"bert.encoder.layer.{i}.input_bottleneck", "row"),
+                (f"bert.encoder.layer.{i}.attention.self.query", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.key", "col"),
+                (f"bert.encoder.layer.{i}.attention.self.value", "col"),
+                (
+                    f"bert.encoder.layer.{i}.attention.output.dense",
+                    "row",
+                ),
+                (f"bert.encoder.layer.{i}.attention.output.LayerNorm", "layernorm"),
+                (f"bert.encoder.layer.{i}.intermediate.dense", "col"),
+                (f"bert.encoder.layer.{i}.output.dense", "row"),
+                (f"bert.encoder.layer.{i}.output.LayerNorm", "layernorm"),
+                (f"bert.encoder.layer.{i}.output_bottleneck", "col"),
+            ]
+
+            if i == 0:
+                importance_order = emb_importance_order
+            else:
+                importance_order = attrgetter(f"bert.encoder.layer.{i}.output.dense")(
+                    model
+                ).importance_order
+
+            inv_importance_order = inverse_permutation(importance_order)
+
+            for key_mode in keys:
+                key, mode = key_mode
+                module = attrgetter(key)(model)
+                if "input_bottleneck" in key:
+                    module.register_buffer("importance_order", importance_order)
+                    module.register_buffer("inv_importance_order", inv_importance_order)
+                elif mode == "row":
+                    module.importance_order = importance_order
+                    module.inv_importance_order = inv_importance_order
+
+    # weight rewiring
     if not args.rewire_outputs:
 
         imp_orders = []
@@ -886,16 +917,16 @@ if __name__ == "__main__":
                         )
 
     logger.info("Rewiring model: ")
-    rewire_model(model, global_config, args.aggregate_imp_order)
-    if args.reorient:
-        reorient_model(model, global_config)
+    model(**batch)
+    rewire_model(model, global_config, args.layerwise_importance)
 
     global_config.rewire = True
     # to set sample_hidden_size
     model.set_sample_config(global_config)
+    model.bert.encoder.layer[0].print_outputs = True
+    model(**batch)
 
     model.eval()
-
     eval_metric = validate_subtransformer(
         model,
         eval_dataloader,
