@@ -77,12 +77,32 @@ def validate_subtransformer(
         return true_predictions, true_labels
 
     losses = []
+    exec_time = []
     model.eval()
+
     for step, batch in enumerate(eval_dataloader):
         # We could avoid this line since we set the accelerator with `device_placement=True`.
         batch.to(accelerator.device)
+
+        if args.evaluate_latency:
+            if accelerator.device == 'cuda':
+                start_time = torch.cuda.Event(enable_timing=True)
+                end_time = torch.cuda.Event(enable_timing=True)
+                start_time.record()
+            else:
+                start_time = time.monotonic()
+
         with torch.no_grad():
             outputs = model(**batch)
+
+
+        if args.evaluate_latency:
+            if accelerator.device == 'cuda':
+                end_time.record()
+                torch.cuda.synchronize()
+                exec_time.append(start_time.elapsed_time(end) / 1000) ## Measured in seconds
+            else:
+                exec_time.append((time.monotonic() - start_time) / 1000) ## Measured in seconds
 
         loss = outputs.loss
         losses.append(accelerator.gather(loss.repeat(per_device_eval_batch_size)))
@@ -111,12 +131,17 @@ def validate_subtransformer(
 
     try:
         val_loss = torch.mean(losses)
+        if args.evaluate_latency:
+            execution_time = statistics.mean(exec_time)
         perplexity = math.exp(torch.mean(losses))
     except OverflowError:
         perplexity = float("inf")
 
     eval_metric["val_loss"] = val_loss
     eval_metric["perplexity"] = perplexity
+
+    if args.evaluate_latency:
+        eval_metric["exec_time"] = execution_time
 
     return eval_metric
 
@@ -268,6 +293,13 @@ def parse_args():
         type=str,
         default=None,
         help=f"The path to a subtransformer configration",
+    )
+
+    parser.add_argument(
+        "--evaluate_latency",
+        type=int, 
+        default=0,
+        help=f"Evaluate Latency",
     )
 
     args = parser.parse_args()
@@ -647,10 +679,13 @@ def main():
         # sample args.num_subtransformers_eval random seeds from 1e6
         random_seeds = random.choices(np.arange(1e6), k=args.num_subtransformers_eval)
 
-    subtranformer_peplexities = []
-    subtranformer_accuracies = []
-    subtranformer_losses = []
-    subtranformer_configs = []
+    subtransformer_peplexities = []
+    subtransformer_accuracies = []
+    subtransformer_losses = []
+    subtransformer_configs = []
+
+    if args.evaluate_latency:
+        subtransformer_latencies = []
 
     sampler = Sampler("random", "none", args.mixing, global_config)
 
@@ -663,6 +698,10 @@ def main():
                 rand_seed=_seed,
             )["random_subtransformers"][0]
         model.set_sample_config(subtransformer_config)
+
+        if args.evaluate_latency:
+            model = model.get_active_subnet(subtransformer_config)
+
         eval_metric = validate_subtransformer(
             model,
             eval_dataloader,
@@ -671,28 +710,36 @@ def main():
             args.per_device_eval_batch_size,
             args.pad_to_max_length,
         )
+
         val_accuracy, val_loss, perplexity = (
             eval_metric["accuracy"] * 100,
             eval_metric["val_loss"],
             eval_metric["perplexity"],
         )
-        subtranformer_peplexities.append(perplexity)
-        subtranformer_accuracies.append(val_accuracy)
-        subtranformer_losses.append(val_loss.item())
-        subtranformer_configs.append(subtransformer_config)
+        subtransformer_peplexities.append(perplexity)
+        subtransformer_accuracies.append(val_accuracy)
+        subtransformer_losses.append(val_loss.item())
+        subtransformer_configs.append(subtransformer_config)
+        
+        if args.evaluate_latency:
+            subtransformer_latencies.append(eval_metric["exec_time"])
+
     logger.info(
-        f"Subtransformer average stats: val_perplexity: {mean(subtranformer_peplexities):.2f}, val_loss: {mean(subtranformer_losses):.2f}, val_accuracy:  {mean(subtranformer_accuracies):.2f}"
+        f"Subtransformer average stats: val_perplexity: {mean(subtransformer_peplexities):.2f}, val_loss: {mean(subtransformer_losses):.2f}, val_accuracy:  {mean(subtransformer_accuracies):.2f}"
     )
 
     # no need to save stats if we are evaluating one subtransformer config
     if args.subtransformer_config_path is None:
         # dictionary of lists
         dict = {
-            "config": subtranformer_configs,
-            "loss": subtranformer_losses,
-            "perplexity": subtranformer_peplexities,
-            "accuracy": subtranformer_accuracies,
+            "config": subtransformer_configs,
+            "loss": subtransformer_losses,
+            "perplexity": subtransformer_peplexities,
+            "accuracy": subtransformer_accuracies,
         }
+
+        if args.evaluate_latency:
+            dict["latency"] = subtransformer_latencies
 
         df = pd.DataFrame(dict)
         csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
