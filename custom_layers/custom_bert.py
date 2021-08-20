@@ -1527,12 +1527,20 @@ class BertEncoder(nn.Module):
                 config.sample_num_attention_heads
             ] * config.sample_num_hidden_layers
 
+        if self.use_bottleneck:
+            sample_hidden_size = config.sample_hidden_size
+
+
         ### Extracting the subnetworks
         for i in range(config.sample_num_hidden_layers):
             layer_config = deepcopy(config)
-
+            
             layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
             layer_config.sample_num_attention_heads = sample_num_attention_heads_list[i]
+            
+            if self.use_bottleneck:
+                layer_config.sample_hidden_size = sample_hidden_size[i]
+
             sublayer.layer[i].set_sample_config(layer_config, is_identity_layer=False)
 
             sublayer.layer[i] = self.layer[i].get_active_subnet(layer_config)
@@ -1649,6 +1657,7 @@ class BertPooler(nn.Module):
 
     def get_active_subnet(self, config):
         sublayer = BertPooler(config)
+        self.dense.set_sample_config(config) ## Should be unnecessary in principle
         sublayer.dense = self.dense.get_active_subnet()
         return sublayer
 

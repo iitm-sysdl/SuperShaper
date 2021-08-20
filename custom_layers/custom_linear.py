@@ -51,7 +51,6 @@ class CustomLinear(nn.Linear):
     def set_sample_config(self, sample_in_dim, sample_out_dim):
         self.sample_in_dim = sample_in_dim
         self.sample_out_dim = sample_out_dim
-
         self._sample_parameters()
 
     def _sample_parameters(self):
@@ -79,7 +78,7 @@ class CustomLinear(nn.Linear):
         return sub_layer
 
     def forward(self, x):
-        self.sample_parameters()
+        self._sample_parameters()
         return F.linear(x, self.samples["weight"], self.samples["bias"])
 
     def calc_sampled_param_num(self):
