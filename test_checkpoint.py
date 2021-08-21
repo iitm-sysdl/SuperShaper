@@ -52,6 +52,7 @@ def validate_subtransformer(
     len_eval_dataset,
     per_device_eval_batch_size,
     pad_to_max_length,
+    evaluate_latency=False
 ):
     metric = load_metric("custom_metrics/mlm_accuracy.py")
 
@@ -84,7 +85,7 @@ def validate_subtransformer(
         # We could avoid this line since we set the accelerator with `device_placement=True`.
         batch.to(accelerator.device)
 
-        if args.evaluate_latency:
+        if evaluate_latency:
             if accelerator.device == 'cuda':
                 start_time = torch.cuda.Event(enable_timing=True)
                 end_time = torch.cuda.Event(enable_timing=True)
@@ -96,7 +97,7 @@ def validate_subtransformer(
             outputs = model(**batch)
 
 
-        if args.evaluate_latency:
+        if evaluate_latency:
             if accelerator.device == 'cuda':
                 end_time.record()
                 torch.cuda.synchronize()
@@ -131,7 +132,7 @@ def validate_subtransformer(
 
     try:
         val_loss = torch.mean(losses)
-        if args.evaluate_latency:
+        if evaluate_latency:
             execution_time = statistics.mean(exec_time)
         perplexity = math.exp(torch.mean(losses))
     except OverflowError:
@@ -140,7 +141,7 @@ def validate_subtransformer(
     eval_metric["val_loss"] = val_loss
     eval_metric["perplexity"] = perplexity
 
-    if args.evaluate_latency:
+    if evaluate_latency:
         eval_metric["exec_time"] = execution_time
 
     return eval_metric
@@ -652,6 +653,7 @@ def main():
         len(eval_dataset),
         args.per_device_eval_batch_size,
         args.pad_to_max_length,
+        args.evaluate_latency,
     )
     val_accuracy, val_loss, perplexity = (
         eval_metric["accuracy"] * 100,
@@ -709,6 +711,7 @@ def main():
             len(eval_dataset),
             args.per_device_eval_batch_size,
             args.pad_to_max_length,
+            args.evaluate_latency,
         )
 
         val_accuracy, val_loss, perplexity = (
