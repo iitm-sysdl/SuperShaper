@@ -286,6 +286,19 @@ class EvolSearch:
             self.best_config_lst = []
             print(f"| Start Iteration {i}:")
             fitness_scores = self.evaluate_fitness(population)
+
+            new_f = []
+            new_population = []
+            cnt = 0
+            for f in fitness_scores:
+                if f not in new_f:
+                    new_f.append(f)
+                    new_population.append(population[cnt])
+                cnt+=1
+                    
+            fitness_scores = new_f
+            population = new_population
+
             
             sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
 
