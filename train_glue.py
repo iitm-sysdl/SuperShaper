@@ -789,7 +789,14 @@ def main():
     else:
         metric = load_metric("accuracy")
 
-    early_stopping = EarlyStopping("accuracy", patience=args.early_stopping_patience)
+    if args.task_name == "sts-b":
+        metric_key = "pearson"
+    elif args.task_name == "cola":
+        metric_key = "matthews_correlation"
+    else:
+        metric_key = "accuracy"
+
+    early_stopping = EarlyStopping(metric_key, patience=args.early_stopping_patience)
 
     # Train!
     total_batch_size = (
@@ -911,7 +918,7 @@ def main():
                         + [f"{key}: {eval_metric[key]}" for key in eval_metric]
                     )
                 )
-                label_perplex.append(eval_metric["accuracy"])
+                label_perplex.append(eval_metric[metric_key])
 
             if accelerator.is_main_process:
                 ## If plotting using Custom Plotly
@@ -970,9 +977,9 @@ def main():
         ## Logging all the eval metrics + best accuracy for ease of tracking
         if accelerator.is_main_process:
             wandb.log(eval_metric)
-            if best_val_acc <= eval_metric["accuracy"]:
-                best_val_acc = eval_metric["accuracy"]
-            wandb.log({"Best Accuracy": best_val_acc})
+            if best_val_acc <= eval_metric[metric_key]:
+                best_val_acc = eval_metric[metric_key]
+            wandb.log({f"Best {metric_key}": best_val_acc})
 
         completed_epochs += 1
 
@@ -995,7 +1002,7 @@ def main():
                         "optimizer": optimizer.state_dict(),
                         "scheduler": lr_scheduler.state_dict(),
                         "scaler": accelerator.scaler.state_dict(),
-                        "accuracy": early_stopping.best_score,
+                        metric_key: early_stopping.best_score,
                     },
                     args.optim_scheduler_states_path.format("best_model"),
                 )
@@ -1004,7 +1011,7 @@ def main():
                     "==========================================================================="
                 )
                 logger.info(
-                    f"Early Stopping !!! Accuracy hasnt improved for {args.early_stopping_patience} epochs"
+                    f"Early Stopping !!! {metric_key} hasnt improved for {args.early_stopping_patience} epochs"
                 )
                 logger.info(
                     "==========================================================================="
