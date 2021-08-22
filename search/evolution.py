@@ -1,6 +1,6 @@
 import random
 from tqdm import tqdm
-
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import random
@@ -10,7 +10,6 @@ import torch
 from tqdm import tqdm
 import copy
 from custom_layers import custom_bert, custom_mobile_bert
-import os
 from pprint import pprint
 import pandas as pd
 import time
@@ -19,13 +18,17 @@ from utils import calculate_params_from_config
 from predictor import Predictor
 import pandas
 
-## Add sampling folder to the PYTHONPATH
+# Add sampling folder to the PYTHONPATH
 from sampling import (
     Sampler,
     get_supertransformer_config,
     show_random_elements,
     show_args,
 )
+
+parent_dir = "./"
+mode = 0o777
+
 
 class EvolSearch:
     def __init__(
@@ -112,7 +115,7 @@ class EvolSearch:
 
         score = self.perplexity_predictor.predict(feature)
 
-        return score
+        return score[0]
 
 
     def arch2feature(self, config=None):
@@ -275,12 +278,15 @@ class EvolSearch:
     def run_evo_search(self):
         population = self.random_sample()
 
+        directory = 'perpx_'+str(self.constraints_set['perplexity'])
+        path = os.path.join(parent_dir, directory)
+        os.makedirs(path, mode, exist_ok=True)
 
         for i in range(self.time_budget):
             self.best_config_lst = []
             print(f"| Start Iteration {i}:")
             fitness_scores = self.evaluate_fitness(population)
-
+            
             sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
 
             fitness_scores_top = np.array(fitness_scores)[sorted_ind]
@@ -292,8 +298,8 @@ class EvolSearch:
                 self.best_config_lst.append(self.feature2arch(population[sorted_ind[j].item()]))
             
             df = pd.DataFrame(list(zip(self.best_config_lst, fitness_scores_top)), columns=['configs', 'predicted_perpx'])
-            print('best_configs_iter_'+str(i)+'.csv')
-            df.to_csv('best_configs_iter_'+str(i)+'.csv', index=False)
+           
+            df.to_csv(path+'/best_configs_iter_'+str(i)+'.csv', index=False)
     
             parents_next_iter  =  [population[m.item()] for m in sorted_ind]
             parents_next_score =  [fitness_scores[m.item()] for m in sorted_ind]
@@ -327,7 +333,7 @@ def search():
     crossover_size = 100
     task = 'mlm'
     mutation_prob = 0.4 
-    time_budget = 100
+    time_budget = 300
     search_space_config = 'bert-bottleneck'
 
     bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
@@ -337,7 +343,7 @@ def search():
     ckpt_path = None, 
     accelerator = None,     
 
-    constraints_set = { 'perplexity' : 6 } ## Just specifying an unbounded value to begin with
+    constraints_set = { 'perplexity' : 5.65 } ## Just specifying an unbounded value to begin with
     perplexity_predictor = Predictor(ckpt='./outputs/perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
     perplexity_predictor.load_ckpt()
     
