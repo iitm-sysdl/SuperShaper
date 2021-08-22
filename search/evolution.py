@@ -5,32 +5,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 import time
-from tasks.glue.prepare_task import GlueTask
 import argparse
 import torch
-from torch.utils.data import DataLoader
 from tqdm import tqdm
-from accelerate import Accelerator, DistributedType
-from datasets import load_dataset, load_metric
 import copy
-from transformers import (
-    AdamW,
-    AutoTokenizer,
-    get_linear_schedule_with_warmup,
-    set_seed,
-    AutoConfig,
-)
-from custom_layers.custom_bert import BertForSequenceClassification
 from custom_layers import custom_bert, custom_mobile_bert
 import os
 from pprint import pprint
 import pandas as pd
 import time
-#from tester import Tester
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 from utils import calculate_params_from_config
 from predictor import Predictor
-
+import pandas
 
 ## Add sampling folder to the PYTHONPATH
 from sampling import (
@@ -88,8 +75,10 @@ class EvolSearch:
 
         if self.search_space_config == 'bert-bottleneck':
             space["sample_hidden_size"] = [120, 240, 360, 480, 540, 600, 768] 
-            space["sample_num_attention_heads"] = [6,8,12]
-            space["sample_intermediate_size"] = [1024,2048,3072]
+            #space["sample_num_attention_heads"] = [6,8,12]
+            space["sample_num_attention_heads"] = [12]
+            #space["sample_intermediate_size"] = [1024,2048,3072]
+            space["sample_intermediate_size"] = [3072]
             space["sample_num_hidden_layers"] = [12]
         elif self.search_space_config != 'bert-bottleneck' and self.search_space_config != 'attention':
             raise NotImplementedError
@@ -236,6 +225,7 @@ class EvolSearch:
             if self.satisfy_constraints(candidate_gene):
                 population.append(candidate_gene)
                 cnt += 1
+                print("Adding gene no. %d to the population"%(cnt))
             total += 1
         print(
             f"Only {cnt} out of {total} total generated samples were under given constraints."
@@ -285,15 +275,26 @@ class EvolSearch:
     def run_evo_search(self):
         population = self.random_sample()
 
+
         for i in range(self.time_budget):
+            self.best_config_lst = []
             print(f"| Start Iteration {i}:")
             fitness_scores = self.evaluate_fitness(population)
 
             sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
 
-            self.best_config = self.feature2arch(population[sorted_ind[0].item()])
-            print(f"| Config for highest accuracy model: {self.best_config}")
+            fitness_scores_top = np.array(fitness_scores)[sorted_ind]
 
+            self.best_config = self.feature2arch(population[sorted_ind[0].item()])
+            #print(f"| Config for highest accuracy model: {self.best_config}")
+
+            for j in range(self.parent_size):
+                self.best_config_lst.append(self.feature2arch(population[sorted_ind[j].item()]))
+            
+            df = pd.DataFrame(list(zip(self.best_config_lst, fitness_scores_top)), columns=['configs', 'predicted_perpx'])
+            print('best_configs_iter_'+str(i)+'.csv')
+            df.to_csv('best_configs_iter_'+str(i)+'.csv', index=False)
+    
             parents_next_iter  =  [population[m.item()] for m in sorted_ind]
             parents_next_score =  [fitness_scores[m.item()] for m in sorted_ind]
 
@@ -319,27 +320,25 @@ class EvolSearch:
         return self.best_config
 
 
-def test(): 
-    population_size = 30
-    parent_size = 30
-    mutation_size = 10
-    crossover_size = 10 
+def search(): 
+    population_size = 100
+    parent_size = 10
+    mutation_size = 100
+    crossover_size = 100
     task = 'mlm'
-    mutation_prob = 0.8 
-    time_budget = 1
+    mutation_prob = 0.4 
+    time_budget = 100
     search_space_config = 'bert-bottleneck'
 
     bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
 
-    constraints_set=None,
-    perplexity_predictor=None,
     latency_predictor = None,
     fitness_set = None,
     ckpt_path = None, 
     accelerator = None,     
 
-    constraints_set = { 'perplexity' : -1 } ## Just specifying an unbounded value to begin with
-    perplexity_predictor = Predictor(ckpt='./perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
+    constraints_set = { 'perplexity' : 6 } ## Just specifying an unbounded value to begin with
+    perplexity_predictor = Predictor(ckpt='./outputs/perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
     perplexity_predictor.load_ckpt()
     
     evolution = EvolSearch(population_size, 
@@ -356,42 +355,42 @@ def test():
                            )
 
     ### Testing Get Search Space ### 
-    space = evolution.get_search_space()
-    print(space)
-    print(evolution.gene_len)
-    
-    print("--------------------------------------")
+    #space = evolution.get_search_space()
+    #print(space)
+    #print(evolution.gene_len)
+    #
+    #print("--------------------------------------")
 
-    ### Testing arch2feature and feature2arch ### 
-    gene = evolution.arch2feature(bert_config)
-    print(gene)
-    
-    print("--------------------------------------")
-        
-    gene[0] = gene[1] = gene[-2] = gene[-3] = 256
-    feature = evolution.feature2arch(gene)
-    print(feature)
-    
-    print("--------------------------------------")
+    #### Testing arch2feature and feature2arch ### 
+    #gene = evolution.arch2feature(bert_config)
+    #print(gene)
+    #
+    #print("--------------------------------------")
+    #    
+    #gene[0] = gene[1] = gene[-2] = gene[-3] = 256
+    #feature = evolution.feature2arch(gene)
+    #print(feature)
+    #
+    #print("--------------------------------------")
 
-    ### Testing Mutation and Crossover ###
-    mutated_gene = evolution.mutate(gene)
-    print(mutated_gene)
+    #### Testing Mutation and Crossover ###
+    #mutated_gene = evolution.mutate(gene)
+    #print(mutated_gene)
 
-    print("--------------------------------------")
+    #print("--------------------------------------")
 
-    crossedover_gene = evolution.crossover([gene, mutated_gene])
-    print(gene)
-    print(mutated_gene)
-    print(crossedover_gene)
+    #crossedover_gene = evolution.crossover([gene, mutated_gene])
+    #print(gene)
+    #print(mutated_gene)
+    #print(crossedover_gene)
 
-    print("--------------------------------------")
+    #print("--------------------------------------")
 
     ### Testing Random Sampling and Evolutionary Search ### 
-    sampled_population = evolution.random_sample()
-    print(sampled_population)
+    #sampled_population = evolution.random_sample()
+    #print(sampled_population)
 
     print(evolution.run_evo_search())
 
 if __name__ == "__main__":
-    test()
+    search()
