@@ -29,7 +29,6 @@ import datasets
 from datasets import load_dataset, load_metric
 from torch.utils.data.dataloader import DataLoader
 from tqdm.auto import tqdm
-
 import transformers
 from transformers import (
     AdamW,
@@ -68,7 +67,7 @@ from utils import (
 from torchinfo import summary
 
 from utils.early_stopping import EarlyStopping
-
+from loss import *
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +287,29 @@ def parse_args():
         default=None,
         help=f"suffix for wandb",
     )
+    parser.add_argument(
+        "--sampling_rule", type=str, default=None, help=f"The sampling rule used"
+    )
+
+    parser.add_argument(
+        "--inplace_distillation",
+        type=int,
+        default=0,
+        help=f"In place Knowledge Distillation for Fine-tuning",
+    )
+    parser.add_argument(
+        "--layerwise_distillation",
+        type=int,
+        default=0,
+        help=f"In place Knowledge Distillation for Fine-tuning",
+    )
+
+    parser.add_argument(
+        "--logging_steps",
+        type=int,
+        default=100,
+        help="Log every X updates steps.",
+    )
 
     args = parser.parse_args()
 
@@ -314,6 +336,11 @@ def parse_args():
                 "json",
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
+
+    if args.inplace_distillation == 1:
+        assert (
+            args.sampling_rule == "sandwich"
+        ), "Sampling rule needs to be sandwich if using inplace distillation"
 
     if args.sampling_type == "none":
         # if we are not sampling, dont test random subtransformers every n epochs
@@ -374,6 +401,10 @@ def parse_args():
         args.output_dir = args.resume_from_checkpoint_dir
 
     if args.subtransformer_config_path:
+        assert args.inplace_distillation == 0, "Inplace distillation is not supported"
+        assert (
+            args.sampling_rule is None
+        ), "Sampling rule is not supported for subtransformer_config_path"
         check_path(args.subtransformer_config_path)
         assert (
             args.sampling_type == "none"
@@ -381,6 +412,8 @@ def parse_args():
         assert (
             args.eval_random_subtransformers == 0
         ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
+
+    assert args.layerwise_distillation == 0, "layerwise distillation is not supported"
 
     return args
 
@@ -448,7 +481,7 @@ def main():
     str_name = (
         args.mixing + "_tiny_attn"
         if args.tiny_attn == 1
-        else args.mixing + "_" + args.sampling_type
+        else args.mixing + "_" + args.sampling_type + "_" + args.sampling_rule
     )
     if args.subtransformer_config_path:
         str_name += "_custom_subtransformer"
@@ -664,9 +697,11 @@ def main():
     )
 
     train_dataset = processed_datasets["train"]
+    train_dataset = train_dataset.select(range(32))
     eval_dataset = processed_datasets[
         "validation_matched" if args.task_name == "mnli" else "validation"
     ]
+    eval_dataset = eval_dataset.select(range(32))
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -826,7 +861,9 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model)
 
-    sampler = Sampler(args.sampling_type, "none", args.mixing, global_config)
+    sampler = Sampler(
+        args.sampling_type, args.sampling_rule, args.mixing, global_config
+    )
 
     if args.eval_random_subtransformers:
         if args.mixing == "mobilebert":
@@ -938,21 +975,92 @@ def main():
                     yaxis_title="Accuracies",
                 )
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
+
         model.train()
         seed = -1
         for step, batch in enumerate(train_dataloader):
             seed += 1
+
             if args.sampling_type != "none":
-                super_config = sampler.sample_subtransformer(
+                config_dict = sampler.sample_subtransformer(
                     randomize=True, rand_seed=seed, pop_size=1
-                )["random_subtransformers"][0]
+                )
+            track_loss = step % args.logging_steps == 0 and step > 0
 
-                model.set_sample_config(super_config)
+            if args.sampling_rule == "sandwich":
+                ### Sample Supertransformer ###
+                model.set_sample_config(global_config)
+                outputs = model(**batch)
+                loss = outputs.loss
+                teacher_finetuning_loss = loss
+                teacher_finetuning_loss = (
+                    teacher_finetuning_loss / args.gradient_accumulation_steps
+                )
+                accelerator.backward(teacher_finetuning_loss)
 
-            outputs = model(**batch)
+                if args.inplace_distillation:
+
+                    teacher_hidden_states = outputs.hidden_states
+                    teacher_attention_maps = outputs.attentions
+
+                    # logits are of shape batch_size, sequence_length, config.num_labels
+                    soft_logits = outputs.logits.detach()
+
+                    # replace the labels in our batch to soft_targets
+                    batch["labels"] = soft_logits
+
+                ### Sample Smallest Subtransformer ###
+                super_config_small = config_dict["smallest_subtransformer"]
+                model.set_sample_config(super_config_small)
+                outputs = model(**batch, use_soft_loss=args.inplace_distillation)
+                loss = outputs.loss
+
+                if args.inplace_distillation:
+
+                    (
+                        smallest_student_loss,
+                        smallest_student_losses_dict,
+                    ) = compute_student_loss(
+                        outputs,
+                        teacher_hidden_states,
+                        teacher_attention_maps,
+                        args,
+                        track_layerwise_loss=track_loss,
+                    )
+                else:
+                    # TODO: Terminology consistency needs to be maintained - technically not a student!
+                    smallest_student_loss = loss
+                    smallest_student_loss = (
+                        smallest_student_loss / args.gradient_accumulation_steps
+                    )
+
+                accelerator.backward(smallest_student_loss)
+
+            super_config = config_dict["random_subtransformers"][0]
+            model.set_sample_config(super_config)
+
+            outputs = model(**batch, use_soft_loss=args.inplace_distillation)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
-            accelerator.backward(loss)
+            # accelerator.backward(loss)
+
+            if args.inplace_distillation:
+
+                (
+                    sampled_student_loss,
+                    sampled_student_losses_dict,
+                ) = compute_student_loss(
+                    outputs,
+                    teacher_hidden_states,
+                    teacher_attention_maps,
+                    args,
+                    track_layerwise_loss=track_loss,
+                )
+            else:
+                sampled_student_loss = loss / args.gradient_accumulation_steps
+
+            accelerator.backward(sampled_student_loss)
+
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1

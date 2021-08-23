@@ -73,6 +73,7 @@ from utils import (
 from torchinfo import summary
 
 from utils.early_stopping import EarlyStopping
+from loss import *
 
 
 # Will error if the minimal version of Transformers is not installed. Remove at your own risks.
@@ -1200,16 +1201,88 @@ def main():
         seed = -1
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            if args.sampling_type != "none":
-                super_config = sampler.sample_subtransformer(
-                    randomize=True, rand_seed=seed, pop_size=1
-                )["random_subtransformers"][0]
 
-                model.set_sample_config(super_config)
+            if args.sampling_type != "none":
+                config_dict = sampler.sample_subtransformer(
+                    randomize=True, rand_seed=seed, pop_size=1
+                )
+
+                track_loss = step % args.logging_steps == 0 and step > 0
+
+            if args.sampling_rule == "sandwich":
+                ### Sample Supertransformer ###
+                model.set_sample_config(global_config)
+                outputs = model(**batch)
+                loss = outputs.loss
+                teacher_finetuning_loss = loss
+                teacher_finetuning_loss = (
+                    teacher_finetuning_loss / args.gradient_accumulation_steps
+                )
+                accelerator.backward(teacher_finetuning_loss)
+
+                if args.inplace_distillation:
+
+                    teacher_hidden_states = outputs.hidden_states
+                    teacher_attention_maps = outputs.attentions
+
+                    # logits are of shape batch_size, sequence_length, config.vocab_size
+                    soft_logits = outputs.logits.detach()
+
+                    # replace the labels in our batch to soft_targets
+                    batch["labels"] = soft_logits
+
+                ### Sample Smallest Subtransformer ###
+                super_config_small = config_dict["smallest_subtransformer"]
+                model.set_sample_config(super_config_small)
+                outputs = model(**batch, use_soft_loss=args.inplace_distillation)
+                loss = outputs.loss
+
+                if args.inplace_distillation:
+
+                    (
+                        smallest_student_loss,
+                        smallest_student_losses_dict,
+                    ) = compute_student_loss(
+                        outputs,
+                        teacher_hidden_states,
+                        teacher_attention_maps,
+                        args,
+                        track_layerwise_loss=track_loss,
+                    )
+                else:
+                    # TODO: Terminology consistency needs to be maintained - technically not a student!
+                    smallest_student_loss = loss
+                    smallest_student_loss = (
+                        smallest_student_loss / args.gradient_accumulation_steps
+                    )
+
+                accelerator.backward(smallest_student_loss)
+
+            super_config = config_dict["random_subtransformers"][0]
+
+            model.set_sample_config(super_config)
             outputs = model(**batch)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
-            accelerator.backward(loss)
+            # accelerator.backward(loss)
+
+            if args.inplace_distillation:
+
+                (
+                    sampled_student_loss,
+                    sampled_student_losses_dict,
+                ) = compute_student_loss(
+                    outputs,
+                    teacher_hidden_states,
+                    teacher_attention_maps,
+                    args,
+                    track_layerwise_loss=track_loss,
+                )
+            else:
+                sampled_student_loss = loss / args.gradient_accumulation_steps
+
+            accelerator.backward(sampled_student_loss)
+
             if (
                 step % args.gradient_accumulation_steps == 0
                 or step == len(train_dataloader) - 1
