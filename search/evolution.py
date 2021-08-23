@@ -181,8 +181,8 @@ class EvolSearch:
                 else:
                     return False
             elif 'params' in constraints:
-                params = calculate_params_from_config(self.feature2arch(feature))
-                if params <= self.constraints_set[constraints]:
+                params = calculate_params_from_config(self.feature2arch(list(feature[0])))
+                if params <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
                     satisfy = True
                 else:
                     return False
@@ -278,7 +278,11 @@ class EvolSearch:
     def run_evo_search(self):
         population = self.random_sample()
 
-        directory = 'perpx_'+str(self.constraints_set['perplexity'])
+        #directory = 'perpx_'+str(self.constraints_set['perplexity'])
+        directory = ''
+        for keys in self.constraints_set.keys():
+            directory += keys+str(self.constraints_set[keys])+'_'
+        
         path = os.path.join(parent_dir, directory)
         os.makedirs(path, mode, exist_ok=True)
 
@@ -356,7 +360,10 @@ def search():
     ckpt_path = None, 
     accelerator = None,     
 
-    constraints_set = { 'perplexity' : 5.65 } ## Just specifying an unbounded value to begin with
+    #constraints_set = { 'perplexity' : 5.65 } 
+    constraints_set = { 'params' : 70000000,
+                        'perplexity': 6.8,
+                      } 
     perplexity_predictor = Predictor(ckpt='./outputs/perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
     perplexity_predictor.load_ckpt()
     
