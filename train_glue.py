@@ -824,7 +824,7 @@ def main():
     else:
         metric = load_metric("accuracy")
 
-    if args.task_name == "sts-b":
+    if args.task_name == "stsb":
         metric_key = "pearson"
     elif args.task_name == "cola":
         metric_key = "matthews_correlation"
