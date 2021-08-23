@@ -1076,6 +1076,9 @@ def main():
 
             if completed_steps >= args.max_train_steps:
                 break
+        # change to supertransformer config
+        if args.sampling_type != "none":
+            model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
             model, args.task_name, eval_dataloader, accelerator
