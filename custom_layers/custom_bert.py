@@ -2755,7 +2755,6 @@ class BertForSequenceClassification(BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        use_soft_loss=False,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -2789,18 +2788,10 @@ class BertForSequenceClassification(BertPreTrainedModel):
             if self.num_labels == 1:
                 #  We are doing regression
                 loss_fct = MSELoss()
-                # for mseloss, we dont need to change anything wrt softlabels
                 loss = loss_fct(logits.view(-1), labels.view(-1))
             else:
-                if use_soft_loss:
-                    loss_fct = CrossEntropyLossSoft()
-                    loss = loss_fct(
-                        logits.view(-1, self.num_labels),
-                        labels.view(-1, self.num_labels),
-                    )
-                else:
-                    loss_fct = CrossEntropyLoss()
-                    loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
 
         if not return_dict:
             output = (logits,) + outputs[2:]
