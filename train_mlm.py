@@ -502,7 +502,9 @@ def parse_args():
 
     args = parser.parse_args()
 
-    args.model_name_or_path = "bert-base-cased"
+    if args.subtransformer_config_path is None:
+        args.model_name_or_path = "bert-base-cased"
+    
     # Sanity checks
 
     if args.layerwise_distillation:
@@ -719,18 +721,28 @@ def main():
             extension = "text"
         raw_datasets = load_dataset(extension, data_files=data_files)
 
-    global_config = get_supertransformer_config(
-        args.model_name_or_path, mixing=args.mixing
-    )
+    if args.subtransformer_config_path is None:
+        global_config = get_supertransformer_config(
+            args.model_name_or_path, mixing=args.mixing
+        )
+    else:
+       global_config = get_supertransformer_config(
+            'bert-base-cased', mixing=args.mixing
+        ) 
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
             args.tokenizer_name, use_fast=not args.use_slow_tokenizer
         )
     elif args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(
-            args.model_name_or_path, use_fast=not args.use_slow_tokenizer
-        )
+        if args.subtransformer_config_path is None:
+            tokenizer = AutoTokenizer.from_pretrained(
+                args.model_name_or_path, use_fast=not args.use_slow_tokenizer
+            )
+        else:
+            tokenizer = AutoTokenizer.from_pretrained(
+                'bert-base-cased', use_fast=not args.use_slow_tokenizer
+            )
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
