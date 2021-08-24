@@ -289,6 +289,13 @@ def parse_args():
         help=f"suffix for wandb",
     )
 
+    parser.add_argument(
+        "--mnli_checkpoint_path",
+        type=str,
+        default=None,
+        help=f"path to mnli checkpoint",
+    )
+
     args = parser.parse_args()
 
     # args.model_name_or_path = "bert-base-cased"
@@ -381,6 +388,14 @@ def parse_args():
         assert (
             args.eval_random_subtransformers == 0
         ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
+
+    if args.mnli_checkpoint_path:
+        check_path(args.mnli_checkpoint_path)
+        assert args.task_name in [
+            "cola",
+            "stsb",
+            "rte",
+        ], "mnli checkpoint can only be used for mnli"
 
     return args
 
@@ -580,6 +595,13 @@ def main():
             args.model_name_or_path,
             config=global_config,
         )
+
+    if args.mnli_checkpoint_path is not None:
+        checkpoints = torch.load(
+            os.path.join(args.mnli_checkpoint_path, "pytorch_model.bin"),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints, strict=True)
 
     logger.info(summary(model, depth=4, verbose=0))
 
