@@ -290,10 +290,10 @@ def parse_args():
     )
 
     parser.add_argument(
-        "--mnli_checkpoint_path",
-        type=str,
-        default=None,
-        help=f"path to mnli checkpoint",
+        "--is_mnli_checkpoint",
+        type=int,
+        default=0,
+        help=f"if model path is a pretrained mnli checkpoint",
     )
 
     args = parser.parse_args()
@@ -389,13 +389,12 @@ def parse_args():
             args.eval_random_subtransformers == 0
         ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
 
-    if args.mnli_checkpoint_path:
-        check_path(args.mnli_checkpoint_path)
+    if args.is_mnli_checkpoint:
         assert args.task_name in [
-            "cola",
+            "mrpc",
             "stsb",
             "rte",
-        ], "mnli checkpoint can only be used for mnli"
+        ], "mnli pretrained checkpoint can only be used for MRPC, STSB, RTE "
 
     return args
 
@@ -594,14 +593,9 @@ def main():
         model = custom_bert.BertForSequenceClassification.from_pretrained(
             args.model_name_or_path,
             config=global_config,
+            ignore_mismatched_sizes=args.is_mnli_checkpoint
         )
 
-    if args.mnli_checkpoint_path is not None:
-        checkpoints = torch.load(
-            os.path.join(args.mnli_checkpoint_path, "pytorch_model.bin"),
-            map_location="cpu",
-        )
-        model.load_state_dict(checkpoints, strict=True)
 
     logger.info(summary(model, depth=4, verbose=0))
 
@@ -812,7 +806,7 @@ def main():
         metric = load_metric("accuracy")
 
     if args.task_name == "stsb":
-        metric_key = "pearson"
+        metric_key = "spearmanr"
     elif args.task_name == "cola":
         metric_key = "matthews_correlation"
     else:
