@@ -504,7 +504,7 @@ def parse_args():
 
     if args.subtransformer_config_path is None:
         args.model_name_or_path = "bert-base-cased"
-    
+
     # Sanity checks
 
     if args.layerwise_distillation:
@@ -726,9 +726,9 @@ def main():
             args.model_name_or_path, mixing=args.mixing
         )
     else:
-       global_config = get_supertransformer_config(
-            'bert-base-cased', mixing=args.mixing
-        ) 
+        global_config = get_supertransformer_config(
+            "bert-base-cased", mixing=args.mixing
+        )
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -741,7 +741,7 @@ def main():
             )
         else:
             tokenizer = AutoTokenizer.from_pretrained(
-                'bert-base-cased', use_fast=not args.use_slow_tokenizer
+                "bert-base-cased", use_fast=not args.use_slow_tokenizer
             )
     else:
         raise ValueError(
@@ -801,80 +801,89 @@ def main():
             "=================================================================="
         )
 
-    # TODO: decouple mixing and mobilebert model declarato
-    if args.mixing == "mobilebert":
-
-        states = OD()
-
-        model = custom_mobile_bert.MobileBertForMaskedLM(config=global_config)
-        model2 = BertForMaskedLM.from_pretrained("bert-base-cased")
-
-        for key in model2.state_dict().keys():
-            _key = key.replace("bert.", "mobilebert.")
-            states[_key] = model2.state_dict()[key]
-
-        del model2
-        model.load_state_dict(states, strict=False)
-        del states
-
-        identity = torch.eye(global_config.true_hidden_size)
-        for key in model.state_dict().keys():
-            if (
-                "bottleneck.input.dense.weight" in key
-                or "output.bottleneck.dense.weight" in key
-            ):
-                model.state_dict()[key].data.copy_(identity)
-            elif (
-                "bottleneck.output.dense.bias" in key
-                or "output.bottleneck.dense.bias" in key
-            ):
-                model.state_dict()[key].data.zero_()
-
-        logger.info("MobileBert Initiliazed with bert-base")
-
-    elif args.mixing == "bert-bottleneck":
-        model = custom_bert.BertForMaskedLM.from_pretrained(
-            "bert-base-cased", config=global_config
-        )
-
-        identity = torch.eye(global_config.hidden_size)
-
-        for key in model.state_dict().keys():
-            if "input_bottleneck.weight" in key or "output_bottleneck.weight" in key:
-                model.state_dict()[key].data.copy_(identity)
-            elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
-                model.state_dict()[key].data.zero_()
-
-        logger.info("BERT-Bottleneck Initiliazed with BERT-base")
-
-    elif args.inplace_distillation or args.sampling_type == "none":
-        # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
+    if check_path(args.model_name_or_path):
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
         )
     else:
-        model = custom_bert.BertForMaskedLM(global_config)
 
-    # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
-    if args.rewire:
-        # load the rewiring weights
-        checkpoints = torch.load(
-            os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
-            map_location="cpu",
-        )
-        model.load_state_dict(checkpoints, strict=False)
-        # hacky way to load the importance order without introducing these
-        # into __init__ of all classes and introducing problems with other
-        # checkpoints
-        for key in checkpoints.keys():
-            if "inv_importance_order" in key:
-                module_str = key.split(".inv_importance_order")[0]
-                module = attrgetter(module_str)(model)
-                module.register_buffer("inv_importance_order", checkpoints[key])
-            elif "importance_order" in key:
-                module_str = key.split(".importance_order")[0]
-                module = attrgetter(module_str)(model)
-                module.register_buffer("importance_order", checkpoints[key])
+        # TODO: decouple mixing and mobilebert model declarato
+        if args.mixing == "mobilebert":
+
+            states = OD()
+
+            model = custom_mobile_bert.MobileBertForMaskedLM(config=global_config)
+            model2 = BertForMaskedLM.from_pretrained("bert-base-cased")
+
+            for key in model2.state_dict().keys():
+                _key = key.replace("bert.", "mobilebert.")
+                states[_key] = model2.state_dict()[key]
+
+            del model2
+            model.load_state_dict(states, strict=False)
+            del states
+
+            identity = torch.eye(global_config.true_hidden_size)
+            for key in model.state_dict().keys():
+                if (
+                    "bottleneck.input.dense.weight" in key
+                    or "output.bottleneck.dense.weight" in key
+                ):
+                    model.state_dict()[key].data.copy_(identity)
+                elif (
+                    "bottleneck.output.dense.bias" in key
+                    or "output.bottleneck.dense.bias" in key
+                ):
+                    model.state_dict()[key].data.zero_()
+
+            logger.info("MobileBert Initiliazed with bert-base")
+
+        elif args.mixing == "bert-bottleneck":
+            model = custom_bert.BertForMaskedLM.from_pretrained(
+                "bert-base-cased", config=global_config
+            )
+
+            identity = torch.eye(global_config.hidden_size)
+
+            for key in model.state_dict().keys():
+                if (
+                    "input_bottleneck.weight" in key
+                    or "output_bottleneck.weight" in key
+                ):
+                    model.state_dict()[key].data.copy_(identity)
+                elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
+                    model.state_dict()[key].data.zero_()
+
+            logger.info("BERT-Bottleneck Initiliazed with BERT-base")
+
+        elif args.inplace_distillation or args.sampling_type == "none":
+            # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
+            model = custom_bert.BertForMaskedLM.from_pretrained(
+                args.model_name_or_path, config=global_config
+            )
+        else:
+            model = custom_bert.BertForMaskedLM(global_config)
+
+        # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
+        if args.rewire:
+            # load the rewiring weights
+            checkpoints = torch.load(
+                os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
+                map_location="cpu",
+            )
+            model.load_state_dict(checkpoints, strict=False)
+            # hacky way to load the importance order without introducing these
+            # into __init__ of all classes and introducing problems with other
+            # checkpoints
+            for key in checkpoints.keys():
+                if "inv_importance_order" in key:
+                    module_str = key.split(".inv_importance_order")[0]
+                    module = attrgetter(module_str)(model)
+                    module.register_buffer("inv_importance_order", checkpoints[key])
+                elif "importance_order" in key:
+                    module_str = key.split(".importance_order")[0]
+                    module = attrgetter(module_str)(model)
+                    module.register_buffer("importance_order", checkpoints[key])
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
