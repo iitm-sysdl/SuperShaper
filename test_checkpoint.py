@@ -355,7 +355,8 @@ def main():
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     accelerator = Accelerator(fp16=args.fp16, kwargs_handlers=[param])
 
-    show_args(accelerator, args)
+    if accelerator.device == 'cuda':
+        show_args(accelerator, args)
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
