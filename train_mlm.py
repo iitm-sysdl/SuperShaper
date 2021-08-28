@@ -801,89 +801,89 @@ def main():
             "=================================================================="
         )
 
-    if check_path(args.model_name_or_path):
+    #if check_path(args.model_name_or_path):
+    #    model = custom_bert.BertForMaskedLM.from_pretrained(
+    #        args.model_name_or_path, config=global_config
+    #    )
+    #else:
+
+        # TODO: decouple mixing and mobilebert model declarato
+    if args.mixing == "mobilebert":
+
+        states = OD()
+
+        model = custom_mobile_bert.MobileBertForMaskedLM(config=global_config)
+        model2 = BertForMaskedLM.from_pretrained("bert-base-cased")
+
+        for key in model2.state_dict().keys():
+            _key = key.replace("bert.", "mobilebert.")
+            states[_key] = model2.state_dict()[key]
+
+        del model2
+        model.load_state_dict(states, strict=False)
+        del states
+
+        identity = torch.eye(global_config.true_hidden_size)
+        for key in model.state_dict().keys():
+            if (
+                "bottleneck.input.dense.weight" in key
+                or "output.bottleneck.dense.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(identity)
+            elif (
+                "bottleneck.output.dense.bias" in key
+                or "output.bottleneck.dense.bias" in key
+            ):
+                model.state_dict()[key].data.zero_()
+
+        logger.info("MobileBert Initiliazed with bert-base")
+
+    elif args.mixing == "bert-bottleneck":
+        model = custom_bert.BertForMaskedLM.from_pretrained(
+            "bert-base-cased", config=global_config
+        )
+
+        identity = torch.eye(global_config.hidden_size)
+
+        for key in model.state_dict().keys():
+            if (
+                "input_bottleneck.weight" in key
+                or "output_bottleneck.weight" in key
+            ):
+                model.state_dict()[key].data.copy_(identity)
+            elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
+                model.state_dict()[key].data.zero_()
+
+        logger.info("BERT-Bottleneck Initiliazed with BERT-base")
+
+    elif args.inplace_distillation or args.sampling_type == "none":
+        # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
         model = custom_bert.BertForMaskedLM.from_pretrained(
             args.model_name_or_path, config=global_config
         )
     else:
+        model = custom_bert.BertForMaskedLM(global_config)
 
-        # TODO: decouple mixing and mobilebert model declarato
-        if args.mixing == "mobilebert":
-
-            states = OD()
-
-            model = custom_mobile_bert.MobileBertForMaskedLM(config=global_config)
-            model2 = BertForMaskedLM.from_pretrained("bert-base-cased")
-
-            for key in model2.state_dict().keys():
-                _key = key.replace("bert.", "mobilebert.")
-                states[_key] = model2.state_dict()[key]
-
-            del model2
-            model.load_state_dict(states, strict=False)
-            del states
-
-            identity = torch.eye(global_config.true_hidden_size)
-            for key in model.state_dict().keys():
-                if (
-                    "bottleneck.input.dense.weight" in key
-                    or "output.bottleneck.dense.weight" in key
-                ):
-                    model.state_dict()[key].data.copy_(identity)
-                elif (
-                    "bottleneck.output.dense.bias" in key
-                    or "output.bottleneck.dense.bias" in key
-                ):
-                    model.state_dict()[key].data.zero_()
-
-            logger.info("MobileBert Initiliazed with bert-base")
-
-        elif args.mixing == "bert-bottleneck":
-            model = custom_bert.BertForMaskedLM.from_pretrained(
-                "bert-base-cased", config=global_config
-            )
-
-            identity = torch.eye(global_config.hidden_size)
-
-            for key in model.state_dict().keys():
-                if (
-                    "input_bottleneck.weight" in key
-                    or "output_bottleneck.weight" in key
-                ):
-                    model.state_dict()[key].data.copy_(identity)
-                elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
-                    model.state_dict()[key].data.zero_()
-
-            logger.info("BERT-Bottleneck Initiliazed with BERT-base")
-
-        elif args.inplace_distillation or args.sampling_type == "none":
-            # initialize with pretrained model if we are using inplace distillation or if we are using no sampling
-            model = custom_bert.BertForMaskedLM.from_pretrained(
-                args.model_name_or_path, config=global_config
-            )
-        else:
-            model = custom_bert.BertForMaskedLM(global_config)
-
-        # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
-        if args.rewire:
-            # load the rewiring weights
-            checkpoints = torch.load(
-                os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
-                map_location="cpu",
-            )
-            model.load_state_dict(checkpoints, strict=False)
-            # hacky way to load the importance order without introducing these
-            # into __init__ of all classes and introducing problems with other
-            # checkpoints
-            for key in checkpoints.keys():
-                if "inv_importance_order" in key:
-                    module_str = key.split(".inv_importance_order")[0]
-                    module = attrgetter(module_str)(model)
-                    module.register_buffer("inv_importance_order", checkpoints[key])
-                elif "importance_order" in key:
-                    module_str = key.split(".importance_order")[0]
-                    module = attrgetter(module_str)(model)
-                    module.register_buffer("importance_order", checkpoints[key])
+    # if rewiring and resuming from checkpoint, we will load the rewiring weights seperately
+    if args.rewire:
+        # load the rewiring weights
+        checkpoints = torch.load(
+            os.path.join(args.rewired_model_checkpoint_dir, "pytorch_model.bin"),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints, strict=False)
+        # hacky way to load the importance order without introducing these
+        # into __init__ of all classes and introducing problems with other
+        # checkpoints
+        for key in checkpoints.keys():
+            if "inv_importance_order" in key:
+                module_str = key.split(".inv_importance_order")[0]
+                module = attrgetter(module_str)(model)
+                module.register_buffer("inv_importance_order", checkpoints[key])
+            elif "importance_order" in key:
+                module_str = key.split(".importance_order")[0]
+                module = attrgetter(module_str)(model)
+                module.register_buffer("importance_order", checkpoints[key])
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
@@ -898,6 +898,9 @@ def main():
             map_location="cpu",
         )
         model.load_state_dict(checkpoints)
+    
+    checkpoints = torch.load( os.path.join("../../efficient-hardware-aware-transformers/checkpoints/random_sampling_experiments/c4_realnews_bert-bottleneck_random_K=1_pretraining_22-07-2021-22-40-40/best_model", "pytorch_model.bin"), map_location = "cpu",)
+    model.load_state_dict(checkpoints)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -1220,7 +1223,16 @@ def main():
     logger.info(f"Starting training from epoch {completed_epochs}")
     logger.info(f"Training till epoch  {args.num_train_epochs}")
     logger.info("=============================")
-
+    
+    eval_metric = validate_subtransformer(
+                    model,
+                    eval_dataloader,
+                    accelerator,
+                    len(eval_dataset),
+                    args.per_device_eval_batch_size,
+                    args.pad_to_max_length,)
+    perpx = eval_metric["perplexity"]
+    logger.info(f"perplexity before starting: {perpx:.2f} ") 
     for epoch in range(completed_epochs, args.num_train_epochs):
         # first evaluate random subtransformers before starting training
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
