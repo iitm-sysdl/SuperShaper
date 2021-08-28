@@ -9,7 +9,7 @@ import wandb
 import plotly.express as px
 from datetime import datetime
 from collections import defaultdict
-import time 
+import time
 from statistics import mean
 import pandas as pd
 
@@ -52,7 +52,7 @@ def validate_subtransformer(
     len_eval_dataset,
     per_device_eval_batch_size,
     pad_to_max_length,
-    evaluate_latency=False
+    evaluate_latency=False,
 ):
     metric = load_metric("custom_metrics/mlm_accuracy.py")
 
@@ -86,7 +86,7 @@ def validate_subtransformer(
         batch.to(accelerator.device)
 
         if evaluate_latency:
-            if accelerator.device == 'cuda':
+            if accelerator.device == "cuda":
                 start_time = torch.cuda.Event(enable_timing=True)
                 end_time = torch.cuda.Event(enable_timing=True)
                 start_time.record()
@@ -96,14 +96,17 @@ def validate_subtransformer(
         with torch.no_grad():
             outputs = model(**batch)
 
-
         if evaluate_latency:
-            if accelerator.device == 'cuda':
+            if accelerator.device == "cuda":
                 end_time.record()
                 torch.cuda.synchronize()
-                exec_time.append(start_time.elapsed_time(end) / 1000) ## Measured in seconds
+                exec_time.append(
+                    start_time.elapsed_time(end) / 1000
+                )  ## Measured in seconds
             else:
-                exec_time.append((time.monotonic() - start_time) / 1000) ## Measured in seconds
+                exec_time.append(
+                    (time.monotonic() - start_time) / 1000
+                )  ## Measured in seconds
 
         loss = outputs.loss
         losses.append(accelerator.gather(loss.repeat(per_device_eval_batch_size)))
@@ -298,14 +301,14 @@ def parse_args():
 
     parser.add_argument(
         "--evaluate_latency",
-        type=int, 
+        type=int,
         default=0,
         help=f"Evaluate Latency",
     )
 
     parser.add_argument(
         "--only_latency",
-        type=int, 
+        type=int,
         required=True,
         help=f"Evaluate only Latency",
     )
@@ -316,7 +319,6 @@ def parse_args():
         default=10,
         help=f"The number of iterations to evaluate latency",
     )
-
 
     args = parser.parse_args()
     args.model_name_or_path = "bert-base-cased"
@@ -660,7 +662,7 @@ def main():
         logger.info("***** Running Validation *****")
         logger.info(f"  Num examples = {len(eval_dataset)}")
 
-    # change to supertransformer config
+        # change to supertransformer config
         model.set_sample_config(global_config)
 
         eval_metric = validate_subtransformer(
@@ -688,7 +690,11 @@ def main():
         )
     else:
         eval_dataloader = accelerator.prepare(eval_dataloader)
-        
+        eval_batches = []
+        for idx, batch in enumerate(eval_dataloader):
+            eval_batches.append(batch)
+            if idx == args.num_iteration:
+                break
 
     # this is already set by set_seed function which we call above
     # but doing this again just to be sure
@@ -709,18 +715,18 @@ def main():
     if args.evaluate_latency or args.only_latency:
         subtransformer_latencies = []
 
-    sampler = Sampler("random", "none", args.mixing, global_config)
+    sampler = Sampler("random", "sandwich", args.mixing, global_config)
 
     for idx, _seed in enumerate(tqdm(random_seeds)):
         if args.subtransformer_config_path is not None:
             subtransformer_config = global_config
         else:
-            subtransformer_config = sampler.sample_subtransformer(
+            config_dict = sampler.sample_subtransformer(
                 randomize=True,
                 rand_seed=_seed,
-            )["random_subtransformers"][0]
-            sample_hidd = [120] * 12
-            #setattr(subtransformer_config, "sample_hidden_size", sample_hidd)
+            )
+            super_config_small = config_dict["smallest_subtransformer"]
+            subtransformer_config = config_dict["random_subtransformers"][0]
 
         if not args.only_latency:
             model.set_sample_config(subtransformer_config)
@@ -747,27 +753,26 @@ def main():
             subtransformer_accuracies.append(val_accuracy)
             subtransformer_losses.append(val_loss.item())
             subtransformer_configs.append(subtransformer_config)
-            
+
             if args.evaluate_latency:
                 subtransformer_latencies.append(eval_metric["exec_time"])
 
-        else: ## This is used when we want to evaluate latency alone
+        else:  ## This is used when we want to evaluate latency alone
             assert args.per_device_eval_batch_size == 1
-            
+
             model = custom_bert.BertForMaskedLM.from_pretrained(
                 "bert-base-cased", config=subtransformer_config
             )
-            model.set_sample_config(subtransformer_config)
-            model = model.get_active_subnet(subtransformer_config)
-            
+            model.set_sample_config(super_config_small)
+            model = model.get_active_subnet(super_config_small)
+
             model.to(accelerator.device)
             model.eval()
-            
-            cnt = 0
+
             exec_time = []
-            for index, batch in enumerate(eval_dataloader):
-                
-                if accelerator.device == 'cuda':
+            for index, batch in enumerate(eval_batches):
+
+                if accelerator.device == "cuda":
                     start_time = torch.cuda.Event(enable_timing=True)
                     end_time = torch.cuda.Event(enable_timing=True)
                     start_time.record()
@@ -777,29 +782,26 @@ def main():
                 with torch.no_grad():
                     outputs = model(**batch)
 
-
-                if accelerator.device == 'cuda':
+                if accelerator.device == "cuda":
                     end_time.record()
                     torch.cuda.synchronize()
-                    exec_time.append(start_time.elapsed_time(end)) ## Measured in seconds
+                    exec_time.append(
+                        start_time.elapsed_time(end)
+                    )  ## Measured in seconds
                 else:
-                    exec_time.append((time.monotonic() - start_time)) ## Measured in seconds
-
-
-                cnt+=1
-                if cnt == args.num_iteration:
-                    break
+                    exec_time.append(
+                        (time.monotonic() - start_time)
+                    )  ## Measured in seconds
 
             execution_time = mean(exec_time)
+            print(execution_time)
             subtransformer_latencies.append(execution_time)
             subtransformer_configs.append(subtransformer_config)
-
 
     if not args.only_latency:
         logger.info(
             f"Subtransformer average stats: val_perplexity: {mean(subtransformer_peplexities):.2f}, val_loss: {mean(subtransformer_losses):.2f}, val_accuracy:  {mean(subtransformer_accuracies):.2f}"
         )
-
 
         # no need to save stats if we are evaluating one subtransformer config
         if args.subtransformer_config_path is None:
@@ -825,12 +827,15 @@ def main():
         if args.subtransformer_config_path is None:
             _dict = {
                 "config": subtransformer_configs,
-                "latency": subtransformer_latencies
+                "latency": subtransformer_latencies,
             }
 
             df = pd.DataFrame(_dict)
-            csv_path = os.path.join(args.checkpoint_dir, "subtransformer_latencies_"+str(args.seed)+".csv") 
+            csv_path = os.path.join(
+                "subtransformer_latencies_" + str(args.seed) + ".csv",
+            )
             df.to_csv(csv_path, index=False)
+
 
 if __name__ == "__main__":
     main()
