@@ -18,7 +18,7 @@ import datasets
 import torch
 from datasets import load_dataset, load_metric
 from torch.utils.data.dataloader import DataLoader
-
+from torchinfo import summary 
 import transformers
 from transformers import (
     CONFIG_MAPPING,
@@ -759,13 +759,18 @@ def main():
                 subtransformer_latencies.append(eval_metric["exec_time"])
 
         else:  ## This is used when we want to evaluate latency alone
-            assert args.per_device_eval_batch_size == 1
+            #assert args.per_device_eval_batch_size == 1
+
+            if idx == 0:
+                subtransformer_config = super_config_small
+            elif idx == 1:
+                subtransformer_config = global_config
 
             model = custom_bert.BertForMaskedLM.from_pretrained(
                 "bert-base-cased", config=subtransformer_config
             )
-            model.set_sample_config(super_config_small)
-            model = model.get_active_subnet(super_config_small)
+            model.set_sample_config(subtransformer_config)
+            model = model.get_active_subnet(subtransformer_config)
 
             model.to(accelerator.device)
             model.eval()
