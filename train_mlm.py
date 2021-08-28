@@ -899,8 +899,8 @@ def main():
         )
         model.load_state_dict(checkpoints)
     
-    checkpoints = torch.load( os.path.join("../../efficient-hardware-aware-transformers/checkpoints/random_sampling_experiments/c4_realnews_bert-bottleneck_random_K=1_pretraining_22-07-2021-22-40-40/best_model", "pytorch_model.bin"), map_location = "cpu",)
-    model.load_state_dict(checkpoints)
+    #checkpoints = torch.load( os.path.join("../../efficient-hardware-aware-transformers/checkpoints/random_sampling_experiments/c4_realnews_bert-bottleneck_random_K=1_pretraining_22-07-2021-22-40-40/best_model", "pytorch_model.bin"), map_location = "cpu",)
+    #model.load_state_dict(checkpoints)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
