@@ -335,6 +335,7 @@ def parse_args():
         args.dataset_name is None
         and args.validation_file is None
         and args.c4_dir is None
+        and args.tokenized_c4_dir is None
     ):
         raise ValueError("Need either a dataset name or a validation file.")
     else:
