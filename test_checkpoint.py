@@ -543,8 +543,9 @@ def main():
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
-    column_names = raw_datasets["train"].column_names
-    text_column_name = "text" if "text" in column_names else column_names[0]
+    if args.tokenized_c4_dir is None:
+        column_names = raw_datasets["train"].column_names
+        text_column_name = "text" if "text" in column_names else column_names[0]
 
     if args.max_seq_length is None:
         max_seq_length = tokenizer.model_max_length
