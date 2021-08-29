@@ -320,6 +320,14 @@ def parse_args():
         help=f"The number of iterations to evaluate latency",
     )
 
+    parser.add_argument(
+        "--tokenized_c4_dir",
+        type=str,
+        default=None,
+        help=f"The directory path for tokenized C4",
+    )
+
+
     args = parser.parse_args()
     args.model_name_or_path = "bert-base-cased"
 
@@ -341,6 +349,11 @@ def parse_args():
     if args.c4_dir is not None:
         check_path(args.c4_dir)
         args.dataset_name = "c4_realnews"
+
+    if args.tokenized_c4_dir is not None:
+        check_path(args.tokenized_c4_dir)
+        args.dataset_name = "c4_realnews"
+
 
     return args
 
@@ -390,7 +403,10 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if args.dataset_name is not None:
+    if args.tokenized_c4_dir is not None:
+        logger.info("Loading Tokenized C4 Dataset...")
+        tokenized_datasets = datasets.load_from_disk(args.tokenized_c4_dir)
+    elif args.dataset_name is not None:
         # Downloading and loading a dataset from the hub.
         if args.dataset_name == "c4_realnews":
             logger.info("Loading C4 Dataset...")
@@ -545,88 +561,94 @@ def main():
             )
         max_seq_length = min(args.max_seq_length, tokenizer.model_max_length)
 
-    if args.line_by_line:
-        # When using line_by_line, we just tokenize each nonempty line.
-        padding = "max_length" if args.pad_to_max_length else False
+    if args.tokenized_c4_dir is None:
+        if args.line_by_line:
+            # When using line_by_line, we just tokenize each nonempty line.
+            padding = "max_length" if args.pad_to_max_length else False
 
-        def tokenize_function(examples):
-            # Remove empty lines
-            examples["text"] = [
-                line
-                for line in examples["text"]
-                if len(line) > 0 and not line.isspace()
-            ]
-            return tokenizer(
-                examples["text"],
-                padding=padding,
-                truncation=True,
-                max_length=max_seq_length,
-                # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
-                # receives the `special_tokens_mask`.
-                return_special_tokens_mask=True,
-            )
-
-        tokenized_datasets = raw_datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=args.preprocessing_num_workers,
-            # remove_columns=column_names,
-            remove_columns=[text_column_name],
-            load_from_cache_file=not args.overwrite_cache,
-        )
-    else:
-        # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
-        # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
-        # efficient when it receives the `special_tokens_mask`.
-        def tokenize_function(examples):
-            return tokenizer(
-                examples[text_column_name], return_special_tokens_mask=True
-            )
-
-        tokenized_datasets = raw_datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not args.overwrite_cache,
-        )
-
-        # Main data processing function that will concatenate all texts from our dataset and generate chunks of
-        # max_seq_length.
-        def group_texts(examples):
-            # Concatenate all texts.
-            concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-            # customize this part to your needs.
-            total_length = (total_length // max_seq_length) * max_seq_length
-            # Split by chunks of max_len.
-            result = {
-                k: [
-                    t[i : i + max_seq_length]
-                    for i in range(0, total_length, max_seq_length)
+            def tokenize_function(examples):
+                # Remove empty lines
+                examples["text"] = [
+                    line
+                    for line in examples["text"]
+                    if len(line) > 0 and not line.isspace()
                 ]
-                for k, t in concatenated_examples.items()
-            }
-            return result
+                return tokenizer(
+                    examples["text"],
+                    padding=padding,
+                    truncation=True,
+                    max_length=max_seq_length,
+                    # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
+                    # receives the `special_tokens_mask`.
+                    return_special_tokens_mask=True,
+                )
 
-        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
-        # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
-        # might be slower to preprocess.
-        #
-        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
-        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+            tokenized_datasets = raw_datasets.map(
+                tokenize_function,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                # remove_columns=column_names,
+                remove_columns=[text_column_name],
+                load_from_cache_file=not args.overwrite_cache,
+            )
+        else:
+            # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
+            # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
+            # efficient when it receives the `special_tokens_mask`.
+            def tokenize_function(examples):
+                return tokenizer(
+                    examples[text_column_name], return_special_tokens_mask=True
+                )
 
-        tokenized_datasets = tokenized_datasets.map(
-            group_texts,
-            batched=True,
-            num_proc=args.preprocessing_num_workers,
-            load_from_cache_file=not args.overwrite_cache,
+            tokenized_datasets = raw_datasets.map(
+                tokenize_function,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                remove_columns=column_names,
+                load_from_cache_file=not args.overwrite_cache,
+            )
+
+            # Main data processing function that will concatenate all texts from our dataset and generate chunks of
+            # max_seq_length.
+            def group_texts(examples):
+                # Concatenate all texts.
+                concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+                total_length = len(concatenated_examples[list(examples.keys())[0]])
+                # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
+                # customize this part to your needs.
+                total_length = (total_length // max_seq_length) * max_seq_length
+                # Split by chunks of max_len.
+                result = {
+                    k: [
+                        t[i : i + max_seq_length]
+                        for i in range(0, total_length, max_seq_length)
+                    ]
+                    for k, t in concatenated_examples.items()
+                }
+                return result
+
+            # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
+            # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
+            # might be slower to preprocess.
+            #
+            # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
+            # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
+
+            tokenized_datasets = tokenized_datasets.map(
+                group_texts,
+                batched=True,
+                num_proc=args.preprocessing_num_workers,
+                load_from_cache_file=not args.overwrite_cache,
+            )
+
+        if args.c4_dir is not None:
+            # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
+            tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
+    else:
+        logger.info(
+            f"Skipping tokenization! as we have the tokenized dataset is already loaded from {args.tokenized_c4_dir}"
         )
 
-    if args.c4_dir is not None:
-        # tokenized_datasets.save_to_disk(os.path.join(args.c4_dir, "../c4-tokenized"))
-        tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
     eval_dataset = tokenized_datasets["validation"]
 
     # Data collator
