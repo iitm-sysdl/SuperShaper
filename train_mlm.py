@@ -503,6 +503,14 @@ def parse_args():
         help=f"Path to rewired model checkpoint",
     )
 
+    parser.add_argument(
+        "--wandb_suffix",
+        type=str,
+        default=None,
+        help=f"suffix for wandb",
+    )
+
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -658,6 +666,9 @@ def main():
             str_name += "_alpha_div"
     else:
         str_name += "_pretraining"
+
+    if args.wandb_suffix is not None:
+        str_name += "_" + args.wandb_suffix
 
     if accelerator.is_main_process:
         wandb.init(
