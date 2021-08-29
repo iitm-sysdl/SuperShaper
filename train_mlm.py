@@ -1027,7 +1027,9 @@ def main():
             tokenized_datasets = tokenized_datasets.remove_columns(["url", "timestamp"])
 
     else:
-        logger.info(f"Skipping tokenization! as we have the tokenized dataset is already loaded from {args.tokenized_c4_dir}")
+        logger.info(
+            f"Skipping tokenization! as we have the tokenized dataset is already loaded from {args.tokenized_c4_dir}"
+        )
 
     train_dataset = tokenized_datasets["train"]
     eval_dataset = tokenized_datasets["validation"]
