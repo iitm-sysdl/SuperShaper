@@ -510,6 +510,12 @@ def parse_args():
         help=f"suffix for wandb",
     )
 
+    parser.add_argument(
+        "--target_perplexity",
+        type=int,
+        default=None,
+        help=f"perplexity to stop further pretraining",
+    )
 
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
@@ -592,6 +598,10 @@ def parse_args():
         # overwrite on the same directory
         args.output_dir = args.resume_from_checkpoint_dir
 
+    if args.target_perplexity is not None:
+        assert (
+            args.subtransformer_config_path is not None
+        ), "Need to provide subtransformer config path to use this option"
     assert args.k_sampling > 0
 
     if args.subtransformer_config_path:
@@ -922,14 +932,17 @@ def main():
         )
         model.load_state_dict(checkpoints)
 
-    # checkpoints = torch.load(
-    #     os.path.join(
-    #         "../../efficient-hardware-aware-transformers/checkpoints/random_sampling_experiments/c4_realnews_bert-bottleneck_random_K=1_pretraining_22-07-2021-22-40-40/best_model",
-    #         "pytorch_model.bin",
-    #     ),
-    #     map_location="cpu",
-    # )
-    # model.load_state_dict(checkpoints)
+    reached_target_perplexity = False
+    if args.target_perplexity is not None:
+        logger.info("Loading pretrained model for further pretraining ..")
+        checkpoints = torch.load(
+            os.path.join(
+                "checkpoints/random_sampling_experiments/c4_realnews_bert-bottleneck_random_K=1_pretraining_22-07-2021-22-40-40/best_model",
+                "pytorch_model.bin",
+            ),
+            map_location="cpu",
+        )
+        model.load_state_dict(checkpoints)
 
     # Preprocessing the datasets.
     # First we tokenize all the texts.
@@ -1582,6 +1595,11 @@ def main():
                     },
                     args.optim_scheduler_states_path.format("best_model"),
                 )
+                if best_val_perplexity <= args.target_perplexity:
+                    logger.info(
+                        f"Best val_perplexity: {best_val_perplexity:.2f} <= {args.target_perplexity:.2f} reached, stopping"
+                    )
+                    break
 
     if args.output_dir is not None:
         accelerator.wait_for_everyone()
