@@ -512,7 +512,7 @@ def parse_args():
 
     parser.add_argument(
         "--target_perplexity",
-        type=int,
+        type=float,
         default=None,
         help=f"perplexity to stop further pretraining",
     )
@@ -1618,6 +1618,8 @@ def main():
             },
             args.optim_scheduler_states_path.format("last_model"),
         )
+
+    logger.info(f"Training completed. Find your checkpoints at {args.output_dir}")
 
 
 if __name__ == "__main__":
