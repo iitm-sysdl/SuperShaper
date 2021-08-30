@@ -304,7 +304,7 @@ class Sampler:
         if self.mixing == "bert-bottleneck":
             config_dict["sample_hidden_size"] = [
                 min(choices["sample_hidden_size"])
-            ] * config_dict["sample_hidden_size"]
+            ] * config_dict["sample_num_hidden_layers"]
             config_dict["sample_num_attention_heads"] = [12] * config_dict[
                 "sample_num_hidden_layers"
             ]
