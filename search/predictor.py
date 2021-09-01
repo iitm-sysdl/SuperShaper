@@ -10,6 +10,21 @@ from sklearn.utils import shuffle
 import plotly.graph_objects as go
 import json
 from transformers import BertConfig
+from utils import calculate_params_from_config
+from torchprofile import profile_macs
+from transformers import AutoConfig, AutoTokenizer
+from custom_layers import custom_bert, custom_mobile_bert
+import argparse
+
+sentences = ["hello how are you", "i am fine"]
+tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+inputs = tokenizer.encode_plus(sentences, return_tensors="pt")
+
+
+# prepring model
+bert_config = AutoConfig.from_pretrained("bert-base-uncased")
+
+
 
 ## Move this to utils later ## 
 def convert_to_dict(string):
@@ -28,16 +43,28 @@ def generate_dataset(features_file, pred_type='perplexity'):
         "sample_num_attention_heads": [],
         "sample_intermediate_size": [],
         "sample_num_hidden_layers": [],
+        "params": [],
+        #"macs": [],
         pred_type: [],
 
     }
     
     for index, row in df.iterrows():
         cfg = row["config"]
+        params = calculate_params_from_config(cfg)
+        #print("Adding row %d to dataset"%(index))
 
         for key in feature_dict.keys():
             if key == pred_type:
-                feature_dict[key].append(row["perplexity"])
+                feature_dict[key].append(row[pred_type])
+            elif key == 'params':
+                feature_dict[key].append(params)
+            elif key == 'macs':
+                model = custom_bert.BertForMaskedLM(config=cfg)
+                model.set_sample_config(cfg)
+                macs = profile_macs(model, inputs["input_ids"])
+
+                feature_dict[key].append(macs)
             else:
                 attr = getattr(cfg, key)
                 feature_dict[key].append(attr)
@@ -45,7 +72,7 @@ def generate_dataset(features_file, pred_type='perplexity'):
     return pd.DataFrame.from_dict(feature_dict)
 
 def row_mapper(row):
-    return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"]])
+    return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"], row["params"]])
 
 
 class Predictor():
@@ -54,7 +81,7 @@ class Predictor():
         self.ckpt = ckpt
         self.dataset_path = dataset_path
         self.model_type = model_type
-        self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers"]
+        self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers", "params"]
 
         if model_type == 'lgbm': 
             self.model = lgbm.Booster() 
@@ -100,7 +127,9 @@ class Predictor():
         
         df_features = df.drop([self.pred_type], axis=1)
         df_metric = df.drop(self.keys, axis=1)
-         
+        
+        #df_metric = df_metric / df_metric.max()
+
         metric = df_metric.to_numpy()
         
         df_features["merged_features"] = df_features.apply(row_mapper, axis=1)
@@ -160,13 +189,51 @@ class Predictor():
     def predict(self, feature_in):
         return self.model.predict(feature_in)
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Pretrain/Finetune a transformers model on a Masked Language Modeling task"
+    )
+    
+    parser.add_argument(
+        "--input_file_name_or_path",
+        type=str,
+        required=True,
+        help="The file name of the output",
+    )
+    parser.add_argument(
+        "--prediction_type",
+        type=str,
+        required=True,
+        help="The name of the dataset to use (via the datasets library).",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default='xgb',
+        help="The type of cost model used",
+    )
+    parser.add_argument(
+        "--output_file_name_or_path",
+        type=str,
+        required=True,
+        help="Path to store the learnt model",
+    )
 
-def test():
-    df = generate_dataset('./subtransformer_stats.csv')
-    predictor = Predictor(pred_type='perplexity', model_type='xgb')
+
+    args = parser.parse_args()
+    
+    return args
+
+
+ 
+
+def learn_predictor(args):
+    df = generate_dataset(args.input_file_name_or_path, pred_type=args.prediction_type)
+    predictor = Predictor(pred_type=args.prediction_type, model_type=args.model_type)
     predictor.read_dataset(df)
     predictor.train()
-    predictor.store_ckpt('./perplexity_predictor.xgb')
+    predictor.store_ckpt(args.output_file_name_or_path+'.'+args.model_type)
 
 if __name__ == "__main__":
-    test()
+    args = parse_args()
+    learn_predictor(args)
