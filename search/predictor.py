@@ -15,11 +15,11 @@ from torchprofile import profile_macs
 from transformers import AutoConfig, AutoTokenizer
 from custom_layers import custom_bert, custom_mobile_bert
 import argparse
-
+import plotly
 sentences = ["hello how are you", "i am fine"]
 tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
 inputs = tokenizer.encode_plus(sentences, return_tensors="pt")
-
+plotly.io.orca.config.save()
 
 # prepring model
 bert_config = AutoConfig.from_pretrained("bert-base-uncased")
@@ -140,7 +140,7 @@ class Predictor():
 
         return self.dataset
 
-    def train(self, dataset=None, split=0.7):
+    def train(self, dataset=None, split=0.7, plot=False):
         dataset = dataset or self.dataset
 
         features, metric = dataset
@@ -172,8 +172,9 @@ class Predictor():
         if self.model == 'xgb':
             print("Features of Importances")
             print(model.feature_importances_)
-        
-        self.plot(testy, test_predict)
+       	
+        if plot: 
+            self.plot(testy, test_predict)
     
     def plot(self, test_actual, test_predict):
         fig = go.Figure()
@@ -218,6 +219,12 @@ def parse_args():
         required=True,
         help="Path to store the learnt model",
     )
+    
+    parser.add_argument(
+        "--plot",
+        type=int,
+        default=0,
+    )
 
 
     args = parser.parse_args()
@@ -231,7 +238,7 @@ def learn_predictor(args):
     df = generate_dataset(args.input_file_name_or_path, pred_type=args.prediction_type)
     predictor = Predictor(pred_type=args.prediction_type, model_type=args.model_type)
     predictor.read_dataset(df)
-    predictor.train()
+    predictor.train(plot=args.plot)
     predictor.store_ckpt(args.output_file_name_or_path+'.'+args.model_type)
 
 if __name__ == "__main__":
