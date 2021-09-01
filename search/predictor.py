@@ -191,7 +191,7 @@ class Predictor():
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Pretrain/Finetune a transformers model on a Masked Language Modeling task"
+        description="Learn a predictor for latency and/or perplexity"
     )
     
     parser.add_argument(

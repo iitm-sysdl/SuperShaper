@@ -342,16 +342,111 @@ class EvolSearch:
 
         return self.best_config
 
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Perform Evolutionary Search for given design objectives"
+    )
+    parser.add_argument(
+        "--perplexity_model_file_name_or_path",
+        type=str,
+        default=None,
+        help="Path to load the predictor model",
+    )
+    parser.add_argument(
+        "--latency_model_file_name_or_path",
+        type=str,
+        default=None,
+        help="Path to load the latency model",
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default='mlm',
+        help="Task for evo-search",
+    )
+    parser.add_argument(
+        "--population_size",
+        type=str,
+        default=100,
+        help="Population Size for Evo-Search",
+    )
+    parser.add_argument(
+        "--parent_size",
+        type=str,
+        default=10,
+        help="Parent Size",
+    )
+    parser.add_argument(
+        "--mutation_size",
+        type=str,
+        default=100,
+        help="Mutation Size",
+    )
+    parser.add_argument(
+        "--crossover_size",
+        type=str,
+        default=100,
+        help="Crossover Size",
+    )
+    parser.add_argument(
+        "--mutation_prob",
+        type=str,
+        default=0.4,
+        help="Mutation Probability",
+    )
+    parser.add_argument(
+        "--time_budget",
+        type=str,
+        default=300,
+        help="Max Time budget for Evolutionary Search",
+    )
+    parser.add_argument(
+        "--search_space_config",
+        type=str,
+        default='bert-bottleneck',
+        help="Search Space to use",
+    )
+    parser.add_argument(
+        "--params_constraints",
+        type=str,
+        default=None,
+        help="Constraints on Parameters",
+    )
+    parser.add_argument(
+        "--latency_constraints",
+        type=str,
+        default=None,
+        help="Constraints on Latency",
+    )
+    parser.add_argument(
+        "--perplexity_constraints",
+        type=str,
+        default=None,
+        help="Constraints on Perplexity",
+    )
+    parser.add_argument(
+        "--model_type",
+        type=str,
+        default='xgb',
+        help="Cost model type",
+    )
 
-def search(): 
-    population_size = 100
-    parent_size = 10
-    mutation_size = 100
-    crossover_size = 100
-    task = 'mlm'
-    mutation_prob = 0.4 
-    time_budget = 300
-    search_space_config = 'bert-bottleneck'
+    args = parser.parse_args()
+    
+    return args
+
+
+
+
+def search(args): 
+    population_size = args.population_size
+    parent_size = args.parent_size
+    mutation_size = args.mutation_size
+    crossover_size = args.crossover_size
+    task = args.task
+    mutation_prob = args.mutation_prob
+    time_budget = args.time_budget
+    search_space_config = args.search_space_config
 
     bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
 
@@ -359,14 +454,27 @@ def search():
     fitness_set = None,
     ckpt_path = None, 
     accelerator = None,     
-
-    #constraints_set = { 'perplexity' : 5.65 } 
-    constraints_set = { 'params' : 70000000,
-                        'perplexity': 6.8,
-                      } 
-    perplexity_predictor = Predictor(ckpt='./outputs/perplexity_predictor.xgb', pred_type='perplexity', model_type='xgb')
-    perplexity_predictor.load_ckpt()
     
+    if args.latency_predictor is not None:
+        assert args.latency_model_file_name_or_path is not None
+        latency_predictor = Predictor(ckpt=args.latency_model_file_name_or_path, pred_type='latency', model=args.model_type)
+        latency_predictor.load_ckpt()
+
+    if args.perplexity_predictor is not None:
+        perplexity_predictor = Predictor(ckpt=args.perplexity_model_file_name_or_path, pred_type='perplexity', model_type=args.model_type)
+        perplexity_predictor.load_ckpt()
+ 
+    #constraints_set = { 'perplexity' : 5.65 } 
+    constraints_set = {}
+    if args.params_constraints is not None:
+        constraints_set['params'] = args.params_constraints
+
+    if args.perplexity_constraints is not None:
+        constraints_set['perplexity'] = args.perplexity_constraints
+
+    if args.latency_constraints is not None:
+        constraints_set['latency'] = args.latency_constraints
+   
     evolution = EvolSearch(population_size, 
                            parent_size, 
                            mutation_size, 
@@ -380,43 +488,47 @@ def search():
                            perplexity_predictor = perplexity_predictor
                            )
 
-    ### Testing Get Search Space ### 
-    #space = evolution.get_search_space()
-    #print(space)
-    #print(evolution.gene_len)
-    #
-    #print("--------------------------------------")
-
-    #### Testing arch2feature and feature2arch ### 
-    #gene = evolution.arch2feature(bert_config)
-    #print(gene)
-    #
-    #print("--------------------------------------")
-    #    
-    #gene[0] = gene[1] = gene[-2] = gene[-3] = 256
-    #feature = evolution.feature2arch(gene)
-    #print(feature)
-    #
-    #print("--------------------------------------")
-
-    #### Testing Mutation and Crossover ###
-    #mutated_gene = evolution.mutate(gene)
-    #print(mutated_gene)
-
-    #print("--------------------------------------")
-
-    #crossedover_gene = evolution.crossover([gene, mutated_gene])
-    #print(gene)
-    #print(mutated_gene)
-    #print(crossedover_gene)
-
-    #print("--------------------------------------")
-
-    ### Testing Random Sampling and Evolutionary Search ### 
-    #sampled_population = evolution.random_sample()
-    #print(sampled_population)
-
     print(evolution.run_evo_search())
 
+def test():
+    ### Testing Get Search Space ### 
+    space = evolution.get_search_space()
+    print(space)
+    print(evolution.gene_len)
+    
+    print("--------------------------------------")
+
+    ### Testing arch2feature and feature2arch ### 
+    gene = evolution.arch2feature(bert_config)
+    print(gene)
+    
+    print("--------------------------------------")
+        
+    gene[0] = gene[1] = gene[-2] = gene[-3] = 256
+    feature = evolution.feature2arch(gene)
+    print(feature)
+    
+    print("--------------------------------------")
+
+    ### Testing Mutation and Crossover ###
+    mutated_gene = evolution.mutate(gene)
+    print(mutated_gene)
+
+    print("--------------------------------------")
+
+    crossedover_gene = evolution.crossover([gene, mutated_gene])
+    print(gene)
+    print(mutated_gene)
+    print(crossedover_gene)
+
+    print("--------------------------------------")
+
+    ## Testing Random Sampling and Evolutionary Search ### 
+    sampled_population = evolution.random_sample()
+    print(sampled_population)
+
+
+
 if __name__ == "__main__":
-    search()
+    args = parse_args()
+    search(args)
