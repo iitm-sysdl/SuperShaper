@@ -308,7 +308,8 @@ class EvolSearch:
             population = new_population
 
             
-            sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
+            #sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
+            sorted_ind = np.array(fitness_scores).argsort()[0::][: self.parent_size]
 
             fitness_scores_top = np.array(fitness_scores)[sorted_ind]
 
@@ -456,7 +457,8 @@ def search(args):
 
     fitness_set = None,
     ckpt_path = None, 
-    accelerator = None,     
+    accelerator = None,    
+    latency_predictor = None
     
     if args.latency_constraints is not None:
         assert args.latency_model_file_name_or_path is not None
