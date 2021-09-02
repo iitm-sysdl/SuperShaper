@@ -166,7 +166,11 @@ class EvolSearch:
         for constraints in self.constraints_set:
             if 'latency' in constraints: 
                 assert self.latency_predictor is not None
-
+                params = calculate_params_from_config(self.feature2arch(list(feature[0])))
+                tmp_lst = list(feature[0])
+                tmp_lst.append(params)
+                feature = np.array(tmp_lst)
+                feature = np.reshape(feature, (1, feature.shape[0]))
                 lat = self.latency_predictor.predict(feature)
                 if lat <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
                     satisfy = True
@@ -304,7 +308,8 @@ class EvolSearch:
             population = new_population
 
             
-            sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
+            #sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
+            sorted_ind = np.array(fitness_scores).argsort()[0::][: self.parent_size]
 
             fitness_scores_top = np.array(fitness_scores)[sorted_ind]
 
@@ -450,30 +455,30 @@ def search(args):
 
     bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
 
-    latency_predictor = None,
     fitness_set = None,
     ckpt_path = None, 
-    accelerator = None,     
+    accelerator = None,    
+    latency_predictor = None
     
-    if args.latency_predictor is not None:
+    if args.latency_constraints is not None:
         assert args.latency_model_file_name_or_path is not None
-        latency_predictor = Predictor(ckpt=args.latency_model_file_name_or_path, pred_type='latency', model=args.model_type)
+        latency_predictor = Predictor(ckpt=args.latency_model_file_name_or_path, pred_type='latency', model_type=args.model_type)
         latency_predictor.load_ckpt()
 
-    if args.perplexity_predictor is not None:
+    if args.perplexity_constraints is not None:
         perplexity_predictor = Predictor(ckpt=args.perplexity_model_file_name_or_path, pred_type='perplexity', model_type=args.model_type)
         perplexity_predictor.load_ckpt()
  
     #constraints_set = { 'perplexity' : 5.65 } 
     constraints_set = {}
     if args.params_constraints is not None:
-        constraints_set['params'] = args.params_constraints
+        constraints_set['params'] = float(args.params_constraints)
 
     if args.perplexity_constraints is not None:
-        constraints_set['perplexity'] = args.perplexity_constraints
+        constraints_set['perplexity'] = float(args.perplexity_constraints)
 
     if args.latency_constraints is not None:
-        constraints_set['latency'] = args.latency_constraints
+        constraints_set['latency'] = float(args.latency_constraints)
    
     evolution = EvolSearch(population_size, 
                            parent_size, 
@@ -485,7 +490,8 @@ def search(args):
                            search_space_config, 
                            bert_config,
                            constraints_set = constraints_set, 
-                           perplexity_predictor = perplexity_predictor
+                           perplexity_predictor = perplexity_predictor,
+                           latency_predictor = latency_predictor
                            )
 
     print(evolution.run_evo_search())
