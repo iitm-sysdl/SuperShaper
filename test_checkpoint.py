@@ -101,11 +101,11 @@ def validate_subtransformer(
                 end_time.record()
                 torch.cuda.synchronize()
                 exec_time.append(
-                    start_time.elapsed_time(end) / 1000
+                    start_time.elapsed_time(end_time)
                 )  ## Measured in seconds
             else:
                 exec_time.append(
-                    (time.monotonic() - start_time) / 1000
+                    (time.monotonic() - start_time)
                 )  ## Measured in seconds
 
         loss = outputs.loss
@@ -784,11 +784,11 @@ def main():
 
         else:  ## This is used when we want to evaluate latency alone
             #assert args.per_device_eval_batch_size == 1
-
-            if idx == 0:
-                subtransformer_config = super_config_small
-            elif idx == 1:
-                subtransformer_config = global_config
+            if args.subtransformer_config_path is None:
+                if idx == 0:
+                    subtransformer_config = super_config_small
+                elif idx == 1:
+                    subtransformer_config = global_config
 
             model = custom_bert.BertForMaskedLM.from_pretrained(
                 "bert-base-cased", config=subtransformer_config
@@ -816,7 +816,7 @@ def main():
                     end_time.record()
                     torch.cuda.synchronize()
                     exec_time.append(
-                        start_time.elapsed_time(end)
+                        start_time.elapsed_time(end_time)
                     )  ## Measured in seconds
                 else:
                     exec_time.append(
