@@ -48,6 +48,7 @@ class EvolSearch:
         fitness_set = None,
         ckpt_path = None, 
         accelerator = None, 
+        device_type = None,
     ):
 
         self.search_space_config = search_space_config
@@ -63,7 +64,7 @@ class EvolSearch:
         self.parent_size = parent_size
         self.mutation_size = mutation_size
         self.crossover_size = crossover_size
-
+        self.device_type = device_type
         self.mutation_prob = mutation_prob
         self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers"]
 
@@ -186,7 +187,7 @@ class EvolSearch:
                     return False
             elif 'params' in constraints:
                 params = calculate_params_from_config(self.feature2arch(list(feature[0])))
-                if params <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
+                if params >= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
                     satisfy = True
                 else:
                     return False
@@ -283,7 +284,8 @@ class EvolSearch:
         population = self.random_sample()
 
         #directory = 'perpx_'+str(self.constraints_set['perplexity'])
-        directory = ''
+        assert self.device_type is not None
+        directory = self.device_type + '_'
         for keys in self.constraints_set.keys():
             directory += keys+str(self.constraints_set[keys])+'_'
         
@@ -435,6 +437,12 @@ def parse_args():
         default='xgb',
         help="Cost model type",
     )
+    parser.add_argument(
+        "--device_type",
+        type=str,
+        required=True,
+        help='Device Type for outputs'
+    )
 
     args = parser.parse_args()
     
@@ -491,7 +499,8 @@ def search(args):
                            bert_config,
                            constraints_set = constraints_set, 
                            perplexity_predictor = perplexity_predictor,
-                           latency_predictor = latency_predictor
+                           latency_predictor = latency_predictor,
+                           device_type = args.device_type
                            )
 
     print(evolution.run_evo_search())
