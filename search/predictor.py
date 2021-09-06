@@ -169,9 +169,9 @@ class Predictor():
         print(f"Number of Training Examples: {trainf.shape} , Test Data: {testf.shape}")
         print("R2 Score: %f, Spearman Coefficient: %f, PValue: %f"%(r2_score_test, s_coefficient, pvalue))
 
-        if self.model == 'xgb':
+        if self.model_type == 'xgb':
             print("Features of Importances")
-            print(model.feature_importances_)
+            print(self.model.feature_importances_)
        	
         if plot: 
             self.plot(testy, test_predict)
