@@ -128,7 +128,10 @@ def calculate_params(
         )
         if bottleneck:
             # for bottlenck params
-            per_layer_params += 2 * (emb_dim * emb_dim + emb_dim)
+            # per_layer_params += 2 * (emb_dim * emb_dim + emb_dim)
+            per_layer_params += (emb_dim * max_emb_dim + max_emb_dim) + (
+                emb_dim * max_emb_dim + emb_dim
+            )
 
     # BertPredictionHeadTransform parameters
     output_emb_params = (max_emb_dim * max_emb_dim) + max_emb_dim + layer_norm_params
