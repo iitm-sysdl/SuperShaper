@@ -295,6 +295,12 @@ def parse_args():
         default=0,
         help=f"if model path is a pretrained mnli checkpoint",
     )
+    parser.add_argument(
+        "--aug_train_file",
+        type=str,
+        default=None,
+        help=f"path to augmented train file",
+    )
 
     args = parser.parse_args()
 
@@ -521,6 +527,12 @@ def main():
     # See more about loading any type of standard or custom dataset at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
+    if args.aug_train_file is not None:
+        logger.info(f"Loading Augmented Glue Train file for {args.task_name}")
+        extension = (args.aug_train_file).split(".")[-1]
+        aug_datasets = load_dataset(extension, data_files=args.aug_train_file)
+        raw_datasets["train"] = aug_datasets["train"]
+
     # Labels
     if args.task_name is not None:
         is_regression = args.task_name == "stsb"
@@ -593,9 +605,8 @@ def main():
         model = custom_bert.BertForSequenceClassification.from_pretrained(
             args.model_name_or_path,
             config=global_config,
-            ignore_mismatched_sizes=args.is_mnli_checkpoint
+            ignore_mismatched_sizes=args.is_mnli_checkpoint,
         )
-
 
     logger.info(summary(model, depth=4, verbose=0))
 
