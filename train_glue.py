@@ -540,8 +540,10 @@ def main():
 
     if args.aug_train_file is not None:
         logger.info(f"Loading Augmented Glue Train file for {args.task_name}")
-        extension = (args.aug_train_file).split(".")[-1]
-        aug_datasets = load_dataset(extension, data_files=args.aug_train_file)
+        # extension = (args.aug_train_file).split(".")[-1]
+        aug_datasets = load_dataset(
+            "csv", delimeter="\t", quoting=3, data_files=args.aug_train_file
+        )
         raw_datasets["train"] = aug_datasets["train"]
 
     # Labels
