@@ -89,6 +89,17 @@ task_to_keys = {
     "wnli": ("sentence1", "sentence2"),
 }
 
+label_list_for_aug_data = {
+    "cola": {"unacceptable": 0, "acceptable": 1},
+    "sst-2": {"negative": 0, "positive": 1},
+    "mrpc": {"not_equivalent": 0, "equivalent": 1},
+    "qqp": {"not_duplicate": 0, "duplicate": 1},
+    "mnli": {"entailment": 0, "neutral": 1, "contradiction": 2},
+    "qnli": {"entailment": 0, "not_entailment": 1},
+    "rte": {"entailment": 0, "not_entailment": 1},
+    "wnli": {"not_entailment": 0, "entailment": 1},
+}
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -534,7 +545,16 @@ def main():
         raw_datasets["train"] = aug_datasets["train"]
 
     # Labels
-    if args.task_name is not None:
+    if args.aug_train_file is not None:
+        is_regression = args.task_name == "stsb"
+        if not is_regression:
+            label_list = raw_datasets["train"].unique("label")
+            label_list.sort()  # Let's sort it for determinism
+            num_labels = len(label_list)
+        else:
+            num_labels = 1
+
+    elif args.task_name is not None:
         is_regression = args.task_name == "stsb"
         if not is_regression:
             label_list = raw_datasets["train"].features["label"].names
@@ -655,6 +675,9 @@ def main():
     elif args.task_name is None:
         label_to_id = {v: i for i, v in enumerate(label_list)}
 
+    if args.aug_train_file is not None:
+        label_to_id = label_list_for_aug_data[args.task_name]
+
     if label_to_id is not None:
         model.config.label2id = label_to_id
         model.config.id2label = {
@@ -663,7 +686,7 @@ def main():
 
     padding = "max_length" if args.pad_to_max_length else False
 
-    def preprocess_function(examples):
+    def preprocess_function(examples, aug_dataset=False):
         # Tokenize the texts
         texts = (
             (examples[sentence1_key],)
@@ -683,17 +706,34 @@ def main():
                 result["labels"] = examples["label"]
         return result
 
-    processed_datasets = raw_datasets.map(
+    fn_kwargs = dict(
+        aug_dataset=args.aug_train_file is not None,
+    )
+
+    processed_datasets_train = raw_datasets.map(
         preprocess_function,
+        fn_kwargs=fn_kwargs,
         batched=True,
         remove_columns=raw_datasets["train"].column_names,
         desc="Running tokenizer on dataset",
     )
+    val_col = "validation_matched" if args.task_name == "mnli" else "validation"
+    processed_datasets_valid = raw_datasets.map(
+        preprocess_function,
+        batched=True,
+        remove_columns=raw_datasets[val_col].column_names,
+        desc="Running tokenizer on dataset",
+    )
+    if args.task_name == "mnli":
+        processed_datasets_valid_mm = raw_datasets.map(
+            preprocess_function,
+            batched=True,
+            remove_columns=raw_datasets["validation_mismatched"].column_names,
+            desc="Running tokenizer on dataset",
+        )
 
-    train_dataset = processed_datasets["train"]
-    eval_dataset = processed_datasets[
-        "validation_matched" if args.task_name == "mnli" else "validation"
-    ]
+    train_dataset = processed_datasets_train["train"]
+    eval_dataset = processed_datasets_valid[val_col]
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
@@ -1047,7 +1087,7 @@ def main():
 
     if args.task_name == "mnli":
         # Final evaluation on mismatched validation set
-        eval_dataset = processed_datasets["validation_mismatched"]
+        eval_dataset = processed_datasets_valid_mm
         eval_dataloader = DataLoader(
             eval_dataset,
             collate_fn=data_collator,
