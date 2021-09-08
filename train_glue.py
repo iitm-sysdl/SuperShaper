@@ -542,9 +542,13 @@ def main():
         logger.info(f"Loading Augmented Glue Train file for {args.task_name}")
         # extension = (args.aug_train_file).split(".")[-1]
         aug_datasets = load_dataset(
-            "csv", delimeter="\t", quoting=3, data_files=args.aug_train_file
+            "csv", delimiter="\t", quoting=3, data_files=args.aug_train_file
         )
         raw_datasets["train"] = aug_datasets["train"]
+        all_columns = set(raw_datasets["train"].features.keys())
+        required_columns = set(task_to_keys[args.task_name] + ("label",))
+        unwanted_columns = list(all_columns - required_columns)
+        raw_datasets["train"].remove_columns(unwanted_columns)
 
     # Labels
     if args.aug_train_file is not None:
@@ -678,7 +682,7 @@ def main():
         label_to_id = {v: i for i, v in enumerate(label_list)}
 
     if args.aug_train_file is not None:
-        label_to_id = label_list_for_aug_data[args.task_name]
+        aug_label_to_id = label_list_for_aug_data[args.task_name]
 
     if label_to_id is not None:
         model.config.label2id = label_to_id
@@ -700,7 +704,9 @@ def main():
         )
 
         if "label" in examples:
-            if label_to_id is not None:
+            if aug_dataset:
+                result["labels"] = [aug_label_to_id[l] for l in examples["label"]]
+            elif label_to_id is not None:
                 # Map labels to IDs (not necessary for GLUE tasks)
                 result["labels"] = [label_to_id[l] for l in examples["label"]]
             else:
