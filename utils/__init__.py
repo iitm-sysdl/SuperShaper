@@ -93,6 +93,7 @@ def calculate_params(
     add_embs_dim=True,
     bottleneck=True,
     max_emb_dim=768,
+    merged_bottleneck=False,
 ):
 
     if not bottleneck:
@@ -112,7 +113,7 @@ def calculate_params(
 
     assert len(d_ff_list) == num_enc
     per_layer_params = 0
-
+    prev_bottleneck_dim = max_emb_dim
     for d_ff, emb_dim in zip(d_ff_list, emb_dims):
         # weight and bias in layernorm
         layer_norm_params = 2 * emb_dim
@@ -126,12 +127,22 @@ def calculate_params(
             + (d_ff + emb_dim)  # intermediate and bertoutput bias terms
             + 2 * layer_norm_params  # 2 layernorms in a transformer block
         )
-        if bottleneck:
+        if merged_bottleneck:
+            # Assuming we have 3 layers with these hidden sizes:
+            # 120, 240, 360
+            # Total bottleneck params: (768*120 + 120) + (120*240 + 240) + (240 * 360 + 360) + (360*768+768)
+            per_layer_params += prev_bottleneck_dim * emb_dim + emb_dim
+            prev_bottleneck_dim = emb_dim
+
+        elif bottleneck:
             # for bottlenck params
-            # per_layer_params += 2 * (emb_dim * emb_dim + emb_dim)
             per_layer_params += (emb_dim * max_emb_dim + max_emb_dim) + (
                 emb_dim * max_emb_dim + emb_dim
             )
+
+    if merged_bottleneck:
+        # to add final layer (360*768+768)
+        per_layer_params += prev_bottleneck_dim * max_emb_dim + max_emb_dim
 
     # BertPredictionHeadTransform parameters
     output_emb_params = (max_emb_dim * max_emb_dim) + max_emb_dim + layer_norm_params
@@ -145,7 +156,10 @@ def calculate_params(
 
 
 def calculate_params_from_config(
-    config, scaling_laws=False, add_output_emb_layer=False
+    config,
+    scaling_laws=False,
+    add_output_emb_layer=False,
+    merged_bottleneck=False,
 ):
     add_embs_dim = scaling_laws != True
 
@@ -158,6 +172,7 @@ def calculate_params_from_config(
         add_output_emb_layer=add_output_emb_layer,
         add_embs_dim=add_embs_dim,
         bottleneck=(config.mixing == "bert-bottleneck"),
+        merged_bottleneck=merged_bottleneck,
     )
 
 

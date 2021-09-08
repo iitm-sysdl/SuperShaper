@@ -42,9 +42,14 @@ if __name__ == "__main__":
         for key, value in subtransformer_config.items():
             # update global_config with attributes of subtransformer_config
             setattr(global_config, key, value)
-
+        params = calculate_params_from_config(
+            global_config,
+            scaling_laws=False,
+            add_output_emb_layer=False,
+            merged_bottleneck=True,
+        )
         print("==================================================================")
         print(
-            f"Number of parameters in custom config is {millify(calculate_params_from_config(global_config, scaling_laws=False, add_output_emb_layer=False))}"
+            f"Number of parameters in custom config is {params} -->  {millify(params)}"
         )
         print("==================================================================")

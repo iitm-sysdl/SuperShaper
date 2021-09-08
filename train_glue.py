@@ -732,8 +732,8 @@ def main():
             desc="Running tokenizer on dataset",
         )
 
-    train_dataset = processed_datasets_train["train"]
-    eval_dataset = processed_datasets_valid[val_col]
+    train_dataset = processed_datasets_train
+    eval_dataset = processed_datasets_valid
 
     # Log a few random samples from the training set:
     for index in random.sample(range(len(train_dataset)), 3):
