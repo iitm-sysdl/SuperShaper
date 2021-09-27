@@ -318,6 +318,8 @@ class DataAugmentor(object):
         return candidate_words
 
     def _masked_language_model(self, sent, word_pieces, mask_id):
+        if mask_id >= 512:
+            return []
         tokenized_text = self.tokenizer.tokenize(sent)
         tokenized_text = ["[CLS]"] + tokenized_text
         tokenized_len = len(tokenized_text)
@@ -326,10 +328,9 @@ class DataAugmentor(object):
 
         if len(tokenized_text) > 512:
             tokenized_text = tokenized_text[:512]
-            tokenized_len = 511
+            if tokenized_len >= 512:
+                tokenized_len = 511
 
-        if mask_id >= 512:
-            return []
         token_ids = self.tokenizer.convert_tokens_to_ids(tokenized_text)
         segments_ids = [0] * (tokenized_len + 1) + [1] * (
             len(tokenized_text) - tokenized_len - 1
