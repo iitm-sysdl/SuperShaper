@@ -56,4 +56,4 @@ if __name__ == "__main__":
     df.drop_duplicates(subset=rows, inplace=True)
     print("Shape after dropping duplicates:", df.shape)
     print("Saving final dataset .....")
-    df.to_csv(args.path + "/" + args.task + "/train_aug_mod.csv", sep=",", index=False)
+    df.to_csv(args.path + "/" + args.task + "/train_aug_mod.tsv", sep="\t", index=False)
