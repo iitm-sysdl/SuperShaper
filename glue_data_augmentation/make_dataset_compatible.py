@@ -53,7 +53,7 @@ if __name__ == "__main__":
     df.dropna(subset=rows, inplace=True)
     print("Shape after dropping nans:", df.shape)
     # drop duplicates in subset
-    df.drop_duplicates(subset=rows, inplace=True)
-    print("Shape after dropping duplicates:", df.shape)
+    #df.drop_duplicates(subset=rows, inplace=True)
+    #print("Shape after dropping duplicates:", df.shape)
     print("Saving final dataset .....")
-    df.to_csv(args.path + "/" + args.task + "/train_aug_mod.tsv", sep="\t", index=False)
+    df.to_csv(args.path + "/" + args.task + f"/{args.task}_train_aug_mod.tsv", sep="\t", index=False)

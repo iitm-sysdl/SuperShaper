@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 checkpoints/
 wandb/
+glue_data_augmentation/plm
 # C extensions
 *.so
 .vscode/

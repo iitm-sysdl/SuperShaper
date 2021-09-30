@@ -691,7 +691,11 @@ def main():
         }
 
     padding = "max_length" if args.pad_to_max_length else False
-
+    val_col = "validation_matched" if args.task_name == "mnli" else "validation"
+    print(label_to_id)
+    print(aug_label_to_id)
+    print(raw_datasets["train"][:2])
+    print(raw_datasets[val_col][:2])
     def preprocess_function(examples, aug_dataset=False):
         # Tokenize the texts
         texts = (
@@ -705,7 +709,8 @@ def main():
 
         if "label" in examples:
             if aug_dataset:
-                result["labels"] = [aug_label_to_id[l] for l in examples["label"]]
+            #    result["labels"] = [aug_label_to_id[l] for l in examples["label"]]
+                result["labels"] = examples["label"]
             elif label_to_id is not None:
                 # Map labels to IDs (not necessary for GLUE tasks)
                 result["labels"] = [label_to_id[l] for l in examples["label"]]
@@ -718,7 +723,7 @@ def main():
         aug_dataset=args.aug_train_file is not None,
     )
 
-    processed_datasets_train = raw_datasets.map(
+    processed_datasets_train = raw_datasets["train"].map(
         preprocess_function,
         fn_kwargs=fn_kwargs,
         batched=True,
@@ -726,14 +731,14 @@ def main():
         desc="Running tokenizer on dataset",
     )
     val_col = "validation_matched" if args.task_name == "mnli" else "validation"
-    processed_datasets_valid = raw_datasets.map(
+    processed_datasets_valid = raw_datasets[val_col].map(
         preprocess_function,
         batched=True,
         remove_columns=raw_datasets[val_col].column_names,
         desc="Running tokenizer on dataset",
     )
     if args.task_name == "mnli":
-        processed_datasets_valid_mm = raw_datasets.map(
+        processed_datasets_valid_mm = raw_datasets["validation_mismatched"].map(
             preprocess_function,
             batched=True,
             remove_columns=raw_datasets["validation_mismatched"].column_names,

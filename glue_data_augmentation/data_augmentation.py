@@ -31,7 +31,7 @@ import numpy as np
 from tqdm import tqdm
 
 # refers to the transformer folder in tinybert repo: https://github.com/huawei-noah/Pretrained-Language-Model/tree/master/TinyBERT/transformer
-from transformer import BertTokenizer, BertForMaskedLM
+from plm.TinyBERT.transformer import BertTokenizer, BertForMaskedLM
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -471,7 +471,7 @@ def main():
         default=None,
         type=str,
         required=True,
-        help="Downloaded pretrained model (bert-base-uncased) is under this folder",
+        help="Downloaded pretrained model (bert-base-cased) is under this folder",
     )
     parser.add_argument(
         "--glove_embs",
