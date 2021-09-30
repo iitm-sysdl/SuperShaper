@@ -14,9 +14,10 @@ task_to_keys = {
     "wnli": ("sentence1", "sentence2"),
 }
 
+# this label list is inline with hf datasets https://huggingface.co/datasets/viewer/?dataset=glue
 label_list_for_aug_data = {
     "cola": {"unacceptable": 0, "acceptable": 1},
-    "sst-2": {"negative": 0, "positive": 1},
+    "sst2": {"negative": 0, "positive": 1},
     "mrpc": {"not_equivalent": 0, "equivalent": 1},
     "qqp": {"not_duplicate": 0, "duplicate": 1},
     "mnli": {"entailment": 0, "neutral": 1, "contradiction": 2},
@@ -27,17 +28,26 @@ label_list_for_aug_data = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Convert a CSV file to a TSV file.")
-    parser.add_argument("task", help="Glue task name")
+    parser.add_argument("--path", help="Path to folder")
+    parser.add_argument("--task", help="Glue task name")
     args = parser.parse_args()
 
     df = pd.read_csv(
-        args.task + "/train_aug.tsv", delimiter="\t", quoting=csv.QUOTE_NONE
+        args.path + "/" + args.task + "/train_aug.tsv",
+        delimiter="\t",
+        quoting=csv.QUOTE_NONE,
     )
-    keys = task_to_keys[args.task]
+    keys = task_to_keys[args.task.lower().replace("-", "")]
+    labels_map = label_list_for_aug_data[args.task.lower().replace("-", "")]
+    print(df.head())
+    if args.task != "STS-B" and list(df["label"].unique())[0] in labels_map.keys():
+        print("mapping labels ...")
+        df.replace({"label": labels_map}, inplace=True)
+    print(df.head())
     rows = []
-    rows[0] = keys[0]
+    rows.append(keys[0])
     if keys[1] is not None:
-        rows[1] = keys[1]
+        rows.append(keys[1])
     rows.append("label")
     print("Shape before dropping nans:", df.shape)
     df.dropna(subset=rows, inplace=True)
@@ -46,4 +56,4 @@ if __name__ == "__main__":
     df.drop_duplicates(subset=rows, inplace=True)
     print("Shape after dropping duplicates:", df.shape)
     print("Saving final dataset .....")
-    df.to_csv(args.task + "/train_aug_mod.csv", sep=",", index=False)
+    df.to_csv(args.path + "/" + args.task + "/train_aug_mod.csv", sep=",", index=False)
