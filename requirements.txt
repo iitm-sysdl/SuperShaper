@@ -1,6 +1,7 @@
-transformers 
-datasets 
-seqeval 
+transformers
+datasets
+seqeval
 wandb
-plotly 
-
+plotly
+accelerate
+more_itertools
