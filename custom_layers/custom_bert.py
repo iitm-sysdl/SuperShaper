@@ -1460,7 +1460,7 @@ class BertLayer(nn.Module):
 def dropout_layers(num_layers, layer_drop_prob):
     prob_survival = 1.0 - layer_drop_prob
     if prob_survival == 1:
-        return torch.ones(num_layers)
+        return torch.zeros(num_layers)
 
     to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) < prob_survival
 
