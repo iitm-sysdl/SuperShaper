@@ -45,16 +45,13 @@ class CustomEmbedding(nn.Embedding):
 
     def _sample_parameters(self, part):
         # memoize the sampled parameters
-        if self.sampled_slices[part].get(self.sample_hidden_size[part]) is None:
-            weight = self.weight[..., : self.sample_hidden_size[part]]
+        hs = self.sample_hidden_size[part]
+        if self.sampled_slices[part].get(hs) is None:
+            weight = self.weight[..., :hs]
             self.samples[part]["weight"] = weight
-            self.sampled_slices[part][self.sample_hidden_size[part]] = self.samples[
-                part
-            ]
+            self.sampled_slices[part][hs] = self.samples[part]
         else:
-            self.samples[part] = self.sampled_slices[part][
-                self.sample_hidden_size[part]
-            ]
+            self.samples[part] = self.sampled_slices[part][hs]
         return self.samples
 
     def sample_parameters(self, part, resample=False):

@@ -1522,7 +1522,7 @@ class BertEncoder(nn.Module):
             self.sample_num_hidden_layers, config.layer_drop_prob
         )
 
-        for i, drop, layer in enumerate(zip(layers_to_drop, self.layer)):
+        for i, (drop, layer) in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)
 
             if drop and is_training:

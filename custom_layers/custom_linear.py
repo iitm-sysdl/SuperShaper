@@ -88,7 +88,6 @@ class CustomLinear(nn.Linear):
         return sub_layer
 
     def forward(self, x):
-        # TODO: check if this extra sample_params is needed. We are already calling set_sample_config outside and this seems redundant
         self.sample_parameters()
         return F.linear(x, self.samples["weight"], self.samples["bias"])
 
