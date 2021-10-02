@@ -29,6 +29,10 @@ accelerate launch train_mlm.py <args>
 ```
 
 ### Pretraining on C4-realnews
+
+Download the C4-realnews dataset from [huggingface datasets](https://huggingface.co/datasets/allenai/c4/tree/main/realnewslike) following the instructions  [here](https://github.com/allenai/allennlp/discussions/5056).
+
+
 ```bash
 accelerate launch train_mlm.py \
 --per_device_train_batch_size 128 \
@@ -48,7 +52,9 @@ accelerate launch train_mlm.py \
 --eval_random_subtransformers 1 \
 --wandb_suffix <suffix>
 ```
-^ To pretrain the supershaper backbone initialized with bert-base-cased model on C4-realnews dataset.
+^ To pretrain the supershaper backbone initialized with bert-base-cased model on C4-realnews dataset. We pretokenize the dataset and pass the correspinding path to `--tokenized_c4_dir`. You can also use the raw dataset and pass it with argument `--c4_dir <path to c4 realnews dataset>`.
+
+To resume pretraining from a checkpoint, pass `--resume_from_checkpoint_dir <path to checkpoint>`
 
 ```bash
 accelerate launch train_mlm.py \
@@ -261,4 +267,155 @@ optional arguments:
                         suffix for wandb
   --target_perplexity TARGET_PERPLEXITY
                         perplexity to stop further pretraining
+```
+
+
+### Finetuning on GLUE
+```
+accelerate launch train_glue.py \
+--learning_rate=1e-05 \
+--mixing=bert-bottleneck \
+--model_name_or_path=<path to pretrained checkcpoint> \
+--num_train_epochs=10 \
+--per_device_train_batch_size=32 \
+--sampling_type=none \
+--task={cola,mnli,mrpc,qnli,qqp,rte,sst2,stsb,wnli} \
+--wandb_suffix <suffix> \
+--subtransformer_config_path <path to subtransformer config file>
+```
+^ Use this command to finetune on glue.
+
+For `MRPC, STS-B and rte` we start finetuning using the mnli checkpoint as follows:
+```
+accelerate launch train_glue.py \
+--learning_rate=1e-05 \
+--mixing=bert-bottleneck \
+--model_name_or_path=<path to mnli checkcpoint> \
+--num_train_epochs=10 \
+--per_device_train_batch_size=32 \
+--is_mnli_checkpoint 1 \
+--sampling_type=none \
+--task={mrpc,rte,stsb} \
+--wandb_suffix <suffix> \
+--subtransformer_config_path <path to subtransformer config file>
+```
+
+### List of arguments for `train_glue.py`:
+```doc
+usage: train_glue.py [-h]
+                     [--task_name {cola,mnli,mrpc,qnli,qqp,rte,sst2,stsb,wnli}]
+                     [--train_file TRAIN_FILE]
+                     [--validation_file VALIDATION_FILE]
+                     [--max_length MAX_LENGTH] [--pad_to_max_length]
+                     [--model_name_or_path MODEL_NAME_OR_PATH]
+                     [--use_slow_tokenizer]
+                     [--per_device_train_batch_size PER_DEVICE_TRAIN_BATCH_SIZE]
+                     [--per_device_eval_batch_size PER_DEVICE_EVAL_BATCH_SIZE]
+                     [--learning_rate LEARNING_RATE]
+                     [--weight_decay WEIGHT_DECAY]
+                     [--num_train_epochs NUM_TRAIN_EPOCHS]
+                     [--max_train_steps MAX_TRAIN_STEPS]
+                     [--gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS]
+                     [--lr_scheduler_type {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}]
+                     [--num_warmup_steps NUM_WARMUP_STEPS]
+                     [--output_dir OUTPUT_DIR] [--seed SEED]
+                     [--early_stopping_patience EARLY_STOPPING_PATIENCE]
+                     [--eval_random_subtransformers EVAL_RANDOM_SUBTRANSFORMERS]
+                     [--train_subtransformers_from_scratch TRAIN_SUBTRANSFORMERS_FROM_SCRATCH]
+                     [--fp16 FP16] --mixing
+                     {attention,gmlp,fnet,mobilebert,bert-bottleneck}
+                     [--rewire REWIRE]
+                     [--resume_from_checkpoint_dir RESUME_FROM_CHECKPOINT_DIR]
+                     [--tiny_attn TINY_ATTN]
+                     [--num_subtransformers_monitor NUM_SUBTRANSFORMERS_MONITOR]
+                     [--debug]
+                     [--sampling_type {none,naive_params,biased_params,random}]
+                     [--subtransformer_config_path SUBTRANSFORMER_CONFIG_PATH]
+                     [--wandb_suffix WANDB_SUFFIX]
+                     [--is_mnli_checkpoint IS_MNLI_CHECKPOINT]
+                     [--aug_train_file AUG_TRAIN_FILE]
+
+Finetune a transformers model on a text classification task
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --task_name {cola,mnli,mrpc,qnli,qqp,rte,sst2,stsb,wnli}
+                        The name of the glue task to train on.
+  --train_file TRAIN_FILE
+                        A csv or a json file containing the training data.
+  --validation_file VALIDATION_FILE
+                        A csv or a json file containing the validation data.
+  --max_length MAX_LENGTH
+                        The maximum total input sequence length after
+                        tokenization. Sequences longer than this will be
+                        truncated, sequences shorter will be padded if
+                        `--pad_to_max_lengh` is passed.
+  --pad_to_max_length   If passed, pad all samples to `max_length`. Otherwise,
+                        dynamic padding is used.
+  --model_name_or_path MODEL_NAME_OR_PATH
+                        Path to pretrained model or model identifier from
+                        huggingface.co/models.
+  --use_slow_tokenizer  If passed, will use a slow tokenizer (not backed by
+                        the 🤗 Tokenizers library).
+  --per_device_train_batch_size PER_DEVICE_TRAIN_BATCH_SIZE
+                        Batch size (per device) for the training dataloader.
+  --per_device_eval_batch_size PER_DEVICE_EVAL_BATCH_SIZE
+                        Batch size (per device) for the evaluation dataloader.
+  --learning_rate LEARNING_RATE
+                        Initial learning rate (after the potential warmup
+                        period) to use.
+  --weight_decay WEIGHT_DECAY
+                        Weight decay to use.
+  --num_train_epochs NUM_TRAIN_EPOCHS
+                        Total number of training epochs to perform.
+  --max_train_steps MAX_TRAIN_STEPS
+                        Total number of training steps to perform. If
+                        provided, overrides num_train_epochs.
+  --gradient_accumulation_steps GRADIENT_ACCUMULATION_STEPS
+                        Number of updates steps to accumulate before
+                        performing a backward/update pass.
+  --lr_scheduler_type {linear,cosine,cosine_with_restarts,polynomial,constant,constant_with_warmup}
+                        The scheduler type to use.
+  --num_warmup_steps NUM_WARMUP_STEPS
+                        Number of steps for the warmup in the lr scheduler.
+  --output_dir OUTPUT_DIR
+                        Where to store the final model.
+  --seed SEED           A seed for reproducible training.
+  --early_stopping_patience EARLY_STOPPING_PATIENCE
+                        Patience for early stopping to stop training if
+                        val_acc doesnt converge
+  --eval_random_subtransformers EVAL_RANDOM_SUBTRANSFORMERS
+                        If set to 1, this will evaluate 25 random
+                        subtransformers after every training epoch when
+                        training a supertransformer
+  --train_subtransformers_from_scratch TRAIN_SUBTRANSFORMERS_FROM_SCRATCH
+                        If set to 1, this will train 25 random subtransformers
+                        from scratch. By default, it is set to False (0) and
+                        we train a supertransformer and finetune
+                        subtransformers
+  --fp16 FP16           If set to 1, will use FP16 training.
+  --mixing {attention,gmlp,fnet,mobilebert,bert-bottleneck}
+                        specifies how to mix the tokens in bertlayers
+  --rewire REWIRE       Whether to rewire model
+  --resume_from_checkpoint_dir RESUME_FROM_CHECKPOINT_DIR
+                        directory that contains checkpoints, optimizer,
+                        scheduler to resume training
+  --tiny_attn TINY_ATTN
+                        Choose this if you need Tiny Attention Module along-
+                        with gMLP dense block
+  --num_subtransformers_monitor NUM_SUBTRANSFORMERS_MONITOR
+                        Choose the number of subtransformers whose performance
+                        you wish to monitor
+  --debug               If passed, use 100 samples of dataset to quickly run
+                        and check code.
+  --sampling_type {none,naive_params,biased_params,random}
+                        The sampling type for super-transformer
+  --subtransformer_config_path SUBTRANSFORMER_CONFIG_PATH
+                        The path to a subtransformer configration
+  --wandb_suffix WANDB_SUFFIX
+                        suffix for wandb
+  --is_mnli_checkpoint IS_MNLI_CHECKPOINT
+                        if model path is a pretrained mnli checkpoint
+  --aug_train_file AUG_TRAIN_FILE
+                        path to augmented train file
 ```
