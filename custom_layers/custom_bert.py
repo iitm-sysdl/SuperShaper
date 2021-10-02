@@ -1460,7 +1460,7 @@ class BertLayer(nn.Module):
 def dropout_layers(num_layers, layer_drop_prob):
     prob_survival = 1.0 - layer_drop_prob
     if prob_survival == 1:
-        return torch.ones(num_layers)
+        return torch.zeros(num_layers)
 
     to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) < prob_survival
 
@@ -1496,7 +1496,7 @@ class BertEncoder(nn.Module):
     def set_sample_config(self, config, is_training=True):
 
         self.sample_num_hidden_layers = config.sample_num_hidden_layers
-        if config.layer_dropout_prob > 0:
+        if config.layer_drop_prob > 0:
             assert self.sample_num_hidden_layers == self.config.num_hidden_layers
 
         if isinstance(config.sample_intermediate_size, list):
@@ -1522,7 +1522,7 @@ class BertEncoder(nn.Module):
             self.sample_num_hidden_layers, config.layer_drop_prob
         )
 
-        for i, drop, layer in enumerate(zip(layers_to_drop, self.layer)):
+        for i, (drop, layer) in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)
 
             if drop and is_training:

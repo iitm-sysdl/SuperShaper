@@ -1146,7 +1146,7 @@ def main():
         model = ModuleProxyWrapper(model)
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
-    model.set_sample_config(global_config)
+    model.set_sample_config(global_config, is_training=False)
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
