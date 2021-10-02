@@ -28,6 +28,52 @@ accelerate config  --config_file <path to config>       # to create custom train
 accelerate launch train_mlm.py <args>
 ```
 
+### Pretraining on C4-realnews
+```bash
+accelerate launch train_mlm.py \
+--per_device_train_batch_size 128 \
+--per_device_eval_batch_size 256 \
+--gradient_accumulation_steps 2 \
+--fp16 1 \
+--max_seq_length 128 \
+--mixing bert-bottleneck \
+--max_train_steps 175214 \
+--tokenized_c4_dir <path to tokenized c4 realnews directory> \
+--model_name_or_path bert-base-cased \
+--sampling_type random \
+--sampling_rule sandwich \
+--learning_rate 5e-5 \
+--weight_decay 0.0 \
+--num_warmup_steps 0 \
+--eval_random_subtransformers 1 \
+--wandb_suffix <suffix>
+```
+^ To pretrain the supershaper backbone initialized with bert-base-cased model on C4-realnews dataset.
+
+```bash
+accelerate launch train_mlm.py \
+--per_device_train_batch_size 128 \
+--per_device_eval_batch_size 256 \
+--gradient_accumulation_steps 2 \
+--fp16 1 \
+--max_seq_length 128 \
+--mixing bert-bottleneck \
+--max_train_steps 175214 \
+--tokenized_c4_dir <path to tokenized c4 realnews directory> \
+--model_name_or_path <model path> \
+--sampling_type none \
+--learning_rate 5e-5 \
+--weight_decay 0.0 \
+--num_warmup_steps 0 \
+--eval_random_subtransformers 1 \
+--subtransformer_config_path <path to subtransformer config> \
+--wandb_suffix <suffix>
+```
+To train the supershaper model on a fixed config (a compressed model configration with no random shape sampling, sandwich rule), use the --subtransformer_config_path argument. `subtransformer_configs/bert-bottleneck` contains different shape configrations found via evolutionary serach / by heuristic method.
+
+To further pretrain from supershaper checkpoint, use the --model_name_or_path and point to the checkpoint.
+To pretrain the model from scratch without supershaper checkpoint, use the --model_name_or_path as `bert-base-cased`.
+
 ### List of arguments for `train_mlm.py`:
 
 ```doc
