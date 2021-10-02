@@ -341,6 +341,12 @@ def parse_args():
         type=int,
         help="Patience for early stopping to stop training if val_acc doesnt converge",
     )
+    parser.add_argument(
+        "--layer_drop_prob",
+        default=0.0,
+        type=float,
+        help="Probability to drop layers",
+    )
     # parser.add_argument(
     #     "--limit_subtransformer_choices",
     #     default=0,
@@ -612,6 +618,9 @@ def parse_args():
         assert (
             args.eval_random_subtransformers == 0
         ), "no need to evaluate random subtransformers when a custom_subtransformer_config is provided"
+        assert (
+            args.layer_drop_prob == 0.0
+        ), "layer_drop_prob is not needed when providing custom_subtransformer_config"
 
     if args.rewire:
         assert (
@@ -820,6 +829,7 @@ def main():
         global_config.beta_clip = args.beta_clip
 
     global_config.rewire = args.rewire
+    global_config.layer_drop_prob = args.layer_drop_prob
 
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
@@ -1291,7 +1301,7 @@ def main():
             hover_templates = []
             label_perplex = []
             for i, config in enumerate(diverse_subtransformers):
-                model.set_sample_config(config)
+                model.set_sample_config(config, is_training=False)
 
                 eval_metric = validate_subtransformer(
                     model,
@@ -1362,7 +1372,7 @@ def main():
             if args.sampling_rule == "sandwich":
 
                 ## Sample Supertransformer
-                model.set_sample_config(global_config)
+                model.set_sample_config(global_config, is_training=True)
                 outputs = model(**batch)
                 loss = outputs.loss
 
@@ -1382,7 +1392,7 @@ def main():
                     batch["labels"] = soft_logits
 
                 ## Sample Smallest Subtransformer
-                model.set_sample_config(super_config_small)
+                model.set_sample_config(super_config_small, is_training=True)
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
 
@@ -1414,7 +1424,7 @@ def main():
 
                 if args.sampling_type != "none":
                     super_config = super_configs[idx]
-                    model.set_sample_config(super_config)
+                    model.set_sample_config(super_config, is_training=True)
 
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
@@ -1544,7 +1554,7 @@ def main():
 
         # change to supertransformer config
         if args.sampling_type != "none":
-            model.set_sample_config(global_config)
+            model.set_sample_config(global_config, is_training=False)
 
         eval_metric = validate_subtransformer(
             model,

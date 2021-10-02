@@ -29,6 +29,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import torch
+from random import randrange
 
 # https://discuss.pytorch.org/t/attributeerror-builtin-function-or-method-object-has-no-attribute-fftn/109744
 # import torch.fft
@@ -1456,6 +1457,22 @@ class BertLayer(nn.Module):
         return layer_output
 
 
+def dropout_layers(num_layers, layer_drop_prob):
+    prob_survival = 1.0 - layer_drop_prob
+    if prob_survival == 1:
+        return [1] * num_layers
+
+    to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) > prob_survival
+
+    # make sure at least one layer makes it
+    if all(to_drop):
+        rand_index = randrange(num_layers)
+        to_drop[rand_index] = False
+
+    # layers = [layer for (layer, drop) in zip(layers, to_drop) if not drop]
+    return to_drop
+
+
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -1476,7 +1493,7 @@ class BertEncoder(nn.Module):
         )
         self.sample_num_hidden_layers = config.num_hidden_layers
 
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, is_training=True):
 
         self.sample_num_hidden_layers = config.sample_num_hidden_layers
 
@@ -1496,10 +1513,19 @@ class BertEncoder(nn.Module):
         if self.use_bottleneck:
             sample_hidden_size = config.sample_hidden_size
 
-        for i, layer in enumerate(self.layer):
+        # TODO: We can either modify self.layer to just have layers that are not in layerdrop
+        # or we could just iterate all layers and set identity layer to True (which we are currently doing)
+        # Decide what is best and change this
+        layers_to_drop = dropout_layers(
+            self.sample_num_hidden_layers, config.layer_drop_prob
+        )
+
+        for i, drop, layer in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)
 
-            if i < self.sample_num_hidden_layers:
+            if drop and is_training:
+                layer.set_sample_config(layer_config, is_identity_layer=True)
+            elif i < self.sample_num_hidden_layers:
                 layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
                 layer_config.sample_num_attention_heads = (
                     sample_num_attention_heads_list[i]
@@ -1962,9 +1988,10 @@ class BertModel(BertPreTrainedModel):
         output_type=BaseModelOutputWithPoolingAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
     )
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, is_training=True):
         self.embeddings.set_sample_config(config)
-        self.encoder.set_sample_config(config)
+        # is_training is needed for layerdrop
+        self.encoder.set_sample_config(config, is_training=is_training)
         if self.pooler is not None:
             self.pooler.set_sample_config(config)
 
@@ -2446,8 +2473,9 @@ class BertForMaskedLM(BertPreTrainedModel):
         self.config = config
         self.init_weights()
 
-    def set_sample_config(self, config):
-        self.bert.set_sample_config(config)
+    def set_sample_config(self, config, is_training=True):
+        # pass is_training flag to bertmodel for layerdrop
+        self.bert.set_sample_config(config, is_training=is_training)
         self.cls.set_sample_config(config)
 
     def get_active_subnet(self, config):

@@ -159,7 +159,7 @@ def calculate_params_from_config(
     config,
     scaling_laws=False,
     add_output_emb_layer=False,
-    merged_bottleneck=False,
+    merged_bottleneck=True,  # compose the bottlenecks and calculate the params count
 ):
     add_embs_dim = scaling_laws != True
 
