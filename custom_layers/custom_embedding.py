@@ -27,6 +27,7 @@ class CustomEmbedding(nn.Embedding):
         self.vocab_size = vocab_size
 
         self.samples = {"encoder": {}, "decoder": {}}
+        self.sampled_slices = {"encoder": {}, "decoder": {}}
         self.profiling = False
         self.reset_parameters()
 
@@ -44,9 +45,16 @@ class CustomEmbedding(nn.Embedding):
 
     def _sample_parameters(self, part):
         # memoize the sampled parameters
-        if not self.samples:
+        if self.sampled_slices[part].get(self.sample_hidden_size[part]) is None:
             weight = self.weight[..., : self.sample_hidden_size[part]]
             self.samples[part]["weight"] = weight
+            self.sampled_slices[part][self.sample_hidden_size[part]] = self.samples[
+                part
+            ]
+        else:
+            self.samples[part] = self.sampled_slices[part][
+                self.sample_hidden_size[part]
+            ]
         return self.samples
 
     def sample_parameters(self, part, resample=False):
