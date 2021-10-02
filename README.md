@@ -71,9 +71,7 @@ accelerate launch train_mlm.py \
 ```
 To train the supershaper model on a fixed config (a compressed model configration with no random shape sampling, sandwich rule), use the --subtransformer_config_path argument. `subtransformer_configs/bert-bottleneck` contains different shape configrations found via evolutionary serach / by heuristic method.
 
-To further pretrain from supershaper checkpoint, use the `--model_name_or_path` and point to the supershaper checkpoint.
-
-To pretrain the model from scratch without supershaper checkpoint, use the --model_name_or_path as `bert-base-cased`.
+To further pretrain a compressed model from supershaper checkpoint, use the `--model_name_or_path` and point to the supershaper checkpoint and set `--subtransformer_config_path` to config path of the compressed model. To pretrain the model from scratch without supershaper checkpoint, use the --model_name_or_path as `bert-base-cased`.
 
 ### List of arguments for `train_mlm.py`:
 
