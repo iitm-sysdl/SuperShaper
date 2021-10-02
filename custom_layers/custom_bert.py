@@ -1496,7 +1496,7 @@ class BertEncoder(nn.Module):
     def set_sample_config(self, config, is_training=True):
 
         self.sample_num_hidden_layers = config.sample_num_hidden_layers
-        if config.layer_dropout_prob > 0:
+        if config.layer_drop_prob > 0:
             assert self.sample_num_hidden_layers == self.config.num_hidden_layers
 
         if isinstance(config.sample_intermediate_size, list):
