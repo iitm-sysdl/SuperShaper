@@ -54,12 +54,14 @@ class CustomLinear(nn.Linear):
         self._sample_parameters()
 
     def _sample_parameters(self):
-        self.samples["weight"] = sample_weight(
-            self.weight, self.sample_in_dim, self.sample_out_dim
-        )
-        self.samples["bias"] = self.bias
-        if self.bias is not None:
-            self.samples["bias"] = sample_bias(self.bias, self.sample_out_dim)
+        # memoize the sampled parameters
+        if not self.samples:
+            self.samples["weight"] = sample_weight(
+                self.weight, self.sample_in_dim, self.sample_out_dim
+            )
+            self.samples["bias"] = self.bias
+            if self.bias is not None:
+                self.samples["bias"] = sample_bias(self.bias, self.sample_out_dim)
         return self.samples
 
     def get_active_subnet(self):

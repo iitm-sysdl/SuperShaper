@@ -43,9 +43,10 @@ class CustomEmbedding(nn.Embedding):
         self._sample_parameters(part)
 
     def _sample_parameters(self, part):
-        weight = self.weight[..., : self.sample_hidden_size[part]]
-        self.samples[part]["weight"] = weight
-
+        # memoize the sampled parameters
+        if not self.samples:
+            weight = self.weight[..., : self.sample_hidden_size[part]]
+            self.samples[part]["weight"] = weight
         return self.samples
 
     def sample_parameters(self, part, resample=False):
@@ -56,7 +57,9 @@ class CustomEmbedding(nn.Embedding):
         )
 
     def get_active_subnet(self, part):
-        sub_layer = nn.Embedding(self.vocab_size, self.sample_hidden_size[part], padding_idx = self.padding_idx)
+        sub_layer = nn.Embedding(
+            self.vocab_size, self.sample_hidden_size[part], padding_idx=self.padding_idx
+        )
         sub_layer.weight.data.copy_(self.samples[part]["weight"])
 
         return sub_layer
