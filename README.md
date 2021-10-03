@@ -6,7 +6,9 @@ If you find this repo useful in your work, please consider citing our work:
 ```
 
 ## Super Pre-training with bottleneck layers 
-![](figs/bert-bottleneck.png)
+<p align="center">
+<img src="figs/bert-bottleneck.png" width=50% height=50%>
+</p>
 
 ## Competitive NLU performance 
 
@@ -28,7 +30,9 @@ If you find this repo useful in your work, please consider citing our work:
 
 
 ## Evolutionary Search and Simple Heuristics finds best subnetworks  
-![](figs/Pareto.png)
+<p align="center">
+<img src="figs/Pareto.png" width=50% height=50%>
+</p>
 
 ## Shape is insensitive to device-latency 
 ![](figs/insensitivity.png)
