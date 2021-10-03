@@ -460,6 +460,7 @@ cd search
 PYTHONPATH=$PYTHONPATH:../ python predictor.py --input_file_name_or_path latency_data/k80/k80_latencies_seed42_bs128.csv --model_type xgb --output_file_name_or_path k80 --prediction_type latency
 ```
 
+### List of arguments for `predictor.py`:
 
 ```doc
 usage: predictor.py [-h] --input_file_name_or_path INPUT_FILE_NAME_OR_PATH 
@@ -491,6 +492,8 @@ An example to perform evolutionary search with perplexity constraints of 6 and l
 cd search
 PYTHONPATH=$PYTHONPATH:../ python evolution.py --perplexity_model_file_name_or_path outputs/perplexity_predictor.xgb --latency_model_file_name_or_path ./outputs/latency_predictors/1080Ti_latency_predictor.xgb --latency_constraints 0.5 --perplexity constraints 6 --model_type xgb
 ```
+
+### List of arguments for `evolution.py`:
 
 ``` doc 
 usage: evolution.py [-h] [--perplexity_model_file_name_or_path PERPLEXITY_MODEL_FILE_NAME_OR_PATH]
