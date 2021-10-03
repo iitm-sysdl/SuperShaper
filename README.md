@@ -46,7 +46,7 @@ accelerate launch train_mlm.py \
 --model_name_or_path bert-base-cased \
 --sampling_type random \
 --sampling_rule sandwich \
---learning_rate 5e-5 \G
+--learning_rate 5e-5 \
 --weight_decay 0.0 \
 --num_warmup_steps 0 \
 --eval_random_subtransformers 1 \
