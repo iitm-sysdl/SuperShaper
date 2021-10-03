@@ -1,4 +1,9 @@
 # SuperShaper: Task-Agnostic Super Pre-Training of BERT models with Variable Hidden Dimensions [[arXiv]]() [[Slides]]() [[Video]]()
+This repository contains our PyTorch training code, evaluation code and pre-trained models for SuperShaper.
+
+If you find this repo useful in your work, please consider citing our work:
+```bibtex
+```
 
 ## Super Pre-training with bottleneck layers 
 ![](figs/bert-bottleneck.png)
@@ -28,11 +33,6 @@
 ## Shape is insensitive to device-latency 
 ![](figs/insensitivity.png)
 
-
-This repository contains our PyTorch training code, evaluation code and pre-trained models for SuperShaper.
-
-If you find this repo useful in your work, please consider citing our work:
-TODO: Add citation when ready.
 
 ## Quick Start
 ```
