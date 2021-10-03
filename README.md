@@ -1,4 +1,33 @@
-# SuperShaper
+# SuperShaper: Task-Agnostic Super Pre-Training of BERT models with Variable Hidden Dimensions [[arXiv]]() [[Slides]]() [[Video]]()
+
+## Super Pre-training with bottleneck layers 
+![](figs/bert-bottleneck.png)
+
+## Competitive NLU performance 
+
+|           Model            | Params   | MNLI-M | QQP  | QNLI | CoLA | SST-2 | STS-B | RTE   | MRPC  |  Average GLUE  | 
+|:--------------------------:|:--------:|:------:|:----:|:----:|:----:|:-----:|:-----:|:-----:|:-----:|:--------------:| 
+|         LayerDrop          |  66M     |   80.7 | 88.3 | 88.4 | 45.4 | 90.7  | -     | 65.2  | 85.9  |      77.8      | 
+|         DistilBERT         |  66M     |   82.2 | 88.5 | 89.2 | 51.3 | 91.3  | 86.9  | 59.9  | 87.5  |      79.6      | 
+|         BERT-PKD           |  66M     |   81.5 | 70.7 | 89.0 |  -   | 92.0  | -     | 65.5  | 85.0  |      80.6      | 
+|         MiniLM             |  66M     |   84.0 | 91.0 | 91.0 | 49.2 | 92.0  | -     | 71.5  | 88.4  |      81.0      | 
+|         Ta-TinyBERT        |  67M     |   83.5 | 90.6 | 90.5 | 42.8 | 91.6  | 86.5  | 72.2  | 88.4  |      80.8      | 
+|         Tiny-BERT          |  66M     |   84.6 | 89.1 | 90.4 | 51.1 | 93.1  | 83.7  | 70.0  | 82.6  |      80.6      | 
+|         BERT-of-Theseus    |  66M     |   82.3 | 89.6 | 89.5 | 51.1 | 91.5  | 88.7  | 68.2  | -     |      80.1      | 
+|         PD-BERT            |  66M     |   82.5 | 90.7 | 89.4 |  -   | 91.1  | -     | 66.7  | 84.9  |      84.2      | 
+|         ELM                |  60M     |   84.2 | 91.1 | 90.8 | 54.2 | 92.7  | 88.9  | 72.2  | 89.0  |      82.9      | 
+|         NAS-BERT           |  60M     |   83.3 | 90.9 | 91.3 | 55.6 | 92.0  | 88.6  | 78.5  | 87.5  |      83.5      | 
+|         DynaBERT           |  60M     |   84.2 | 91.2 | 91.5 | 56.8 | 92.7  | 89.2  | 72.2  | 84.1  |      82.8      | 
+|         YOCO-BERT          |  59M-67M |   82.6 | 90.5 | 87.2 | 59.8 | 92.8  | -     | 72.9  | 90.3  |      82.3      | 
+|         SuperShaper (ours) |  63M     |   82.2 | 90.2 | 88.1 | 53.0 | 91.9  | 87.6  | 79.1  | 89.5  |      82.7      | 
+
+
+## Evolutionary Search and Simple Heuristics finds best subnetworks  
+![](figs/Pareto.png)
+
+## Shape is insensitive to device-latency 
+![](figs/insensitivity.png)
+
 
 This repository contains our PyTorch training code, evaluation code and pre-trained models for SuperShaper.
 
