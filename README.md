@@ -46,13 +46,13 @@ accelerate launch train_mlm.py \
 --model_name_or_path bert-base-cased \
 --sampling_type random \
 --sampling_rule sandwich \
---learning_rate 5e-5 \
+--learning_rate 5e-5 \G
 --weight_decay 0.0 \
 --num_warmup_steps 0 \
 --eval_random_subtransformers 1 \
 --wandb_suffix <suffix>
 ```
-^ To pretrain the supershaper backbone initialized with bert-base-cased model on C4-realnews dataset. We pretokenize the dataset and pass the correspinding path to `--tokenized_c4_dir`. You can also use the raw dataset and pass it with argument `--c4_dir <path to c4 realnews dataset>`.
+To pretrain the supershaper backbone initialized with bert-base-cased model on C4-realnews dataset, we pre-tokenize the dataset and pass the correspinding path to `--tokenized_c4_dir`. You can also use the raw dataset and pass it with argument `--c4_dir <path to c4 realnews dataset>`.
 
 To resume pretraining from a checkpoint, pass `--resume_from_checkpoint_dir <path to checkpoint>`
 
@@ -75,9 +75,9 @@ accelerate launch train_mlm.py \
 --subtransformer_config_path <path to subtransformer config> \
 --wandb_suffix <suffix>
 ```
-To train the supershaper model on a fixed config (a compressed model configration with no random shape sampling, sandwich rule), use the --subtransformer_config_path argument. `subtransformer_configs/bert-bottleneck` contains different shape configrations found via evolutionary serach / by heuristic method.
+To train the supershaper subnetwork (a compressed model configuration with no sampling), use the --subtransformer_config_path argument. `subtransformer_configs/bert-bottleneck` folder contains different shape configrations discovered via evolutionary search/ heuristic method.
 
-To further pretrain a compressed model from supershaper checkpoint, use the `--model_name_or_path` and point to the supershaper checkpoint and set `--subtransformer_config_path` to config path of the compressed model. To pretrain the model from scratch without supershaper checkpoint, use the --model_name_or_path as `bert-base-cased`.
+To further pretrain a subnetwork from supershaper checkpoint, use the `--model_name_or_path` and point to the checkpoint and set `--subtransformer_config_path` to the subnetwork configuration path. To pretrain the model from scratch without any checkpoint, use the --model_name_or_path as `bert-base-cased`.
 
 ### List of arguments for `train_mlm.py`:
 
@@ -151,7 +151,7 @@ optional arguments:
                         in case there's no validation split
   --pad_to_max_length   If passed, pad all samples to `max_length`. Otherwise,
                         dynamic padding is used.
-  --model_name_or_path MODEL_NAME_OR_PATH
+  --model_name_or_path MODEL_NAME_OR_PATH 
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
   --config_name CONFIG_NAME
@@ -222,7 +222,7 @@ optional arguments:
                         subtransformers
   --fp16 FP16           If set to 1, will use FP16 training.
   --mixing {attention,gmlp,fnet,mobilebert,bert-bottleneck}
-                        specifies how to mix the tokens in bertlayers
+                        specifies how to mix the tokens in bert-layers
   --resume_from_checkpoint_dir RESUME_FROM_CHECKPOINT_DIR
                         directory that contains checkpoints, optimizer,
                         scheduler to resume training
@@ -283,9 +283,9 @@ accelerate launch train_glue.py \
 --wandb_suffix <suffix> \
 --subtransformer_config_path <path to subtransformer config file>
 ```
-^ Use this command to finetune on glue.
+^ Use this command to finetune on the GLUE benchmark.
 
-For `MRPC, STS-B and rte` we start finetuning using the mnli checkpoint as follows:
+For `MRPC, STS-B and RTE` we start finetuning using the mnli checkpoint as follows:
 ```
 accelerate launch train_glue.py \
 --learning_rate=1e-05 \
@@ -353,8 +353,7 @@ optional arguments:
   --pad_to_max_length   If passed, pad all samples to `max_length`. Otherwise,
                         dynamic padding is used.
   --model_name_or_path MODEL_NAME_OR_PATH
-                        Path to pretrained model or model identifier from
-                        huggingface.co/models.
+                        Path to pretrained model or model identifier from huggingface.co/models.
   --use_slow_tokenizer  If passed, will use a slow tokenizer (not backed by
                         the 🤗 Tokenizers library).
   --per_device_train_batch_size PER_DEVICE_TRAIN_BATCH_SIZE
