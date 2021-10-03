@@ -22,7 +22,6 @@ from transformers import (
 import wandb
 from custom_layers.custom_bert import BertForSequenceClassification
 from custom_layers.custom_bert import BertForMaskedLM
-from tasks.glue.prepare_task import GlueTask
 from utils.module_proxy_wrapper import ModuleProxyWrapper
 from utils.wipe_memory import free_memory, get_gpu_memory
 from utils.early_stopping import EarlyStopping
@@ -382,11 +381,6 @@ class Sampler:
                     _v.append(1 / len(v))
             normalized_probs[choice] = _v
         return normalized_probs
-
-
-def get_task(task_name):
-    if task_name in GLUE_TASKS:
-        return GlueTask
 
 
 def show_random_elements(dataset, accelerator, num_examples=10):

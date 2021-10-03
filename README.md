@@ -451,3 +451,92 @@ optional arguments:
   --aug_train_file AUG_TRAIN_FILE
                         path to augmented train file
 ```
+### Building Latency and Perplexity Predictors
+
+We build perplexity and latency predictors to aid evolutionary search for faster fitness computation and constraining populations. An example to learn a latency predictor for a hardware is given below
+
+```bash
+cd search
+PYTHONPATH=$PYTHONPATH:../ python predictor.py --input_file_name_or_path latency_data/k80/k80_latencies_seed42_bs128.csv --model_type xgb --output_file_name_or_path k80 --prediction_type latency
+```
+
+
+```doc
+usage: predictor.py [-h] --input_file_name_or_path INPUT_FILE_NAME_OR_PATH 
+                         --prediction_type PREDICTION_TYPE 
+                         [--model_type MODEL_TYPE]
+                         --output_file_name_or_path OUTPUT_FILE_NAME_OR_PATH 
+                         [--plot PLOT]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --input_file_name_or_path INPUT_FILE_NAME_OR_PATH
+                        The file name of the output
+  --prediction_type PREDICTION_TYPE
+                        The name of the dataset to use (via the datasets library).
+  --model_type MODEL_TYPE
+                        The type of cost model used. Options [xgb, lgbm]
+  --output_file_name_or_path OUTPUT_FILE_NAME_OR_PATH
+                        Path to store the learnt model
+  --plot PLOT
+
+```
+
+
+### Evolutionary Search 
+
+An example to perform evolutionary search with perplexity constraints of 6 and latency constraints of 500ms is given below. Similarly, parameter constraints can also be provided using the appropriate flags shown in usage. 
+
+``` bash
+cd search
+PYTHONPATH=$PYTHONPATH:../ python evolution.py --perplexity_model_file_name_or_path outputs/perplexity_predictor.xgb --latency_model_file_name_or_path ./outputs/latency_predictors/1080Ti_latency_predictor.xgb --latency_constraints 0.5 --perplexity constraints 6 --model_type xgb
+```
+
+``` doc 
+usage: evolution.py [-h] [--perplexity_model_file_name_or_path PERPLEXITY_MODEL_FILE_NAME_OR_PATH]
+                    [--latency_model_file_name_or_path LATENCY_MODEL_FILE_NAME_OR_PATH] 
+                    [--task TASK] 
+                    [--population_size POPULATION_SIZE]
+                    [--parent_size PARENT_SIZE] 
+                    [--mutation_size MUTATION_SIZE] 
+                    [--crossover_size CROSSOVER_SIZE]
+                    [--mutation_prob MUTATION_PROB] 
+                    [--time_budget TIME_BUDGET] 
+                    [--search_space_config SEARCH_SPACE_CONFIG]
+                    [--params_constraints PARAMS_CONSTRAINTS]
+                    [--latency_constraints LATENCY_CONSTRAINTS]
+                    [--perplexity_constraints PERPLEXITY_CONSTRAINTS] 
+                    [--model_type MODEL_TYPE] 
+                    --device_type DEVICE_TYPE
+optional arguments:
+ -h, --help            show this help message and exit
+  --perplexity_model_file_name_or_path PERPLEXITY_MODEL_FILE_NAME_OR_PATH
+                        Path to load the predictor model
+  --latency_model_file_name_or_path LATENCY_MODEL_FILE_NAME_OR_PATH
+                        Path to load the latency model
+  --task TASK           Task for evo-search
+  --population_size POPULATION_SIZE
+                        Population Size for Evo-Search
+  --parent_size PARENT_SIZE
+                        Parent Size
+  --mutation_size MUTATION_SIZE
+                        Mutation Size
+  --crossover_size CROSSOVER_SIZE
+                        Crossover Size
+  --mutation_prob MUTATION_PROB
+                        Mutation Probability
+  --time_budget TIME_BUDGET
+                        Max Time budget for Evolutionary Search
+  --search_space_config SEARCH_SPACE_CONFIG
+                        Search Space to use
+  --params_constraints PARAMS_CONSTRAINTS
+                        Constraints on Parameters
+  --latency_constraints LATENCY_CONSTRAINTS
+                        Constraints on Latency in seconds 
+  --perplexity_constraints PERPLEXITY_CONSTRAINTS
+                        Constraints on Perplexity
+  --model_type MODEL_TYPE
+                        Cost model type
+  --device_type DEVICE_TYPE
+                        Device Type for outputs
+```

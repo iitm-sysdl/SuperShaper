@@ -26,7 +26,7 @@ import wandb
 import plotly.express as px
 from datetime import datetime
 from collections import defaultdict, OrderedDict as OD
-import loss
+import utils.loss
 
 import numpy as np
 import datasets
@@ -71,7 +71,7 @@ from utils import (
     calculate_params_from_config,
     millify,
 )
-from loss import *
+from utils.loss import *
 import transformers
 from transformers.models.bert.modeling_bert import BertForMaskedLM
 

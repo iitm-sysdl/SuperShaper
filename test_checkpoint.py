@@ -829,9 +829,9 @@ def main():
             subtransformer_configs.append(subtransformer_config)
 
     if not args.only_latency:
-        logger.info(
-            f"Subtransformer average stats: val_perplexity: {mean(subtransformer_peplexities):.2f}, val_loss: {mean(subtransformer_losses):.2f}, val_accuracy:  {mean(subtransformer_accuracies):.2f}"
-        )
+        #logger.info(
+        #    f"Subtransformer average stats: val_perplexity: {mean(subtransformer_peplexities):.2f}, val_loss: {mean(subtransformer_losses):.2f}, val_accuracy:  {mean(subtransformer_accuracies):.2f}"
+        #)
 
         # no need to save stats if we are evaluating one subtransformer config
         if args.subtransformer_config_path is None:
