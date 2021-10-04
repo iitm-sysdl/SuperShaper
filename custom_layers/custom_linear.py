@@ -24,7 +24,6 @@ class CustomLinear(nn.Linear):
         self.sample_out_dim = None
 
         self.samples = {}
-        self.sliced_samples = {}
 
         self.bias_sample = bias
         self.uniform_ = uniform_
@@ -55,21 +54,12 @@ class CustomLinear(nn.Linear):
         self._sample_parameters()
 
     def _sample_parameters(self):
-        # memoize the sampled parameters
-        if self.sliced_samples.get((self.sample_in_dim, self.sample_out_dim)) is None:
-            self.samples["weight"] = sample_weight(
-                self.weight, self.sample_in_dim, self.sample_out_dim
-            )
-            self.samples["bias"] = self.bias
-            if self.bias is not None:
-                self.samples["bias"] = sample_bias(self.bias, self.sample_out_dim)
-            self.sliced_samples[
-                (self.sample_in_dim, self.sample_out_dim)
-            ] = self.samples
-        else:
-            self.samples = self.sliced_samples[
-                (self.sample_in_dim, self.sample_out_dim)
-            ]
+        self.samples["weight"] = sample_weight(
+            self.weight, self.sample_in_dim, self.sample_out_dim
+        )
+        self.samples["bias"] = self.bias
+        if self.bias is not None:
+            self.samples["bias"] = sample_bias(self.bias, self.sample_out_dim)
         return self.samples
 
     def get_active_subnet(self):
@@ -88,7 +78,7 @@ class CustomLinear(nn.Linear):
         return sub_layer
 
     def forward(self, x):
-        self.sample_parameters()
+        self._sample_parameters()
         return F.linear(x, self.samples["weight"], self.samples["bias"])
 
     def calc_sampled_param_num(self):

@@ -31,7 +31,6 @@ class CustomLayerNorm(torch.nn.LayerNorm):
         self.sample_hidden_size = None
 
         self.samples = {}
-        self.sliced_samples = {}
         self.profiling = False
         self.eps = eps
 
@@ -44,13 +43,8 @@ class CustomLayerNorm(torch.nn.LayerNorm):
         return self.samples
 
     def _sample_parameters(self):
-        # memoize the sampled parameters
-        if self.sliced_samples.get(self.sample_hidden_size) is None:
-            self.samples["weight"] = self.weight[: self.sample_hidden_size]
-            self.samples["bias"] = self.bias[: self.sample_hidden_size]
-            self.sliced_samples[self.sample_hidden_size] = self.samples
-        else:
-            self.samples = self.sliced_samples[self.sample_hidden_size]
+        self.samples["weight"] = self.weight[: self.sample_hidden_size]
+        self.samples["bias"] = self.bias[: self.sample_hidden_size]
         return self.samples
 
     def set_sample_config(self, sample_hidden_size):
@@ -90,7 +84,6 @@ class CustomNoNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(super_feat_size))
 
         self.samples = {}
-        self.sliced_samples = {}
         self.profiling = False
         self.eps = eps
 
@@ -103,13 +96,8 @@ class CustomNoNorm(nn.Module):
         return self.samples
 
     def _sample_parameters(self):
-        # memoize the sampled parameters
-        if self.sliced_samples.get(self.sample_feat_size) is None:
-            self.samples["weight"] = self.weight[: self.sample_feat_size]
-            self.samples["bias"] = self.bias[: self.sample_feat_size]
-            self.sliced_samples[self.sample_feat_size] = self.samples
-        else:
-            self.samples = self.sliced_samples[self.sample_feat_size]
+        self.samples["weight"] = self.weight[: self.sample_feat_size]
+        self.samples["bias"] = self.bias[: self.sample_feat_size]
         return self.samples
 
     def set_sample_config(self, sample_feat_size):
