@@ -1492,6 +1492,8 @@ class BertEncoder(nn.Module):
             [layer_function(config) for _ in range(config.num_hidden_layers)]
         )
         self.sample_num_hidden_layers = config.num_hidden_layers
+        # to count the amount of times a layer is dropped
+        self.layer_drop_counts = [0] * self.sample_num_hidden_layers
 
     def set_sample_config(self, config, is_training=True):
 
@@ -1525,9 +1527,7 @@ class BertEncoder(nn.Module):
         for i, (drop, layer) in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)
 
-            if drop and is_training:
-                layer.set_sample_config(layer_config, is_identity_layer=True)
-            elif i < self.sample_num_hidden_layers:
+            if i < self.sample_num_hidden_layers:
                 layer_config.sample_intermediate_size = sample_intermediate_sizes[i]
                 layer_config.sample_num_attention_heads = (
                     sample_num_attention_heads_list[i]
@@ -1535,7 +1535,12 @@ class BertEncoder(nn.Module):
                 if self.use_bottleneck:
                     # for bert-bottleneck, use diff hidden size for each layer
                     layer_config.sample_hidden_size = sample_hidden_size[i]
-                layer.set_sample_config(layer_config, is_identity_layer=False)
+
+                if drop and is_training:
+                    layer.set_sample_config(layer_config, is_identity_layer=True)
+                    self.layer_drop_counts[i] += 1
+                else:
+                    layer.set_sample_config(layer_config, is_identity_layer=False)
             else:
                 layer.set_sample_config(layer_config, is_identity_layer=True)
 

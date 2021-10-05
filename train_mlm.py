@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import random
+from torch._C import layout
 import wandb
 
 
@@ -1570,6 +1571,21 @@ def main():
             eval_metric["perplexity"],
         )
 
+        if args.layer_drop_prob > 0:
+            layer_drop_counts = model.bert.encoder.layer_drop_counts
+            layer_drop_counts_percentage = [
+                round(count / completed_steps, 2) for count in layer_drop_counts
+            ]
+
+        # if accelerator.is_main_process:
+        #     wandb.log(
+        #         {
+        #             "val_accuracy": val_accuracy,
+        #             "val_loss": val_loss,
+        #             "perplexity": perplexity,
+
+        #         }
+        #     )
         if accelerator.is_main_process:
             wandb.log(
                 {
@@ -1578,6 +1594,21 @@ def main():
                     "SuperTransformer Perplexity": perplexity,
                 }
             )
+            if args.layer_drop_prob > 0:
+                fig = go.Figure()
+
+                fig.add_trace(
+                    go.Bar(
+                        x=np.arange(len(layer_drop_counts_percentage)),
+                        y=layer_drop_counts_percentage,
+                    )
+                )
+                fig.update_layout(
+                    title="% of layers dropped in every epoch",
+                    xaxis_title="Layers",
+                    yaxis_title="% dropped",
+                )
+                wandb.log({"layer_drop_rate": wandb.data_types.Plotly(fig)})
         logger.info(
             f"epoch {epoch}: val_perplexity: {perplexity:.2f}, val_loss: {val_loss:.2f}, val_accuracy:  {val_accuracy:.2f}"
         )
