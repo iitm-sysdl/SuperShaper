@@ -1630,14 +1630,14 @@ def main():
                 # * 3 is done to account for sandwich rule
                 layer_drop_counts_percentage = [
                     round(
-                        count / (num_train_steps * args.gradient_accumulation_steps * 3)
+                        count / (max_train_steps * args.gradient_accumulation_steps * 3)
                     )
                     * 100
                     for count in layer_drop_counts
                 ]
             else:
                 layer_drop_counts_percentage = [
-                    round(count / (num_train_steps * args.gradient_accumulation_steps))
+                    round(count / (max_train_steps * args.gradient_accumulation_steps))
                     * 100
                     for count in layer_drop_counts
                 ]
