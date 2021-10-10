@@ -1458,11 +1458,10 @@ class BertLayer(nn.Module):
 
 
 def dropout_layers(num_layers, layer_drop_prob):
-    prob_survival = 1.0 - layer_drop_prob
-    if prob_survival == 1:
+    if layer_drop_prob == 0:
         return torch.zeros(num_layers)
 
-    to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) < prob_survival
+    to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) <= layer_drop_prob
 
     # make sure at least one layer makes it
     if all(to_drop):
@@ -1495,7 +1494,7 @@ class BertEncoder(nn.Module):
         # to count the amount of times a layer is dropped
         self.layer_drop_counts = [0] * self.sample_num_hidden_layers
 
-    def set_sample_config(self, config, is_training=True):
+    def set_sample_config(self, config, drop_layers=True):
 
         self.sample_num_hidden_layers = config.sample_num_hidden_layers
         if config.layer_drop_prob > 0:
@@ -1536,7 +1535,7 @@ class BertEncoder(nn.Module):
                     # for bert-bottleneck, use diff hidden size for each layer
                     layer_config.sample_hidden_size = sample_hidden_size[i]
 
-                if drop and is_training:
+                if drop and drop_layers:
                     layer.set_sample_config(layer_config, is_identity_layer=True)
                     self.layer_drop_counts[i] += 1
                 else:
@@ -1995,10 +1994,10 @@ class BertModel(BertPreTrainedModel):
         output_type=BaseModelOutputWithPoolingAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
     )
-    def set_sample_config(self, config, is_training=True):
+    def set_sample_config(self, config, drop_layers=True):
         self.embeddings.set_sample_config(config)
-        # is_training is needed for layerdrop
-        self.encoder.set_sample_config(config, is_training=is_training)
+        # drop_layers is needed for layerdrop
+        self.encoder.set_sample_config(config, drop_layers=drop_layers)
         if self.pooler is not None:
             self.pooler.set_sample_config(config)
 
@@ -2480,9 +2479,9 @@ class BertForMaskedLM(BertPreTrainedModel):
         self.config = config
         self.init_weights()
 
-    def set_sample_config(self, config, is_training=True):
-        # pass is_training flag to bertmodel for layerdrop
-        self.bert.set_sample_config(config, is_training=is_training)
+    def set_sample_config(self, config, drop_layers=True):
+        # pass drop_layers flag to bertmodel for layerdrop
+        self.bert.set_sample_config(config, drop_layers=drop_layers)
         self.cls.set_sample_config(config)
 
     def get_active_subnet(self, config):

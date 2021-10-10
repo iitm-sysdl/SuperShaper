@@ -1155,7 +1155,7 @@ def main():
         model = ModuleProxyWrapper(model)
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
-    model.set_sample_config(global_config, is_training=False)
+    model.set_sample_config(global_config, drop_layers=False)
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -1348,7 +1348,7 @@ def main():
             hover_templates = []
             label_perplex = []
             for i, config in enumerate(diverse_subtransformers):
-                model.set_sample_config(config, is_training=False)
+                model.set_sample_config(config, drop_layers=False)
 
                 eval_metric = validate_subtransformer(
                     model,
@@ -1426,7 +1426,7 @@ def main():
             if args.sampling_rule == "sandwich":
 
                 ## Sample Supertransformer
-                model.set_sample_config(global_config, is_training=True)
+                model.set_sample_config(global_config, drop_layers=True)
                 outputs = model(**batch)
                 loss = outputs.loss
 
@@ -1446,7 +1446,7 @@ def main():
                     batch["labels"] = soft_logits
 
                 ## Sample Smallest Subtransformer
-                model.set_sample_config(super_config_small, is_training=True)
+                model.set_sample_config(super_config_small, drop_layers=True)
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
 
@@ -1478,7 +1478,7 @@ def main():
 
                 if args.sampling_type != "none":
                     super_config = super_configs[idx]
-                    model.set_sample_config(super_config, is_training=True)
+                    model.set_sample_config(super_config, drop_layers=True)
 
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
@@ -1608,7 +1608,7 @@ def main():
 
         # change to supertransformer config
         if args.sampling_type != "none":
-            model.set_sample_config(global_config, is_training=False)
+            model.set_sample_config(global_config, drop_layers=False)
 
         eval_metric = validate_subtransformer(
             model,
@@ -1626,12 +1626,21 @@ def main():
 
         if args.layer_drop_prob > 0:
             layer_drop_counts = model.bert.encoder.layer_drop_counts
-            layer_drop_counts_percentage = [
-                round(
-                    count / completed_steps,
-                )
-                for count in layer_drop_counts
-            ]
+            if args.sampling_rule == "sandwich":
+                # * 3 is done to account for sandwich rule
+                layer_drop_counts_percentage = [
+                    round(
+                        count / (num_train_steps * args.gradient_accumulation_steps * 3)
+                    )
+                    * 100
+                    for count in layer_drop_counts
+                ]
+            else:
+                layer_drop_counts_percentage = [
+                    round(count / (num_train_steps * args.gradient_accumulation_steps))
+                    * 100
+                    for count in layer_drop_counts
+                ]
 
         # if accelerator.is_main_process:
         #     wandb.log(
