@@ -503,13 +503,13 @@ def parse_args():
         help=f"Whether to rewire model",
     )
 
-    parser.add_argument(
-        "--presampled_subtransformers_order",
-        type=str,
-        default=None,
-        help=f"The order in which presampled subtransformers should be sorted",
-        choices=["ascending", "descending"],
-    )
+    # parser.add_argument(
+    #     "--presampled_subtransformers_order",
+    #     type=str,
+    #     default=None,
+    #     help=f"The order in which presampled subtransformers should be sorted",
+    #     choices=["ascending", "descending"],
+    # )
 
     parser.add_argument(
         "--rewired_model_checkpoint_dir",
@@ -1305,43 +1305,6 @@ def main():
     perpx = eval_metric["perplexity"]
     logger.info(f"perplexity before starting: {perpx:.2f} ")
 
-    # presample the subtransformers
-    if args.presampled_subtransformers_order is not None:
-        # currently coded assuming population size to be 1
-        assert args.pop_size == 1
-        presampled_configs = []
-        smallest_subtransformer_config = None
-        r_seed = -1
-        for step in range(args.max_train_steps * args.gradient_accumulation_steps):
-            r_seed += 1
-            config_dict = sampler.sample_subtransformer(
-                randomize=True,
-                rand_seed=r_seed,
-                pop_size=args.pop_size,
-            )
-            if smallest_subtransformer_config is None:
-                smallest_subtransformer_config = config_dict["smallest_subtransformer"]
-            presampled_configs.append(config_dict["random_subtransformers"][0])
-        if args.presampled_subtransformers_order == "ascending":
-            presampled_configs = sorted(
-                presampled_configs, key=attrgetter("sample_hidden_size")
-            )
-            logger.info(
-                f"presampled {len(presampled_configs)} subtransformers with order: ascending"
-            )
-        elif args.presampled_subtransformers_order == "descending":
-            presampled_configs = sorted(
-                presampled_configs,
-                key=attrgetter("sample_hidden_size"),
-                reverse=True,
-            )
-            logger.info(
-                f"presampled {len(presampled_configs)} subtransformers with order: descending"
-            )
-        logger.info("The top 10 subtransformer hidden sizes: ")
-        for presampled_config in presampled_configs[:10]:
-            logger.info(getattr(presampled_config, "sample_hidden_size"))
-
     for epoch in range(completed_epochs, args.num_train_epochs):
         # first evaluate random subtransformers before starting training
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
@@ -1399,26 +1362,19 @@ def main():
         k_count = args.k_sampling - 1
 
         for step, batch in enumerate(train_dataloader):
-            if args.presampled_subtransformers_order is None:
-                seed += 1
-                k_count += 1
-                if k_count == args.k_sampling and args.sampling_type != "none":
-                    config_dict = sampler.sample_subtransformer(
-                        randomize=True,
-                        rand_seed=seed,
-                        pop_size=args.pop_size,
-                    )
-                    k_count = 0
+            seed += 1
+            k_count += 1
+            if k_count == args.k_sampling and args.sampling_type != "none":
+                config_dict = sampler.sample_subtransformer(
+                    randomize=True,
+                    rand_seed=seed,
+                    pop_size=args.pop_size,
+                )
+                k_count = 0
 
-                    super_config_small = config_dict["smallest_subtransformer"]
-                    # list of random subtransformers with len pop_size
-                    super_configs = config_dict["random_subtransformers"]
-            else:
-                super_config_small = smallest_subtransformer_config
-                # we generally sample pop_size subtransformers and then use that config to train
-                # but the presampling currently has support for only 1 subtransformer
-                # hence we put the config in a list
-                super_configs = [presampled_configs[step]]
+                super_config_small = config_dict["smallest_subtransformer"]
+                # list of random subtransformers with len pop_size
+                super_configs = config_dict["random_subtransformers"]
 
             track_loss = step % args.logging_steps == 0 and step > 0
 
@@ -1630,14 +1586,18 @@ def main():
                 # * 3 is done to account for sandwich rule
                 layer_drop_counts_percentage = [
                     round(
-                        count / (args.max_train_steps * args.gradient_accumulation_steps * 3)
+                        count
+                        / (args.max_train_steps * args.gradient_accumulation_steps * 3)
                     )
                     * 100
                     for count in layer_drop_counts
                 ]
             else:
                 layer_drop_counts_percentage = [
-                    round(count / (args.max_train_steps * args.gradient_accumulation_steps))
+                    round(
+                        count
+                        / (args.max_train_steps * args.gradient_accumulation_steps)
+                    )
                     * 100
                     for count in layer_drop_counts
                 ]
