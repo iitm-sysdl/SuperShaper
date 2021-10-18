@@ -91,7 +91,7 @@ class Sampler:
         if self.magic_sampling:
             assert (
                 config.magic_sampling_random_walk_prob is not None
-                and config.magic_sampling_random_walk_prob is not None
+                and config.magic_sampling_per_layer_change_prob is not None
             )
             assert (
                 config.magic_sampling_random_walk_prob > 0

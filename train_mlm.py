@@ -1278,9 +1278,9 @@ def main():
 
     magic_sampling = (
         args.magic_sampling_random_walk_prob is not None
-        and args.magic_sampling_random_walk_prob >= 0
+        and args.magic_sampling_random_walk_prob > 0
         and args.magic_sampling_per_layer_change_prob is not None
-        and args.magic_sampling_per_layer_change_prob >= 0
+        and args.magic_sampling_per_layer_change_prob > 0
     )
 
     per_layer_sampled_counts = [
@@ -1432,7 +1432,7 @@ def main():
             # use the same subtransformer during gradient accumulations
             if (
                 args.sampling_type != "none"
-                and seed % args.gradient_accumulation_steps == 0
+                and step % args.gradient_accumulation_steps == 0
             ):
                 config_dict = sampler.sample_subtransformer(
                     randomize=True,
