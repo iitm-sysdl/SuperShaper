@@ -59,6 +59,8 @@ from sampling import (
     show_args,
 )
 
+from collections import defaultdict
+
 
 from custom_layers import custom_bert, custom_mobile_bert
 
@@ -436,8 +438,26 @@ def parse_args():
     parser.add_argument(
         "--k_sampling",
         type=int,
-        required=True,
+        default=1,
         help=f"The step frequency of sampling a sub-transformers",
+    )
+
+    parser.add_argument(
+        "--magic_sampling_random_walk_prob",
+        type=float,
+        default=None,
+        help=f"""
+        whether to use magic sampling and do a random walk (sampling a subtransformer by changing some of previous
+        subtransformer's parameters(hidden size, number of layers, etc.)
+        """,
+    )
+    parser.add_argument(
+        "--magic_sampling_per_layer_change_prob",
+        type=float,
+        default=None,
+        help=f"""
+        if using magic sampling, this is the probability of changing some layers parameters (its width) given the previous sampled subtransformer
+        """,
     )
 
     parser.add_argument(
@@ -643,6 +663,25 @@ def parse_args():
         ## Temporary Assert until rewiring support is providied for all other BERT variants
         assert args.mixing == "bert-bottleneck"
 
+    if (
+        args.magic_sampling_random_walk_prob is not None
+        or args.magic_sampling_per_layer_change_prob is not None
+    ):
+        assert (
+            args.magic_sampling_per_layer_change_prob is not None
+        ), "magic_sampling_per_layer_change_prob cannot be None if magic_sampling_random_walk_prob is not None"
+        assert (
+            args.magic_sampling_random_walk_prob is not None
+        ), "magic_sampling_random_walk_prob cannot be None if magic_sampling_per_layer_change_prob is not None"
+        assert (
+            args.magic_sampling_random_walk_prob > 0.0
+            and args.magic_sampling_random_walk_prob <= 1.0
+        ), "magic_sampling_random_walk_prob should be between 0.0 and 1.0"
+        assert (
+            args.magic_sampling_per_layer_change_prob > 0.0
+            and args.magic_sampling_per_layer_change_prob <= 1.0
+        ), "magic_sampling_per_layer_change_prob should be between 0.0 and 1.0"
+
     return args
 
 
@@ -839,6 +878,17 @@ def main():
 
     global_config.rewire = args.rewire
     global_config.layer_drop_prob = args.layer_drop_prob
+
+    if (
+        args.magic_sampling_per_layer_change_prob is not None
+        and args.magic_sampling_random_walk_prob is not None
+    ):
+        global_config.magic_sampling_per_layer_change_prob = (
+            args.magic_sampling_per_layer_change_prob
+        )
+        global_config.magic_sampling_random_walk_prob = (
+            args.magic_sampling_random_walk_prob
+        )
 
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
@@ -1226,8 +1276,23 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model, log=None, log_freq=100)
 
+    magic_sampling = (
+        args.magic_sampling_random_walk_prob is not None
+        and args.magic_sampling_random_walk_prob >= 0
+        and args.magic_sampling_per_layer_change_prob is not None
+        and args.magic_sampling_per_layer_change_prob >= 0
+    )
+
+    per_layer_sampled_counts = [
+        defaultdict(int) for _ in range(global_config.sample_num_hidden_layers)
+    ]
+
     sampler = Sampler(
-        args.sampling_type, args.sampling_rule, args.mixing, global_config
+        args.sampling_type,
+        args.sampling_rule,
+        args.mixing,
+        global_config,
+        magic_sampling=magic_sampling,
     )
 
     if args.eval_random_subtransformers:
@@ -1359,18 +1424,22 @@ def main():
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
         model.train()
-        k_count = args.k_sampling - 1
+        # k_count = args.k_sampling - 1
 
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            k_count += 1
-            if k_count == args.k_sampling and args.sampling_type != "none":
+            # k_count += 1
+            # use the same subtransformer during gradient accumulations
+            if (
+                args.sampling_type != "none"
+                and seed % args.gradient_accumulation_steps == 0
+            ):
                 config_dict = sampler.sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
                     pop_size=args.pop_size,
                 )
-                k_count = 0
+                # k_count = 0
 
                 super_config_small = config_dict["smallest_subtransformer"]
                 # list of random subtransformers with len pop_size
@@ -1435,6 +1504,11 @@ def main():
                 if args.sampling_type != "none":
                     super_config = super_configs[idx]
                     model.set_sample_config(super_config, drop_layers=True)
+
+                for layer_idx, hidden_size in enumerate(
+                    super_config.sample_hidden_size
+                ):
+                    per_layer_sampled_counts[layer_idx][hidden_size] += 1
 
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
@@ -1602,6 +1676,24 @@ def main():
                     for count in layer_drop_counts
                 ]
 
+        num_rows = len(per_layer_sampled_counts)
+        x_labels = [f"Layer-{i}" for i in range(num_rows)]
+        hidden_sizes = sampler.get_choices()["sample_hidden_size"]
+        num_cols = len(hidden_sizes)
+        matrix = np.zeros((num_rows, num_cols))
+        for i in range(num_rows):
+            for j, hidden_size in enumerate(hidden_sizes):
+                matrix[i, j] = per_layer_sampled_counts[i][hidden_size]
+
+        matrix /= args.max_train_steps * args.gradient_accumulation_steps
+
+        wandb.log(
+            {
+                "LayerWise sampling rate": wandb.plots.HeatMap(
+                    hidden_sizes, x_labels, matrix, show_text=True
+                )
+            }
+        )
         # if accelerator.is_main_process:
         #     wandb.log(
         #         {
