@@ -380,6 +380,17 @@ def parse_args():
         choices=["attention", "gmlp", "fnet", "mobilebert", "bert-bottleneck"],
     )
     parser.add_argument(
+        "--additional_random_softmaxing",
+        action='store_true',
+        help=f"if true then random softmax layers will be softmaxed in addition to the last layer, except that there will be a random walk when it comes to choosing the layer to softmax",
+    )
+    parser.add_argument(
+        "--random_layer_selection_probability",
+        type=float,
+        default=0.10,
+        help="What is the probability of choosing a random layer instead of choosing an intermediate layer.",
+    )
+    parser.add_argument(
         "--resume_from_checkpoint_dir",
         type=str,
         default=None,
@@ -436,7 +447,7 @@ def parse_args():
     parser.add_argument(
         "--k_sampling",
         type=int,
-        required=True,
+        default=1,
         help=f"The step frequency of sampling a sub-transformers",
     )
 
@@ -694,7 +705,7 @@ def main():
     if accelerator.is_main_process:
         wandb.init(
             project="super-pretraining",
-            entity="efficient-hat",
+            entity="prajdabre",
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
 
@@ -769,11 +780,11 @@ def main():
 
     if args.subtransformer_config_path is None:
         global_config = get_supertransformer_config(
-            args.model_name_or_path, mixing=args.mixing
+            args.model_name_or_path, mixing=args.mixing, additional_random_softmaxing=args.additional_random_softmaxing, random_layer_selection_probability=args.random_layer_selection_probability
         )
     else:
         global_config = get_supertransformer_config(
-            "bert-base-cased", mixing=args.mixing
+            "bert-base-cased", mixing=args.mixing, additional_random_softmaxing=args.additional_random_softmaxing, random_layer_selection_probability=args.random_layer_selection_probability
         )
 
     if args.tokenizer_name:
@@ -817,7 +828,7 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
 
-    if args.layerwise_distillation:
+    if args.layerwise_distillation or args.additional_random_softmaxing:
         # for attention transfer and feature transfer enable these.
         global_config.output_attentions = True
         global_config.output_hidden_states = True
@@ -1366,9 +1377,18 @@ def main():
                 super_config_small = config_dict["smallest_subtransformer"]
                 # list of random subtransformers with len pop_size
                 super_configs = config_dict["random_subtransformers"]
+                if args.additional_random_softmaxing:
+                    next_layer = model.sample_next_layer()
+                    if accelerator.is_main_process:
+                        wandb.log(
+                                        {
+                                            "additional layer to be softmaxed": next_layer,
+                                        }
+                                    )
+
 
             track_loss = step % args.logging_steps == 0 and step > 0
-
+            
             ### Applying Sandwich Rule ###
             if args.sampling_rule == "sandwich":
 

@@ -75,6 +75,7 @@ from loss import CrossEntropyLossSoft
 from loss import *
 
 from utils import get_overlap_order
+import random
 
 logger = logging.get_logger(__name__)
 
@@ -2478,7 +2479,21 @@ class BertForMaskedLM(BertPreTrainedModel):
         self.bert = BertModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
         self.config = config
+        if self.config.additional_random_softmaxing:
+            self.random_softmaxing_idx = random.randint(1,11)
         self.init_weights()
+    
+    def sample_next_layer(self):
+        if random.random() <= self.config.random_layer_selection_probability:
+                self.random_softmaxing_idx = random.choice(list(range(1,self.random_softmaxing_idx - 1))+list(range(self.random_softmaxing_idx + 2,12)))
+        else:
+            if self.random_softmaxing_idx == 1:
+                self.random_softmaxing_idx = 2
+            elif self.random_softmaxing_idx == 11:
+                self.random_softmaxing_idx = 10
+            else:
+                self.random_softmaxing_idx = random.choice([self.random_softmaxing_idx-1, self.random_softmaxing_idx+1])
+        return self.random_softmaxing_idx
 
     def set_sample_config(self, config, is_training=True):
         # pass is_training flag to bertmodel for layerdrop
@@ -2552,7 +2567,7 @@ class BertForMaskedLM(BertPreTrainedModel):
 
         sequence_output = outputs[0]
         prediction_scores = self.cls(sequence_output)
-
+    
         masked_lm_loss = None
         if labels is not None:
             if use_soft_loss:
@@ -2575,7 +2590,19 @@ class BertForMaskedLM(BertPreTrainedModel):
                 masked_lm_loss = loss_fct(
                     prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
                 )
-
+        
+        if self.config.additional_random_softmaxing and self.training:
+            prediction_scores = self.cls(outputs.hidden_states[self.random_softmaxing_idx])
+            if use_soft_loss:
+                masked_lm_loss += loss_fct(
+                    prediction_scores.view(-1, self.config.vocab_size),
+                    labels.view(-1, self.config.vocab_size),
+                )
+            else:
+                masked_lm_loss += loss_fct(
+                    prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
+                )
+            
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
             return (
