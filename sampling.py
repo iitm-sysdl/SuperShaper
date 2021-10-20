@@ -54,11 +54,13 @@ class Sampler:
         config,
         static_keys=None,
         layerwise_changing_keys=None,
+        magic_sampling=False,
     ):
         self.config = config
         self.sampling_type = sampling_type
         self.sampling_rule = sampling_rule
         self.mixing = mixing
+        self.magic_sampling = magic_sampling
 
         self.static_keys = static_keys or [
             "sample_hidden_size",
@@ -86,23 +88,40 @@ class Sampler:
                 "sample_intermediate_size",
             ]
 
+        if self.magic_sampling:
+            assert (
+                config.magic_sampling_random_walk_prob is not None
+                and config.magic_sampling_per_layer_change_prob is not None
+            )
+            assert (
+                config.magic_sampling_random_walk_prob > 0
+                and config.magic_sampling_random_walk_prob <= 1
+            )
+            assert (
+                config.magic_sampling_per_layer_change_prob > 0
+                and config.magic_sampling_per_layer_change_prob <= 1
+            )
+            self.random_walk_prob = config.magic_sampling_random_walk_prob
+            self.layer_change_prob = config.magic_sampling_per_layer_change_prob
+
     # TODO: Replace this with a YAML file.
     def get_choices(self):
         choices = {
-            "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
+            "sample_hidden_size": [60, 120, 240, 360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
             "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers, 2))
             + [self.config.num_hidden_layers],
         }
         choices["sample_hidden_size"] = (
-            [120, 240, 360, 480, 512]
+            [60, 120, 240, 360, 480, 512]
             if self.mixing == "gmlp"
             else choices["sample_hidden_size"]
         )
         if self.mixing == "mobilebert":
             choices["sample_hidden_size"] = [768]
             choices["sample_intra_bottleneck_size"] = [
+                60,
                 120,
                 240,
                 360,
@@ -117,7 +136,7 @@ class Sampler:
             choices["sample_num_attention_heads"] = [12]
         elif self.mixing == "bert-bottleneck":
             choices = {
-                "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
+                "sample_hidden_size": [60, 120, 240, 360, 480, 540, 600, 768],
                 "sample_num_attention_heads": [12],
                 "sample_intermediate_size": [3072],
                 "sample_num_hidden_layers": [12],
@@ -344,27 +363,56 @@ class Sampler:
         return config
 
     def sample_subtransformer(self, randomize=True, rand_seed=0, pop_size=1):
+        # we store the previous subtransformer configs so that we can do random
+        # walks (ie change some parameters on previous configs) instead of uniform
+        # sampling
+        self.prev_subtransformer_configs = None
         if randomize:
             random.seed(rand_seed)
-        config = copy.deepcopy(self.config)
 
         smallest_config = None
 
         if self.sampling_rule == "sandwich":
             smallest_config = self.get_small_config()
 
-        configs = []
+        def _sample():
+            configs = []
+            for _ in range(pop_size):
+                if (
+                    self.sampling_type == "random"
+                    or self.sampling_type == "biased_params"
+                ):
+                    _config = self.weighted_params_sample()
+                elif self.sampling_type == "naive_params":
+                    _config = self.naive_params_sampling()
+                else:
+                    raise NotImplementedError
+                configs.append(_config)
+            return configs
 
-        for _ in range(pop_size):
-            if self.sampling_type == "random" or self.sampling_type == "biased_params":
-                config = self.weighted_params_sample()
-            elif self.sampling_type == "naive_params":
-                config = self.naive_params_sampling()
+        if self.prev_subtransformer_configs is not None and self.magic_sampling:
+            random_number = random.random()
+            choices = self.get_choices()
+            num_hidden_layers = len(choices["sample_num_hidden_layers"])
+            sample_hidden_sizes = choices["sample_hidden_size"]
+            if random_number <= self.random_walk_prob:
+                configs = []
+                for _config in self.prev_subtransformer_configs:
+                    new_config = copy.deepcopy(_config)
+                    to_change = (
+                        np.random.uniform(0, 1, num_hidden_layers)
+                        <= self.layer_change_prob
+                    )
+                    for i in range(num_hidden_layers):
+                        if to_change[i]:
+                            new_config[i] = random.choice(sample_hidden_sizes)
+                    configs.append(new_config)
             else:
-                raise NotImplementedError
+                configs = _sample()
+        else:
+            configs = _sample()
 
-            configs.append(config)
-
+        self.prev_subtransformer_configs = configs
         return {
             "smallest_subtransformer": smallest_config,
             "random_subtransformers": configs,

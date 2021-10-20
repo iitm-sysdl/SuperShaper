@@ -59,6 +59,8 @@ from sampling import (
     show_args,
 )
 
+from collections import defaultdict
+
 
 from custom_layers import custom_bert, custom_mobile_bert
 
@@ -452,6 +454,24 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--magic_sampling_random_walk_prob",
+        type=float,
+        default=None,
+        help=f"""
+        whether to use magic sampling and do a random walk (sampling a subtransformer by changing some of previous
+        subtransformer's parameters(hidden size, number of layers, etc.)
+        """,
+    )
+    parser.add_argument(
+        "--magic_sampling_per_layer_change_prob",
+        type=float,
+        default=None,
+        help=f"""
+        if using magic sampling, this is the probability of changing some layers parameters (its width) given the previous sampled subtransformer
+        """,
+    )
+
+    parser.add_argument(
         "--inplace_distillation",
         type=int,
         default=0,
@@ -513,6 +533,14 @@ def parse_args():
         default=0,
         help=f"Whether to rewire model",
     )
+
+    # parser.add_argument(
+    #     "--presampled_subtransformers_order",
+    #     type=str,
+    #     default=None,
+    #     help=f"The order in which presampled subtransformers should be sorted",
+    #     choices=["ascending", "descending"],
+    # )
 
     parser.add_argument(
         "--rewired_model_checkpoint_dir",
@@ -645,6 +673,25 @@ def parse_args():
 
         ## Temporary Assert until rewiring support is providied for all other BERT variants
         assert args.mixing == "bert-bottleneck"
+
+    if (
+        args.magic_sampling_random_walk_prob is not None
+        or args.magic_sampling_per_layer_change_prob is not None
+    ):
+        assert (
+            args.magic_sampling_per_layer_change_prob is not None
+        ), "magic_sampling_per_layer_change_prob cannot be None if magic_sampling_random_walk_prob is not None"
+        assert (
+            args.magic_sampling_random_walk_prob is not None
+        ), "magic_sampling_random_walk_prob cannot be None if magic_sampling_per_layer_change_prob is not None"
+        assert (
+            args.magic_sampling_random_walk_prob > 0.0
+            and args.magic_sampling_random_walk_prob <= 1.0
+        ), "magic_sampling_random_walk_prob should be between 0.0 and 1.0"
+        assert (
+            args.magic_sampling_per_layer_change_prob > 0.0
+            and args.magic_sampling_per_layer_change_prob <= 1.0
+        ), "magic_sampling_per_layer_change_prob should be between 0.0 and 1.0"
 
     return args
 
@@ -842,6 +889,17 @@ def main():
 
     global_config.rewire = args.rewire
     global_config.layer_drop_prob = args.layer_drop_prob
+
+    if (
+        args.magic_sampling_per_layer_change_prob is not None
+        and args.magic_sampling_random_walk_prob is not None
+    ):
+        global_config.magic_sampling_per_layer_change_prob = (
+            args.magic_sampling_per_layer_change_prob
+        )
+        global_config.magic_sampling_random_walk_prob = (
+            args.magic_sampling_random_walk_prob
+        )
 
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
@@ -1158,7 +1216,7 @@ def main():
         model = ModuleProxyWrapper(model)
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
-    model.set_sample_config(global_config, is_training=False)
+    model.set_sample_config(global_config, drop_layers=False)
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
         len(train_dataloader) / args.gradient_accumulation_steps
@@ -1229,8 +1287,23 @@ def main():
     if accelerator.is_main_process:
         wandb.watch(model, log=None, log_freq=100)
 
+    magic_sampling = (
+        args.magic_sampling_random_walk_prob is not None
+        and args.magic_sampling_random_walk_prob > 0
+        and args.magic_sampling_per_layer_change_prob is not None
+        and args.magic_sampling_per_layer_change_prob > 0
+    )
+
+    per_layer_sampled_counts = [
+        defaultdict(int) for _ in range(global_config.sample_num_hidden_layers)
+    ]
+
     sampler = Sampler(
-        args.sampling_type, args.sampling_rule, args.mixing, global_config
+        args.sampling_type,
+        args.sampling_rule,
+        args.mixing,
+        global_config,
+        magic_sampling=magic_sampling,
     )
 
     if args.eval_random_subtransformers:
@@ -1307,13 +1380,14 @@ def main():
     )
     perpx = eval_metric["perplexity"]
     logger.info(f"perplexity before starting: {perpx:.2f} ")
+
     for epoch in range(completed_epochs, args.num_train_epochs):
         # first evaluate random subtransformers before starting training
         if args.eval_random_subtransformers and completed_epochs % 1 == 0:
             hover_templates = []
             label_perplex = []
             for i, config in enumerate(diverse_subtransformers):
-                model.set_sample_config(config, is_training=False)
+                model.set_sample_config(config, drop_layers=False)
 
                 eval_metric = validate_subtransformer(
                     model,
@@ -1361,18 +1435,22 @@ def main():
                 wandb.log({"bar_chart": wandb.data_types.Plotly(fig)})
 
         model.train()
-        k_count = args.k_sampling - 1
+        # k_count = args.k_sampling - 1
 
         for step, batch in enumerate(train_dataloader):
             seed += 1
-            k_count += 1
-            if k_count == args.k_sampling and args.sampling_type != "none":
+            # k_count += 1
+            # use the same subtransformer during gradient accumulations
+            if (
+                args.sampling_type != "none"
+                and step % args.gradient_accumulation_steps == 0
+            ):
                 config_dict = sampler.sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
                     pop_size=args.pop_size,
                 )
-                k_count = 0
+                # k_count = 0
 
                 super_config_small = config_dict["smallest_subtransformer"]
                 # list of random subtransformers with len pop_size
@@ -1393,7 +1471,7 @@ def main():
             if args.sampling_rule == "sandwich":
 
                 ## Sample Supertransformer
-                model.set_sample_config(global_config, is_training=True)
+                model.set_sample_config(global_config, drop_layers=True)
                 outputs = model(**batch)
                 loss = outputs.loss
 
@@ -1413,7 +1491,7 @@ def main():
                     batch["labels"] = soft_logits
 
                 ## Sample Smallest Subtransformer
-                model.set_sample_config(super_config_small, is_training=True)
+                model.set_sample_config(super_config_small, drop_layers=True)
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
 
@@ -1445,7 +1523,12 @@ def main():
 
                 if args.sampling_type != "none":
                     super_config = super_configs[idx]
-                    model.set_sample_config(super_config, is_training=True)
+                    model.set_sample_config(super_config, drop_layers=True)
+
+                for layer_idx, hidden_size in enumerate(
+                    super_config.sample_hidden_size
+                ):
+                    per_layer_sampled_counts[layer_idx][hidden_size] += 1
 
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
@@ -1575,7 +1658,7 @@ def main():
 
         # change to supertransformer config
         if args.sampling_type != "none":
-            model.set_sample_config(global_config, is_training=False)
+            model.set_sample_config(global_config, drop_layers=False)
 
         eval_metric = validate_subtransformer(
             model,
@@ -1593,10 +1676,44 @@ def main():
 
         if args.layer_drop_prob > 0:
             layer_drop_counts = model.bert.encoder.layer_drop_counts
-            layer_drop_counts_percentage = [
-                round(count / completed_steps, 2) for count in layer_drop_counts
-            ]
+            if args.sampling_rule == "sandwich":
+                # * 3 is done to account for sandwich rule
+                layer_drop_counts_percentage = [
+                    round(
+                        count
+                        / (args.max_train_steps * args.gradient_accumulation_steps * 3)
+                    )
+                    * 100
+                    for count in layer_drop_counts
+                ]
+            else:
+                layer_drop_counts_percentage = [
+                    round(
+                        count
+                        / (args.max_train_steps * args.gradient_accumulation_steps)
+                    )
+                    * 100
+                    for count in layer_drop_counts
+                ]
 
+        num_rows = len(per_layer_sampled_counts)
+        x_labels = [f"Layer-{i}" for i in range(num_rows)]
+        hidden_sizes = sampler.get_choices()["sample_hidden_size"]
+        num_cols = len(hidden_sizes)
+        matrix = np.zeros((num_rows, num_cols))
+        for i in range(num_rows):
+            for j, hidden_size in enumerate(hidden_sizes):
+                matrix[i, j] = per_layer_sampled_counts[i][hidden_size]
+
+        matrix /= args.max_train_steps * args.gradient_accumulation_steps
+
+        wandb.log(
+            {
+                "LayerWise sampling rate": wandb.plots.HeatMap(
+                    hidden_sizes, x_labels, matrix, show_text=True
+                )
+            }
+        )
         # if accelerator.is_main_process:
         #     wandb.log(
         #         {
