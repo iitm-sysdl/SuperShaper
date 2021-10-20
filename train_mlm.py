@@ -1438,13 +1438,13 @@ def main():
         # k_count = args.k_sampling - 1
 
         for step, batch in enumerate(train_dataloader):
-            seed += 1
             # k_count += 1
             # use the same subtransformer during gradient accumulations
             if (
                 args.sampling_type != "none"
                 and step % args.gradient_accumulation_steps == 0
             ):
+                seed += 1
                 config_dict = sampler.sample_subtransformer(
                     randomize=True,
                     rand_seed=seed,
