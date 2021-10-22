@@ -20,6 +20,7 @@ import logging
 import math
 import os
 import random
+from numpy.lib.function_base import gradient
 from torch._C import layout
 import wandb
 
@@ -550,6 +551,14 @@ def parse_args():
         type=float,
         default=None,
         help=f"perplexity to stop further pretraining",
+    )
+
+    parser.add_argument(
+        "--stratified_gradient_training_probability",
+        "-sgtp",
+        type=float,
+        default=0.0,
+        help=f"probability of stratified training",
     )
 
     # parser.add_argument(
@@ -1425,6 +1434,7 @@ def main():
 
         model.train()
         # k_count = args.k_sampling - 1
+        previous_subtransformer_hidden_sizes = []
 
         for step, batch in enumerate(train_dataloader):
             seed += 1
@@ -1446,6 +1456,135 @@ def main():
                 super_configs = config_dict["random_subtransformers"]
 
             track_loss = step % args.logging_steps == 0 and step > 0
+
+            if args.stratified_gradient_training_probability > 0:
+                for idx in range(args.pop_size):
+
+                    if args.sampling_type != "none":
+                        super_config = super_configs[idx]
+                        model.set_sample_config(super_config, drop_layers=True)
+
+                    for layer_idx, hidden_size in enumerate(
+                        super_config.sample_hidden_size
+                    ):
+                        # to track and plot the hidden sizes of the subtransformers per layer
+                        per_layer_sampled_counts[layer_idx][hidden_size] += 1
+
+                    outputs = model(**batch, use_soft_loss=args.inplace_distillation)
+                    sampled_student_loss = outputs.loss
+
+                    accelerator.backward(sampled_student_loss)
+
+                    if len(previous_subtransformer_hidden_sizes) < 2:
+                        previous_subtransformer_hidden_sizes.append(
+                            super_config.sample_hidden_size
+                        )
+                    # modify gradients before optimizer step
+                    elif (
+                        args.sampling_type != "none"
+                        and random.random()
+                        <= args.stratified_gradient_training_probability
+                    ):
+                        # LAYER GRADIENTS TO MASK ALONG WITH THEIR SHAPES (HS -> Hidden Size)
+                        # bert.encoder.layer.0.input_bottleneck.weight torch.Size([768, HS])
+                        # bert.encoder.layer.0.input_bottleneck.bias torch.Size([HS])
+                        # bert.encoder.layer.0.output_bottleneck.weight torch.Size([HS, 768])
+                        # bert.encoder.layer.0.output_bottleneck.bias torch.Size([768])
+                        # bert.encoder.layer.0.attention.self.query.weight torch.Size([HS, HS])
+                        # bert.encoder.layer.0.attention.self.query.bias torch.Size([HS])
+                        # bert.encoder.layer.0.attention.self.key.weight torch.Size([HS, HS])
+                        # bert.encoder.layer.0.attention.self.key.bias torch.Size([HS])
+                        # bert.encoder.layer.0.attention.self.value.weight torch.Size([HS, HS])
+                        # bert.encoder.layer.0.attention.self.value.bias torch.Size([HS])
+                        # bert.encoder.layer.0.attention.output.dense.weight torch.Size([HS, HS])
+                        # bert.encoder.layer.0.attention.output.dense.bias torch.Size([HS])
+                        # bert.encoder.layer.0.attention.output.LayerNorm.weight torch.Size([HS])
+                        # bert.encoder.layer.0.attention.output.LayerNorm.bias torch.Size([HS])
+                        # bert.encoder.layer.0.intermediate.dense.weight torch.Size([3072, HS])
+                        # bert.encoder.layer.0.intermediate.dense.bias torch.Size([3072])
+                        # bert.encoder.layer.0.output.dense.weight torch.Size([HS, 3072])
+                        # bert.encoder.layer.0.output.dense.bias torch.Size([HS])
+                        # bert.encoder.layer.0.output.LayerNorm.weight torch.Size([HS])
+                        # bert.encoder.layer.0.output.LayerNorm.bias torch.Size([HS])
+
+                        dim_to_mask = {
+                            "input_bottleneck": "col",
+                            "output_bottleneck": "row",
+                            "attention.self.query": "row+col",
+                            "attention.self.key": "row+col",
+                            "attention.self.value": "row+col",
+                            "attention.output.dense": "row+col",
+                            "attention.output.LayerNorm": "row",
+                            "intermediate.dense": "col",
+                            "output.dense": "row",
+                            "output.LayerNorm": "row",
+                        }
+                        param_template = "bert.encoder.layer.{}.{}"
+
+                        for layer_idx in range(global_config.num_hidden_layers):
+                            prev_hidden_size = previous_subtransformer_hidden_sizes[
+                                idx
+                            ][layer_idx]
+                            curr_hidden_size = super_config.sample_hidden_size[
+                                layer_idx
+                            ]
+                            if prev_hidden_size == curr_hidden_size:
+                                break
+                            elif prev_hidden_size > curr_hidden_size:
+                                mask_area = "right"
+                            else:
+                                mask_area = "left"
+
+                            def mask_tensor(tensor, mask_area, mask_dim):
+                                # for layernorm, we have 1-d tensor
+                                if len(tensor.shape) == 1:
+                                    if mask_area == "left":
+                                        # mask left
+                                        tensor[:curr_hidden_size] = 0
+                                    elif mask_area == "right":
+                                        # mask right
+                                        tensor[curr_hidden_size:] = 0
+                                elif mask_dim == "row_col":
+                                    if mask_area == "left":
+                                        tensor[:, :curr_hidden_size] = 0
+                                        tensor[:curr_hidden_size, :] = 0
+                                    elif mask_area == "right":
+                                        tensor[:, curr_hidden_size:] = 0
+                                        tensor[curr_hidden_size:, :] = 0
+                                elif mask_dim == "col":
+                                    if mask_area == "left":
+                                        tensor[:, :curr_hidden_size] = 0
+                                    elif mask_area == "right":
+                                        tensor[:, curr_hidden_size:] = 0
+                                elif mask_dim == "row":
+                                    if mask_area == "left":
+                                        tensor[:curr_hidden_size, :] = 0
+                                    elif mask_area == "right":
+                                        tensor[curr_hidden_size:, :] = 0
+                                return tensor
+
+                            for param_name, param_dim in dim_to_mask.items():
+                                for w_b in ["weight", "bias"]:
+                                    param_grad_name = param_template.format(
+                                        layer_idx, param_name
+                                    ) + ".{}.grad".format(w_b)
+                                    if "output_bottleneck.bias" in param_grad_name:
+                                        continue
+                                    _grad = attrgetter(param_grad_name)(model)
+                                    # print("Before update")
+                                    # print(_grad[:10], _grad[-10:])
+                                    _grad = mask_tensor(_grad, mask_area, param_dim)
+                                    setattr(model, param_grad_name, _grad)
+                                    # _grad = attrgetter(param_grad_name)(model)
+                                    # print("after update:")
+                                    # print(_grad[:10], _grad[-10:])
+                                    if _grad is not None:
+                                        _grad = mask_tensor(_grad, mask_area, param_dim)
+                                        setattr(model, param_grad_name, _grad)
+
+                        previous_subtransformer_hidden_sizes[
+                            idx
+                        ] = super_config.sample_hidden_size
 
             ### Applying Sandwich Rule ###
             if args.sampling_rule == "sandwich":
@@ -1498,37 +1637,37 @@ def main():
 
             ## Sample "n" subtransformers based on sampling_type: random, biased-params, etc.
             ## This happens regardless of sandwich rule is applied or not! Allows for Conventional Sampling
+            if args.stratified_gradient_training_probability == 0:
+                for idx in range(args.pop_size):
 
-            for idx in range(args.pop_size):
+                    if args.sampling_type != "none":
+                        super_config = super_configs[idx]
+                        model.set_sample_config(super_config, drop_layers=True)
 
-                if args.sampling_type != "none":
-                    super_config = super_configs[idx]
-                    model.set_sample_config(super_config, drop_layers=True)
+                    for layer_idx, hidden_size in enumerate(
+                        super_config.sample_hidden_size
+                    ):
+                        per_layer_sampled_counts[layer_idx][hidden_size] += 1
 
-                for layer_idx, hidden_size in enumerate(
-                    super_config.sample_hidden_size
-                ):
-                    per_layer_sampled_counts[layer_idx][hidden_size] += 1
+                    outputs = model(**batch, use_soft_loss=args.inplace_distillation)
+                    loss = outputs.loss
 
-                outputs = model(**batch, use_soft_loss=args.inplace_distillation)
-                loss = outputs.loss
+                    if args.inplace_distillation:
 
-                if args.inplace_distillation:
+                        (
+                            sampled_student_loss,
+                            sampled_student_losses_dict,
+                        ) = compute_student_loss(
+                            outputs,
+                            teacher_hidden_states,
+                            teacher_attention_maps,
+                            args,
+                            track_layerwise_loss=track_loss,
+                        )
+                    else:
+                        sampled_student_loss = loss / args.gradient_accumulation_steps
 
-                    (
-                        sampled_student_loss,
-                        sampled_student_losses_dict,
-                    ) = compute_student_loss(
-                        outputs,
-                        teacher_hidden_states,
-                        teacher_attention_maps,
-                        args,
-                        track_layerwise_loss=track_loss,
-                    )
-                else:
-                    sampled_student_loss = loss / args.gradient_accumulation_steps
-
-                accelerator.backward(sampled_student_loss)
+                    accelerator.backward(sampled_student_loss)
 
             if (
                 step % args.gradient_accumulation_steps == 0
@@ -1540,95 +1679,95 @@ def main():
                 progress_bar.update(1)
                 completed_steps += 1
 
-                ### Plot the high-res step-loss ###
-                if accelerator.is_main_process and track_loss:
-                    if not args.inplace_distillation:
-                        if args.sampling_rule == "sandwich":
-                            wandb.log(
-                                {
-                                    "Supertransformer mlm loss": teacher_mlm_loss.item(),
-                                    "Smallest mlm loss": smallest_student_loss.item(),
-                                    "Subtransformer mlm loss": sampled_student_loss.item(),
-                                }
-                            )
-                        else:
+            ### Plot the high-res step-loss ###
+            if accelerator.is_main_process and track_loss:
+                if not args.inplace_distillation:
+                    if args.sampling_rule == "sandwich":
+                        wandb.log(
+                            {
+                                "Supertransformer mlm loss": teacher_mlm_loss.item(),
+                                "Smallest mlm loss": smallest_student_loss.item(),
+                                "Subtransformer mlm loss": sampled_student_loss.item(),
+                            }
+                        )
+                    else:
 
+                        wandb.log(
+                            {
+                                "Subtransformer mlm loss": sampled_student_loss.item(),
+                            }
+                        )
+                else:
+
+                    if args.layerwise_distillation:
+                        wandb.log(
+                            {
+                                "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
+                                "Smallest Student mlm loss": smallest_student_losses_dict[
+                                    "student_mlm_loss"
+                                ].item(),
+                                "Smallest distill loss": smallest_student_losses_dict[
+                                    "student_distill_loss"
+                                ].item(),
+                                "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
+                                    "student_feature_knowledge_transfer_loss"
+                                ].item(),
+                                "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
+                                    "student_attention_knowledge_transfer_loss"
+                                ].item(),
+                                "Subtransformer Student mlm loss": sampled_student_losses_dict[
+                                    "student_mlm_loss"
+                                ].item(),
+                                "Subtransformer distill loss": sampled_student_losses_dict[
+                                    "student_distill_loss"
+                                ].item(),
+                                "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
+                                    "student_feature_knowledge_transfer_loss"
+                                ].item(),
+                                "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
+                                    "student_attention_knowledge_transfer_loss"
+                                ].item(),
+                            }
+                        )
+                        for idx in range(
+                            len(smallest_student_losses_dict["layer_wise_akt"])
+                        ):
                             wandb.log(
                                 {
-                                    "Subtransformer mlm loss": sampled_student_loss.item(),
+                                    f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
+                                        "layer_wise_akt"
+                                    ][
+                                        idx
+                                    ].item(),
+                                    f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
+                                        "layer_wise_akt"
+                                    ][
+                                        idx
+                                    ].item(),
+                                    f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
+                                        "layer_wise_fkt"
+                                    ][
+                                        idx
+                                    ].item(),
+                                    f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
+                                        "layer_wise_fkt"
+                                    ][
+                                        idx
+                                    ].item(),
                                 }
                             )
                     else:
-
-                        if args.layerwise_distillation:
-                            wandb.log(
-                                {
-                                    "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
-                                    "Smallest Student mlm loss": smallest_student_losses_dict[
-                                        "student_mlm_loss"
-                                    ].item(),
-                                    "Smallest distill loss": smallest_student_losses_dict[
-                                        "student_distill_loss"
-                                    ].item(),
-                                    "Smallest feature knowledge transfer loss": smallest_student_losses_dict[
-                                        "student_feature_knowledge_transfer_loss"
-                                    ].item(),
-                                    "Smallest attention knowledge transfer loss": smallest_student_losses_dict[
-                                        "student_attention_knowledge_transfer_loss"
-                                    ].item(),
-                                    "Subtransformer Student mlm loss": sampled_student_losses_dict[
-                                        "student_mlm_loss"
-                                    ].item(),
-                                    "Subtransformer distill loss": sampled_student_losses_dict[
-                                        "student_distill_loss"
-                                    ].item(),
-                                    "Subtransformer feature knowledge transfer loss": sampled_student_losses_dict[
-                                        "student_feature_knowledge_transfer_loss"
-                                    ].item(),
-                                    "Subtransformer attention knowledge transfer loss": sampled_student_losses_dict[
-                                        "student_attention_knowledge_transfer_loss"
-                                    ].item(),
-                                }
-                            )
-                            for idx in range(
-                                len(smallest_student_losses_dict["layer_wise_akt"])
-                            ):
-                                wandb.log(
-                                    {
-                                        f"Smallest layer_wise_akt_{idx}": smallest_student_losses_dict[
-                                            "layer_wise_akt"
-                                        ][
-                                            idx
-                                        ].item(),
-                                        f"Subtransformer layer_wise_akt_{idx}": sampled_student_losses_dict[
-                                            "layer_wise_akt"
-                                        ][
-                                            idx
-                                        ].item(),
-                                        f"Smallest layer_wise_fkt_{idx}": smallest_student_losses_dict[
-                                            "layer_wise_fkt"
-                                        ][
-                                            idx
-                                        ].item(),
-                                        f"Subtransformer layer_wise_fkt_{idx}": sampled_student_losses_dict[
-                                            "layer_wise_fkt"
-                                        ][
-                                            idx
-                                        ].item(),
-                                    }
-                                )
-                        else:
-                            wandb.log(
-                                {
-                                    "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
-                                    "Smallest Student mlm loss": smallest_student_losses_dict[
-                                        "student_mlm_loss"
-                                    ].item(),
-                                    "Subtransformer Student mlm loss": sampled_student_losses_dict[
-                                        "student_mlm_loss"
-                                    ].item(),
-                                }
-                            )
+                        wandb.log(
+                            {
+                                "Supertransformer Teacher mlm loss": teacher_mlm_loss.item(),
+                                "Smallest Student mlm loss": smallest_student_losses_dict[
+                                    "student_mlm_loss"
+                                ].item(),
+                                "Subtransformer Student mlm loss": sampled_student_losses_dict[
+                                    "student_mlm_loss"
+                                ].item(),
+                            }
+                        )
 
             if accelerator.is_main_process:
                 wandb.log({"epochs": epoch})
