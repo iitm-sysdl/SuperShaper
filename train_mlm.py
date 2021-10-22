@@ -1462,6 +1462,10 @@ def main():
 
             track_loss = step % args.logging_steps == 0 and step > 0
 
+            # for stratified sampling, we need to zero out certain gradients
+            # before accumulating gradients for supertransformer and smallest
+            # subransformer (during sandwich rule). Hence we do the forward prop
+            # for random subransformers before the largest and smallest subtransformers
             if args.stratified_gradient_training_probability > 0:
                 for idx in range(args.pop_size):
 
@@ -1638,9 +1642,9 @@ def main():
 
                 accelerator.backward(smallest_student_loss)
 
-            ## Sample "n" subtransformers based on sampling_type: random, biased-params, etc.
-            ## This happens regardless of sandwich rule is applied or not! Allows for Conventional Sampling
             if args.stratified_gradient_training_probability == 0:
+                ## Sample "n" subtransformers based on sampling_type: random, biased-params, etc.
+                ## This happens regardless of sandwich rule is applied or not! Allows for Conventional Sampling
                 for idx in range(args.pop_size):
 
                     if args.sampling_type != "none":
