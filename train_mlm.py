@@ -1475,7 +1475,7 @@ def main():
 
                     accelerator.backward(sampled_student_loss)
 
-                    if len(previous_subtransformer_hidden_sizes) < 2:
+                    if len(previous_subtransformer_hidden_sizes) < args.pop_size:
                         previous_subtransformer_hidden_sizes.append(
                             super_config.sample_hidden_size
                         )
