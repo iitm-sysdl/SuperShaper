@@ -607,6 +607,11 @@ def parse_args():
                 "txt",
             ], "`validation_file` should be a csv, json or txt file."
 
+    if args.stratified_gradient_training_probability > 0.0:
+        assert (
+            args.sampling_type != "none"
+        ), "Sampling type needs to be set to something other than none if using stratified gradient training"
+
     if args.tiny_attn == 1:
         assert args.mixing == "gmlp", "Tiny Attention can work only in GMLP setup"
 
@@ -1519,6 +1524,7 @@ def main():
                             "output.dense": "row",
                             "output.LayerNorm": "row",
                         }
+                        # TODO: make this more general for different models like albert, etc
                         param_template = "bert.encoder.layer.{}.{}"
 
                         for layer_idx in range(global_config.num_hidden_layers):
@@ -1578,9 +1584,6 @@ def main():
                                     # _grad = attrgetter(param_grad_name)(model)
                                     # print("after update:")
                                     # print(_grad[:10], _grad[-10:])
-                                    if _grad is not None:
-                                        _grad = mask_tensor(_grad, mask_area, param_dim)
-                                        setattr(model, param_grad_name, _grad)
 
                         previous_subtransformer_hidden_sizes[
                             idx
