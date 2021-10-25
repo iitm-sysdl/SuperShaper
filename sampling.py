@@ -107,21 +107,20 @@ class Sampler:
     # TODO: Replace this with a YAML file.
     def get_choices(self):
         choices = {
-            "sample_hidden_size": [60, 120, 240, 360, 480, 540, 600, 768],
+            "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
             "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers, 2))
             + [self.config.num_hidden_layers],
         }
         choices["sample_hidden_size"] = (
-            [60, 120, 240, 360, 480, 512]
+            [120, 240, 360, 480, 512]
             if self.mixing == "gmlp"
             else choices["sample_hidden_size"]
         )
         if self.mixing == "mobilebert":
             choices["sample_hidden_size"] = [768]
             choices["sample_intra_bottleneck_size"] = [
-                60,
                 120,
                 240,
                 360,
@@ -136,7 +135,7 @@ class Sampler:
             choices["sample_num_attention_heads"] = [12]
         elif self.mixing == "bert-bottleneck":
             choices = {
-                "sample_hidden_size": [60, 120, 240, 360, 480, 540, 600, 768],
+                "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
                 "sample_num_attention_heads": [12],
                 "sample_intermediate_size": [3072],
                 "sample_num_hidden_layers": [12],
