@@ -741,7 +741,7 @@ def main():
     if accelerator.is_main_process:
         wandb.init(
             project="super-pretraining",
-            entity="efficient-hat",
+            entity="prajdabre",
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
 
