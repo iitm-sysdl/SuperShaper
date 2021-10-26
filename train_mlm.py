@@ -1686,7 +1686,7 @@ def main():
                 matrix[i, j] = per_layer_sampled_counts[i][hidden_size]
 
         matrix /= args.max_train_steps * args.gradient_accumulation_steps
-        
+
         if accelerator.is_main_process:
             wandb.log(
                 {

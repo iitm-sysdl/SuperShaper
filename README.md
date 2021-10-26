@@ -5,36 +5,36 @@ If you find this repo useful in your work, please consider citing our work:
 ```bibtex
 ```
 
-## Super Pre-training with bottleneck layers 
+## Super Pre-training with bottleneck layers
 <p align="center">
 <img src="figs/bert-bottleneck.png" width=50% height=50%>
 </p>
 
-## Competitive NLU performance 
+## Competitive NLU performance
 
-|           Model            | Params   | MNLI-M | QQP  | QNLI | CoLA | SST-2 | STS-B | RTE   | MRPC  |  Average GLUE  | 
-|:--------------------------:|:--------:|:------:|:----:|:----:|:----:|:-----:|:-----:|:-----:|:-----:|:--------------:| 
-|         LayerDrop          |  66M     |   80.7 | 88.3 | 88.4 | 45.4 | 90.7  | -     | 65.2  | 85.9  |      77.8      | 
-|         DistilBERT         |  66M     |   82.2 | 88.5 | 89.2 | 51.3 | 91.3  | 86.9  | 59.9  | 87.5  |      79.6      | 
-|         BERT-PKD           |  66M     |   81.5 | 70.7 | 89.0 |  -   | 92.0  | -     | 65.5  | 85.0  |      80.6      | 
-|         MiniLM             |  66M     |   84.0 | 91.0 | 91.0 | 49.2 | 92.0  | -     | 71.5  | 88.4  |      81.0      | 
-|         Ta-TinyBERT        |  67M     |   83.5 | 90.6 | 90.5 | 42.8 | 91.6  | 86.5  | 72.2  | 88.4  |      80.8      | 
-|         Tiny-BERT          |  66M     |   84.6 | 89.1 | 90.4 | 51.1 | 93.1  | 83.7  | 70.0  | 82.6  |      80.6      | 
-|         BERT-of-Theseus    |  66M     |   82.3 | 89.6 | 89.5 | 51.1 | 91.5  | 88.7  | 68.2  | -     |      80.1      | 
-|         PD-BERT            |  66M     |   82.5 | 90.7 | 89.4 |  -   | 91.1  | -     | 66.7  | 84.9  |      84.2      | 
-|         ELM                |  60M     |   84.2 | 91.1 | 90.8 | 54.2 | 92.7  | 88.9  | 72.2  | 89.0  |      82.9      | 
-|         NAS-BERT           |  60M     |   83.3 | 90.9 | 91.3 | 55.6 | 92.0  | 88.6  | 78.5  | 87.5  |      83.5      | 
-|         DynaBERT           |  60M     |   84.2 | 91.2 | 91.5 | 56.8 | 92.7  | 89.2  | 72.2  | 84.1  |      82.8      | 
-|         YOCO-BERT          |  59M-67M |   82.6 | 90.5 | 87.2 | 59.8 | 92.8  | -     | 72.9  | 90.3  |      82.3      | 
-|         SuperShaper (ours) |  63M     |   82.2 | 90.2 | 88.1 | 53.0 | 91.9  | 87.6  | 79.1  | 89.5  |      82.7      | 
+|           Model            | Params   | MNLI-M | QQP  | QNLI | CoLA | SST-2 | STS-B | RTE   | MRPC  |  Average GLUE  |
+|:--------------------------:|:--------:|:------:|:----:|:----:|:----:|:-----:|:-----:|:-----:|:-----:|:--------------:|
+|         LayerDrop          |  66M     |   80.7 | 88.3 | 88.4 | 45.4 | 90.7  | -     | 65.2  | 85.9  |      77.8      |
+|         DistilBERT         |  66M     |   82.2 | 88.5 | 89.2 | 51.3 | 91.3  | 86.9  | 59.9  | 87.5  |      79.6      |
+|         BERT-PKD           |  66M     |   81.5 | 70.7 | 89.0 |  -   | 92.0  | -     | 65.5  | 85.0  |      80.6      |
+|         MiniLM             |  66M     |   84.0 | 91.0 | 91.0 | 49.2 | 92.0  | -     | 71.5  | 88.4  |      81.0      |
+|         Ta-TinyBERT        |  67M     |   83.5 | 90.6 | 90.5 | 42.8 | 91.6  | 86.5  | 72.2  | 88.4  |      80.8      |
+|         Tiny-BERT          |  66M     |   84.6 | 89.1 | 90.4 | 51.1 | 93.1  | 83.7  | 70.0  | 82.6  |      80.6      |
+|         BERT-of-Theseus    |  66M     |   82.3 | 89.6 | 89.5 | 51.1 | 91.5  | 88.7  | 68.2  | -     |      80.1      |
+|         PD-BERT            |  66M     |   82.5 | 90.7 | 89.4 |  -   | 91.1  | -     | 66.7  | 84.9  |      84.2      |
+|         ELM                |  60M     |   84.2 | 91.1 | 90.8 | 54.2 | 92.7  | 88.9  | 72.2  | 89.0  |      82.9      |
+|         NAS-BERT           |  60M     |   83.3 | 90.9 | 91.3 | 55.6 | 92.0  | 88.6  | 78.5  | 87.5  |      83.5      |
+|         DynaBERT           |  60M     |   84.2 | 91.2 | 91.5 | 56.8 | 92.7  | 89.2  | 72.2  | 84.1  |      82.8      |
+|         YOCO-BERT          |  59M-67M |   82.6 | 90.5 | 87.2 | 59.8 | 92.8  | -     | 72.9  | 90.3  |      82.3      |
+|         SuperShaper (ours) |  63M     |   82.2 | 90.2 | 88.1 | 53.0 | 91.9  | 87.6  | 79.1  | 89.5  |      82.7      |
 
 
-## Evolutionary Search and Simple Heuristics finds best subnetworks  
+## Evolutionary Search and Simple Heuristics finds best subnetworks
 <p align="center">
 <img src="figs/Pareto.png" width=50% height=50%>
 </p>
 
-## Shape is insensitive to device-latency 
+## Shape is insensitive to device-latency
 ![](figs/insensitivity.png)
 
 
@@ -184,7 +184,7 @@ optional arguments:
                         in case there's no validation split
   --pad_to_max_length   If passed, pad all samples to `max_length`. Otherwise,
                         dynamic padding is used.
-  --model_name_or_path MODEL_NAME_OR_PATH 
+  --model_name_or_path MODEL_NAME_OR_PATH
                         Path to pretrained model or model identifier from
                         huggingface.co/models.
   --config_name CONFIG_NAME
@@ -450,4 +450,96 @@ optional arguments:
                         if model path is a pretrained mnli checkpoint
   --aug_train_file AUG_TRAIN_FILE
                         path to augmented train file
+```
+### Building Latency and Perplexity Predictors
+
+We build perplexity and latency predictors to aid evolutionary search for faster fitness computation and constraining populations. An example to learn a latency predictor for a hardware is given below
+
+```bash
+cd search
+PYTHONPATH=$PYTHONPATH:../ python predictor.py --input_file_name_or_path latency_data/k80/k80_latencies_seed42_bs128.csv --model_type xgb --output_file_name_or_path k80 --prediction_type latency
+```
+
+### List of arguments for `predictor.py`:
+
+```doc
+usage: predictor.py [-h] --input_file_name_or_path INPUT_FILE_NAME_OR_PATH
+                         --prediction_type PREDICTION_TYPE
+                         [--model_type MODEL_TYPE]
+                         --output_file_name_or_path OUTPUT_FILE_NAME_OR_PATH
+                         [--plot PLOT]
+
+optional arguments:
+  -h, --help            show this help message and exit
+  --input_file_name_or_path INPUT_FILE_NAME_OR_PATH
+                        The file name of the output
+  --prediction_type PREDICTION_TYPE
+                        The name of the dataset to use (via the datasets library).
+  --model_type MODEL_TYPE
+                        The type of cost model used. Options [xgb, lgbm]
+  --output_file_name_or_path OUTPUT_FILE_NAME_OR_PATH
+                        Path to store the learnt model
+  --plot PLOT
+
+```
+
+
+### Evolutionary Search
+
+An example to perform evolutionary search with perplexity constraints of 6 and latency constraints of 500ms is given below. Similarly, parameter constraints can also be provided using the appropriate flags shown in usage.
+
+``` bash
+cd search
+PYTHONPATH=$PYTHONPATH:../ python evolution.py --perplexity_model_file_name_or_path outputs/perplexity_predictor.xgb --latency_model_file_name_or_path ./outputs/latency_predictors/1080Ti_latency_predictor.xgb --latency_constraints 0.5 --perplexity constraints 6 --model_type xgb
+```
+
+### List of arguments for `evolution.py`:
+
+``` doc
+usage: evolution.py [-h] [--perplexity_model_file_name_or_path PERPLEXITY_MODEL_FILE_NAME_OR_PATH]
+                    [--latency_model_file_name_or_path LATENCY_MODEL_FILE_NAME_OR_PATH]
+                    [--task TASK]
+                    [--population_size POPULATION_SIZE]
+                    [--parent_size PARENT_SIZE]
+                    [--mutation_size MUTATION_SIZE]
+                    [--crossover_size CROSSOVER_SIZE]
+                    [--mutation_prob MUTATION_PROB]
+                    [--time_budget TIME_BUDGET]
+                    [--search_space_config SEARCH_SPACE_CONFIG]
+                    [--params_constraints PARAMS_CONSTRAINTS]
+                    [--latency_constraints LATENCY_CONSTRAINTS]
+                    [--perplexity_constraints PERPLEXITY_CONSTRAINTS]
+                    [--model_type MODEL_TYPE]
+                    --device_type DEVICE_TYPE
+optional arguments:
+ -h, --help            show this help message and exit
+  --perplexity_model_file_name_or_path PERPLEXITY_MODEL_FILE_NAME_OR_PATH
+                        Path to load the predictor model
+  --latency_model_file_name_or_path LATENCY_MODEL_FILE_NAME_OR_PATH
+                        Path to load the latency model
+  --task TASK           Task for evo-search
+  --population_size POPULATION_SIZE
+                        Population Size for Evo-Search
+  --parent_size PARENT_SIZE
+                        Parent Size
+  --mutation_size MUTATION_SIZE
+                        Mutation Size
+  --crossover_size CROSSOVER_SIZE
+                        Crossover Size
+  --mutation_prob MUTATION_PROB
+                        Mutation Probability
+  --time_budget TIME_BUDGET
+                        Max Time budget for Evolutionary Search
+  --search_space_config SEARCH_SPACE_CONFIG
+                        Search Space to use
+  --params_constraints PARAMS_CONSTRAINTS
+                        Constraints on Parameters
+  --latency_constraints LATENCY_CONSTRAINTS
+                        Constraints on Latency in seconds
+  --perplexity_constraints PERPLEXITY_CONSTRAINTS
+                        Constraints on Perplexity
+  --model_type MODEL_TYPE
+                        Cost model type
+  --device_type DEVICE_TYPE
+                        Device Type for outputs
 ```
