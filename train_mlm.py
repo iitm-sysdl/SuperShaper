@@ -149,7 +149,8 @@ def validate_subtransformer(
 
     losses = torch.cat(losses)
     losses = losses[:len_eval_dataset]
-    eval_metric = metric.compute()
+    if accelerator.is_main_process
+        eval_metric = metric.compute()
 
     try:
         val_loss = torch.mean(losses)
