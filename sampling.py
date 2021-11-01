@@ -61,7 +61,7 @@ class Sampler:
         self.sampling_rule = sampling_rule
         self.mixing = mixing
         self.magic_sampling = magic_sampling
-
+        self.prev_subtransformer_configs = None
         self.static_keys = static_keys or [
             "sample_hidden_size",
             "sample_num_hidden_layers",
@@ -365,7 +365,6 @@ class Sampler:
         # we store the previous subtransformer configs so that we can do random
         # walks (ie change some parameters on previous configs) instead of uniform
         # sampling
-        self.prev_subtransformer_configs = None
         if randomize:
             random.seed(rand_seed)
 

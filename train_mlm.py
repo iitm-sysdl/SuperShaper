@@ -91,7 +91,7 @@ def validate_subtransformer(
     per_device_eval_batch_size,
     pad_to_max_length,
 ):
-    metric = load_metric("custom_metrics/mlm_accuracy.py",process_id=torch.distributed.get_rank(), num_process=torch.distributed.get_world_size())
+    metric = load_metric("custom_metrics/mlm_accuracy.py")
 
     def get_labels(predictions, references):
         # Transform predictions and references tensos to numpy arrays
