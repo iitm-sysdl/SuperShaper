@@ -677,6 +677,7 @@ def main():
 
     global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
     global_config.rewire = args.rewire
+    global_config.layer_drop_prob = 0.0
 
     tokenizer = AutoTokenizer.from_pretrained(
         "bert-base-cased", use_fast=not args.use_slow_tokenizer

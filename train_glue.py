@@ -87,6 +87,10 @@ task_to_keys = {
     "sst2": ("sentence", None),
     "stsb": ("sentence1", "sentence2"),
     "wnli": ("sentence1", "sentence2"),
+    "imdb": ("sentence", None),
+    "snli": ("premise", "hypothesis"),
+    "scitail": ("premise", "hypothesis"),
+    "elue_sst2": ("sentence", None),
 }
 
 label_list_for_aug_data = {
@@ -98,6 +102,10 @@ label_list_for_aug_data = {
     "qnli": {"entailment": 0, "not_entailment": 1},
     "rte": {"entailment": 0, "not_entailment": 1},
     "wnli": {"not_entailment": 0, "entailment": 1},
+    "imdb": {"0": 0, "1": 1},
+    "scitail": {"0": 0, "1": 1},
+    "snli": {"0": 0, "1": 1, "2": 2},
+    "elue_sst2": {"0": 0, "1": 1},
 }
 
 
@@ -111,6 +119,12 @@ def parse_args():
         default="mrpc",
         help="The name of the glue task to train on.",
         choices=list(task_to_keys.keys()),
+    )
+    parser.add_argument(
+        "--elue_dir",
+        type=str,
+        default=None,
+        help="The directory containing elue_datasets",
     )
     parser.add_argument(
         "--train_file",
@@ -413,12 +427,30 @@ def parse_args():
             "rte",
         ], "mnli pretrained checkpoint can only be used for MRPC, STSB, RTE "
 
+    if args.task_name in ["snli", "scitail", "elue_sst2", "imdb"]:
+        assert (
+            args.elue_dir is not None
+        ), "elue_dir is required for snli, scitail, elue_sst2, imdb"
+        check_path(args.elue_dir)
+
+    if args.elue_dir is not None:
+        check_path(args.elue_dir)
+        assert args.task_name in [
+            "elue_sst2",
+            "imdb",
+            "snli",
+            "scitail",
+        ], "elue_dir can only be used for elue_sst2, imdb"
+
     return args
 
 
 def validate_subtransformer(model, task_name, eval_dataloader, accelerator):
     is_regression = task_name == "stsb"
-    if task_name is not None:
+    is_elue = task_name in ["imdb", "snli", "scitail", "elue_sst2"]
+    if is_elue:
+        metric = load_metric("accuracy")
+    elif task_name is not None:
         metric = load_metric("glue", task_name)
     else:
         metric = load_metric("accuracy")
@@ -519,7 +551,31 @@ def main():
 
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if args.task_name is not None:
+    if args.elue_dir is not None:
+        taskname2folder = {
+            "imdb": "IMDb",
+            "snli": "SNLI",
+            "scitail": "SciTail",
+            "elue_sst2": "SST-2",
+        }
+        task = taskname2folder[args.task_name]
+        data_files = {}
+        train_file = os.path.join(args.elue_dir, task, "train.tsv")
+        eval_file = os.path.join(args.elue_dir, task, "dev.tsv")
+        test_file = os.path.join(args.elue_dir, task, "test.tsv")
+
+        data_files["train"] = train_file
+        data_files["validation"] = eval_file
+
+        raw_datasets = load_dataset(
+            "csv", delimiter="\t", quoting=3, data_files=data_files
+        )
+        all_columns = set(raw_datasets["train"].features.keys())
+        required_columns = set(task_to_keys[args.task_name] + ("label",))
+        unwanted_columns = list(all_columns - required_columns)
+        raw_datasets["train"].remove_columns(unwanted_columns)
+
+    elif args.task_name is not None:
         # Downloading and loading a dataset from the hub.
         raw_datasets = load_dataset("glue", args.task_name)
         if args.debug:
@@ -551,7 +607,7 @@ def main():
         raw_datasets["train"].remove_columns(unwanted_columns)
 
     # Labels
-    if args.aug_train_file is not None:
+    if args.aug_train_file is not None or args.elue_dir is not None:
         is_regression = args.task_name == "stsb"
         if not is_regression:
             label_list = raw_datasets["train"].unique("label")
@@ -591,6 +647,7 @@ def main():
     # )
     global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
     global_config.rewire = args.rewire
+    global_config.layer_drop_prob = 0.0
 
     tokenizer = AutoTokenizer.from_pretrained(
         "bert-base-cased", use_fast=not args.use_slow_tokenizer
@@ -692,10 +749,9 @@ def main():
 
     padding = "max_length" if args.pad_to_max_length else False
     val_col = "validation_matched" if args.task_name == "mnli" else "validation"
-    print(label_to_id)
-    print(aug_label_to_id)
-    print(raw_datasets["train"][:2])
-    print(raw_datasets[val_col][:2])
+
+    logger.info(f"Label2Id:  {label_to_id}")
+
     def preprocess_function(examples, aug_dataset=False):
         # Tokenize the texts
         texts = (
@@ -709,7 +765,7 @@ def main():
 
         if "label" in examples:
             if aug_dataset:
-            #    result["labels"] = [aug_label_to_id[l] for l in examples["label"]]
+                #    result["labels"] = [aug_label_to_id[l] for l in examples["label"]]
                 result["labels"] = examples["label"]
             elif label_to_id is not None:
                 # Map labels to IDs (not necessary for GLUE tasks)
@@ -864,7 +920,11 @@ def main():
         completed_steps = 0
 
     # Get the metric function
-    if args.task_name is not None:
+    is_regression = args.task_name == "stsb"
+    is_elue = args.task_name in ["imdb", "snli", "scitail", "elue_sst2"]
+    if is_elue:
+        metric = load_metric("accuracy")
+    elif args.task_name is not None:
         metric = load_metric("glue", args.task_name)
     else:
         metric = load_metric("accuracy")

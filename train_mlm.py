@@ -552,6 +552,20 @@ def parse_args():
         help=f"perplexity to stop further pretraining",
     )
 
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        required=True,
+        help=f"wandb entity",
+    )
+
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="super-pretraining",
+        help=f"wandb project",
+    )
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -740,8 +754,8 @@ def main():
 
     if accelerator.is_main_process:
         wandb.init(
-            project="super-pretraining",
-            entity="prajdabre",
+            project=args.wandb_project,
+            entity=args.wandb_entity,
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
 
