@@ -401,9 +401,11 @@ class Sampler:
                         np.random.uniform(0, 1, num_hidden_layers)
                         <= self.layer_change_prob
                     )
+                    hidden_sizes = getattr(new_config, "sample_hidden_size")
                     for i in range(num_hidden_layers):
                         if to_change[i]:
-                            new_config[i] = random.choice(sample_hidden_sizes)
+                            hidden_sizes[i] = random.choice(sample_hidden_sizes)
+                            setattr(new_config, "sample_hidden_size", hidden_sizes)
                     configs.append(new_config)
             else:
                 configs = _sample()
