@@ -18,7 +18,7 @@ import datasets
 import torch
 from datasets import load_dataset, load_metric
 from torch.utils.data.dataloader import DataLoader
-from torchinfo import summary 
+from torchinfo import summary
 import transformers
 from transformers import (
     CONFIG_MAPPING,
@@ -327,7 +327,6 @@ def parse_args():
         help=f"The directory path for tokenized C4",
     )
 
-
     args = parser.parse_args()
     args.model_name_or_path = "bert-base-cased"
 
@@ -355,7 +354,6 @@ def parse_args():
         check_path(args.tokenized_c4_dir)
         args.dataset_name = "c4_realnews"
 
-
     return args
 
 
@@ -369,7 +367,7 @@ def main():
     # Initialize the accelerator. We will let the accelerator handle device placement for us in this example.
     accelerator = Accelerator(fp16=args.fp16, kwargs_handlers=[param])
 
-    if accelerator.device == 'cuda':
+    if accelerator.device == "cuda":
         show_args(accelerator, args)
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -471,6 +469,7 @@ def main():
     global_config = get_supertransformer_config(
         args.model_name_or_path, mixing=args.mixing
     )
+    global_config.layer_drop_prob = 0.0
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -614,7 +613,9 @@ def main():
             # max_seq_length.
             def group_texts(examples):
                 # Concatenate all texts.
-                concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
+                concatenated_examples = {
+                    k: sum(examples[k], []) for k in examples.keys()
+                }
                 total_length = len(concatenated_examples[list(examples.keys())[0]])
                 # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
                 # customize this part to your needs.
@@ -783,7 +784,7 @@ def main():
                 subtransformer_latencies.append(eval_metric["exec_time"])
 
         else:  ## This is used when we want to evaluate latency alone
-            #assert args.per_device_eval_batch_size == 1
+            # assert args.per_device_eval_batch_size == 1
             if args.subtransformer_config_path is None:
                 if idx == 0:
                     subtransformer_config = super_config_small
