@@ -75,7 +75,7 @@ from loss import CrossEntropyLossSoft
 from loss import *
 
 from utils import get_overlap_order
-from utils import dropout_layers 
+from utils import dropout_layers
 
 logger = logging.get_logger(__name__)
 
@@ -1458,7 +1458,6 @@ class BertLayer(nn.Module):
         return layer_output
 
 
-
 class BertEncoder(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -1481,7 +1480,7 @@ class BertEncoder(nn.Module):
         # to count the amount of times a layer is dropped
         self.layer_drop_counts = [0] * self.sample_num_hidden_layers
 
-    def set_sample_config(self, config, drop_layers=True, drop_vector = None):
+    def set_sample_config(self, config, drop_layers=True, drop_vector=None):
 
         self.sample_num_hidden_layers = config.sample_num_hidden_layers
         if config.layer_drop_prob > 0:
@@ -1506,9 +1505,12 @@ class BertEncoder(nn.Module):
         # TODO: We can either modify self.layer to just have layers that are not in layerdrop
         # or we could just iterate all layers and set identity layer to True (which we are currently doing)
         # Decide what is best and change this
-        layers_to_drop = drop_vector or dropout_layers(
-            self.sample_num_hidden_layers, config.layer_drop_prob
-        )
+        if drop_vector is not None:
+            layers_to_drop = drop_vector
+        else:
+            layers_to_drop = dropout_layers(
+                self.sample_num_hidden_layers, config.layer_drop_prob
+            )
 
         for i, (drop, layer) in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)
@@ -1984,7 +1986,9 @@ class BertModel(BertPreTrainedModel):
     def set_sample_config(self, config, drop_layers=True, drop_vector=None):
         self.embeddings.set_sample_config(config)
         # drop_layers is needed for layerdrop
-        self.encoder.set_sample_config(config, drop_layers=drop_layers, drop_vector=drop_vector)
+        self.encoder.set_sample_config(
+            config, drop_layers=drop_layers, drop_vector=drop_vector
+        )
         if self.pooler is not None:
             self.pooler.set_sample_config(config)
 
@@ -2468,7 +2472,9 @@ class BertForMaskedLM(BertPreTrainedModel):
 
     def set_sample_config(self, config, drop_layers=True, drop_vector=None):
         # pass drop_layers flag to bertmodel for layerdrop
-        self.bert.set_sample_config(config, drop_layers=drop_layers, drop_vector=drop_vector)
+        self.bert.set_sample_config(
+            config, drop_layers=drop_layers, drop_vector=drop_vector
+        )
         self.cls.set_sample_config(config)
 
     def get_active_subnet(self, config):

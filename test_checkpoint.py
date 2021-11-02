@@ -327,6 +327,12 @@ def parse_args():
         default=None,
         help=f"The directory path for tokenized C4",
     )
+    parser.add_argument(
+        "--layer_drop_prob",
+        default=0.0,
+        type=float,
+        help="Probability to drop layers",
+    )
 
     args = parser.parse_args()
     args.model_name_or_path = "bert-base-cased"
@@ -470,7 +476,10 @@ def main():
     global_config = get_supertransformer_config(
         args.model_name_or_path, mixing=args.mixing
     )
-    global_config.layer_drop_prob = 0.0
+    global_config.layer_drop_prob = args.layer_drop_prob
+    # track the layers to drop with layerdrop
+    # this is needed for predictor later
+    global_config.depth_features = None
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -537,14 +546,6 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
-
-    ## Add layerdrop function ## 
-    to_drop = dropout_layers(
-            global_config.sample_num_hidden_layers, global_config.layer_drop_prob
-        )
-
-    global_config.depth_features = to_drop
-
 
     # maybe not required but doing it just to be sure
     model.set_sample_config(global_config)
@@ -681,9 +682,10 @@ def main():
         # we load the model before preparing
         # see this for details: https://github.com/huggingface/accelerate/issues/95
         # model.from_pretrained(args.checkpoint_dir)
-        model.load_state_dict(
-            torch.load(os.path.join(args.checkpoint_dir, "pytorch_model.bin"))
-        )
+        if args.checkpoint_dir is not None:
+            model.load_state_dict(
+                torch.load(os.path.join(args.checkpoint_dir, "pytorch_model.bin"))
+            )
 
         # Prepare everything with our `accelerator`.
         model, eval_dataloader = accelerator.prepare(model, eval_dataloader)
@@ -698,7 +700,7 @@ def main():
         logger.info(f"  Num examples = {len(eval_dataset)}")
 
         # change to supertransformer config
-        model.set_sample_config(global_config)
+        model.set_sample_config(global_config, drop_vector=global_config.depth_features)
 
         eval_metric = validate_subtransformer(
             model,
@@ -755,6 +757,14 @@ def main():
     for idx, _seed in enumerate(tqdm(random_seeds)):
         if args.subtransformer_config_path is not None:
             subtransformer_config = global_config
+            if args.layer_drop_prob > 0:
+                ## Add layerdrop function ##
+                to_drop = dropout_layers(
+                    subtransformer_config.sample_num_hidden_layers, args.layer_drop_prob
+                )
+
+                subtransformer_config.depth_features = to_drop
+
         else:
             config_dict = sampler.sample_subtransformer(
                 randomize=True,
@@ -763,8 +773,25 @@ def main():
             super_config_small = config_dict["smallest_subtransformer"]
             subtransformer_config = config_dict["random_subtransformers"][0]
 
+            if args.layer_drop_prob > 0:
+                ## Add layerdrop function ##
+                to_drop = dropout_layers(
+                    subtransformer_config.sample_num_hidden_layers, args.layer_drop_prob
+                )
+
+                subtransformer_config.depth_features = to_drop
+
+                to_drop = dropout_layers(
+                    super_config_small.sample_num_hidden_layers, args.layer_drop_prob
+                )
+
+                super_config_small.depth_features = to_drop
+
         if not args.only_latency:
-            model.set_sample_config(subtransformer_config)
+            model.set_sample_config(
+                subtransformer_config,
+                drop_vector=subtransformer_config.depth_features,
+            )
 
             if args.evaluate_latency:
                 model = model.get_active_subnet(subtransformer_config)
@@ -787,6 +814,11 @@ def main():
             subtransformer_peplexities.append(perplexity)
             subtransformer_accuracies.append(val_accuracy)
             subtransformer_losses.append(val_loss.item())
+            if subtransformer_config.depth_features is not None:
+                subtransformer_config.depth_features = (
+                    subtransformer_config.depth_features.cpu().numpy().tolist()
+                )
+                # print(subtransformer_config)
             subtransformer_configs.append(subtransformer_config)
 
             if args.evaluate_latency:
@@ -803,7 +835,9 @@ def main():
             model = custom_bert.BertForMaskedLM.from_pretrained(
                 "bert-base-cased", config=subtransformer_config
             )
-            model.set_sample_config(subtransformer_config)
+            model.set_sample_config(
+                subtransformer_config, drop_vector=subtransformer_config.depth_features
+            )
             model = model.get_active_subnet(subtransformer_config)
 
             model.to(accelerator.device)
@@ -834,8 +868,13 @@ def main():
                     )  ## Measured in seconds
 
             execution_time = mean(exec_time)
-            print(execution_time)
+            # print(execution_time)
             subtransformer_latencies.append(execution_time)
+            if subtransformer_config.depth_features is not None:
+                subtransformer_config.depth_features = (
+                    subtransformer_config.depth_features.cpu().numpy().tolist()
+                )
+                # print(subtransformer_config)
             subtransformer_configs.append(subtransformer_config)
 
     if not args.only_latency:
@@ -857,7 +896,12 @@ def main():
                 _dict["latency"] = subtransformer_latencies
 
             df = pd.DataFrame(_dict)
-            csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
+            if args.checkpoint_dir is not None:
+                csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
+            else:
+                csv_path = os.path.join(
+                    f"subtransformer_{args.model_name_or_path}_perplexity_stats.csv"
+                )
             df.to_csv(csv_path, index=False)
     else:
         logger.info(
