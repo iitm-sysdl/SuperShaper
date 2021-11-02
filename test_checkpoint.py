@@ -13,6 +13,7 @@ import time
 from statistics import mean
 import pandas as pd
 
+from utils import dropout_layers
 import numpy as np
 import datasets
 import torch
@@ -536,6 +537,14 @@ def main():
 
     model.resize_token_embeddings(len(tokenizer))
     logger.info(summary(model, depth=4, verbose=0))
+
+    ## Add layerdrop function ## 
+    to_drop = dropout_layers(
+            global_config.sample_num_hidden_layers, global_config.layer_drop_prob
+        )
+
+    global_config.depth_features = to_drop
+
 
     # maybe not required but doing it just to be sure
     model.set_sample_config(global_config)

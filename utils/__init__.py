@@ -188,6 +188,21 @@ def read_json(path):
     with open(path, "r") as f:
         return json.load(f)
 
+def dropout_layers(num_layers, layer_drop_prob):
+    if layer_drop_prob == 0:
+        return torch.zeros(num_layers)
+
+    to_drop = torch.zeros(num_layers).uniform_(0.0, 1.0) <= layer_drop_prob
+
+    # make sure at least one layer makes it
+    if all(to_drop):
+        rand_index = randrange(num_layers)
+        to_drop[rand_index] = False
+
+    # layers = [layer for (layer, drop) in zip(layers, to_drop) if not drop]
+    return to_drop
+
+
 
 # taken from https://github.com/pytorch/pytorch/issues/3025#issuecomment-392601780
 def get_overlap_order(ar1, ar2):
