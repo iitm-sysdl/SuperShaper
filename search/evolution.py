@@ -101,8 +101,8 @@ class EvolSearch:
         ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
         gene_len = (len(space.keys()) - 1) * num_hidden_layers + 1
 
-        if self.layerdrop:
-            gene_len += num_hidden_layers # We have num_hidden_layers more one-hot features now for depth
+        #if self.layerdrop:
+        #    gene_len += num_hidden_layers # We have num_hidden_layers more one-hot features now for depth
 
         self.gene_len = gene_len
         
