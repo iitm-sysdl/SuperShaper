@@ -34,7 +34,7 @@ def convert_to_dict(string):
     return BertConfig(**_dict)
 
 
-def generate_dataset(features_file, pred_type='perplexity'):
+def generate_dataset(features_file, pred_type='perplexity', layerdrop=False):
     df = pd.read_csv(features_file) 
     df["config"] = df["config"].map(convert_to_dict)
 
@@ -48,6 +48,9 @@ def generate_dataset(features_file, pred_type='perplexity'):
         pred_type: [],
 
     }
+
+    if layerdrop:
+        feature_dict["depth_features"] = []
     
     for index, row in df.iterrows():
         cfg = row["config"]
@@ -72,16 +75,20 @@ def generate_dataset(features_file, pred_type='perplexity'):
     return pd.DataFrame.from_dict(feature_dict)
 
 def row_mapper(row):
-    return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"], row["params"]])
+    if 'depth_features' in row.keys():
+        return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"], row["depth_features"], row["params"]])
+    else:
+        return np.hstack([row["sample_hidden_size"], row["sample_num_attention_heads"], row["sample_intermediate_size"], row["sample_num_hidden_layers"], row["params"]])
 
 
 class Predictor():
-    def __init__(self, dataset_path=None, ckpt=None, pred_type='latency', model_type='xgb'):
+    def __init__(self, dataset_path=None, ckpt=None, pred_type='latency', model_type='xgb', layerdrop=False):
         self.pred_type = pred_type
         self.ckpt = ckpt
         self.dataset_path = dataset_path
         self.model_type = model_type
         self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers", "params"]
+        self.layerdrop = layerdrop
 
         if model_type == 'lgbm': 
             self.model = lgbm.Booster() 
@@ -226,6 +233,12 @@ def parse_args():
         default=0,
     )
 
+    parser.add_argument(
+        "--layer_drop",
+        type=int,
+        default=0,
+    )
+
 
     args = parser.parse_args()
     
@@ -235,8 +248,8 @@ def parse_args():
  
 
 def learn_predictor(args):
-    df = generate_dataset(args.input_file_name_or_path, pred_type=args.prediction_type)
-    predictor = Predictor(pred_type=args.prediction_type, model_type=args.model_type)
+    df = generate_dataset(args.input_file_name_or_path, pred_type=args.prediction_type, layerdrop = args.layer_drop)
+    predictor = Predictor(pred_type=args.prediction_type, model_type=args.model_type, layerdrop= args.layer_drop)
     predictor.read_dataset(df)
     predictor.train(plot=args.plot)
     predictor.store_ckpt(args.output_file_name_or_path+'.'+args.model_type)
