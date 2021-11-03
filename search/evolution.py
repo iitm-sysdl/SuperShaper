@@ -49,6 +49,7 @@ class EvolSearch:
         ckpt_path = None, 
         accelerator = None, 
         device_type = None,
+        layerdrop = False,
     ):
 
         self.search_space_config = search_space_config
@@ -61,12 +62,16 @@ class EvolSearch:
         self.time_budget = time_budget
         self.population_size = population_size
 
+        self.layerdrop = layerdrop
         self.parent_size = parent_size
         self.mutation_size = mutation_size
         self.crossover_size = crossover_size
         self.device_type = device_type
         self.mutation_prob = mutation_prob
         self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers"]
+        
+        if self.layerdrop:  
+            self.keys += ["depth_features"]
 
     def get_search_space(self):
         space = {
@@ -87,11 +92,18 @@ class EvolSearch:
         elif self.search_space_config != 'bert-bottleneck' and self.search_space_config != 'attention':
             raise NotImplementedError
 
+        if self.layerdrop:
+            space["depth_features"] = [0,1]
+
         gene_len = 0
         num_hidden_layers = space["sample_num_hidden_layers"][0]
 
         ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
         gene_len = (len(space.keys()) - 1) * num_hidden_layers + 1
+
+        if self.layerdrop:
+            gene_len += num_hidden_layers # We have num_hidden_layers more one-hot features now for depth
+
         self.gene_len = gene_len
         
         self.gene_choice = []
@@ -212,6 +224,9 @@ class EvolSearch:
             "sample_intermediate_size": random.choices(space["sample_intermediate_size"], k=num_hidden_layers),
             "sample_num_hidden_layers": random.choices(space["sample_num_hidden_layers"], k=1),
         }
+
+        if self.layerdrop:
+            tmp_dict["depth_features"] = random.choices(space["depth_features"], k=num_hidden_layers)
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
