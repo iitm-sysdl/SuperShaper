@@ -11249,7 +11249,6 @@ config,latency
   ""vocab_size"": 28996
 }
 ",9.765636363636903
-config,latency
 "BertConfig {
   ""_name_or_path"": ""bert-base-cased"",
   ""architectures"": [
@@ -22500,7 +22499,6 @@ config,latency
   ""vocab_size"": 28996
 }
 ",9.731454545454737
-config,latency
 "BertConfig {
   ""_name_or_path"": ""bert-base-cased"",
   ""architectures"": [
@@ -52501,7 +52499,6 @@ config,latency
   ""vocab_size"": 28996
 }
 ",8.213000000000068
-config,latency
 "BertConfig {
   ""_name_or_path"": ""bert-base-cased"",
   ""architectures"": [
@@ -63752,7 +63749,6 @@ config,latency
   ""vocab_size"": 28996
 }
 ",7.3977272727272725
-config,latency
 "BertConfig {
   ""_name_or_path"": ""bert-base-cased"",
   ""architectures"": [
