@@ -456,7 +456,10 @@ def show_random_elements(dataset, accelerator, num_examples=10):
 
 
 def get_supertransformer_config(
-    model_name_or_path="bert-base-cased", mixing="attention"
+    model_name_or_path="bert-base-cased",
+    mixing="attention",
+    additional_random_softmaxing=False,
+    random_layer_selection_probability=0.1,
 ):
     config = AutoConfig.from_pretrained(model_name_or_path)
 
@@ -501,6 +504,8 @@ def get_supertransformer_config(
         config.key_query_shared_bottleneck = False
 
     config.mixing = mixing
+    config.additional_random_softmaxing = additional_random_softmaxing
+    config.random_layer_selection_probability = random_layer_selection_probability
     config.rewire = False
     return config
 

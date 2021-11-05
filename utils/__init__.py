@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.nn.modules.loss import _Loss
 from collections import OrderedDict
 import json
+from random import randrange
 
 import math
 import functools
@@ -87,20 +88,23 @@ def calculate_params(
     emb_dims,
     num_attention_heads,
     d_ff_list,
-    num_enc,
-    vocab_size=28996,
+    num_enc,  # num hidden layers
+    vocab_size=28996,  # for bert base cased its 28,996
     add_output_emb_layer=True,
     add_embs_dim=True,
     bottleneck=True,
     max_emb_dim=768,
     merged_bottleneck=False,
+    depth_features=None,  # for handling cases where layers are dropped
 ):
 
     if not bottleneck:
+        # if there are no bottleneck layers, we cant have varying emb sizes
         assert not isinstance(emb_dims, list)
         emb_dims = [emb_dims] * num_enc
         max_emb_dim = emb_dims[-1]
-
+    # (vocab_size + positional_embeddings + token_type_embeddings) * max_emb_dim +
+    # layernorm weights and bias (2 * max_emb_dim)
     emb_params = (vocab_size + 512 + 2) * max_emb_dim + 2 * max_emb_dim
 
     # if add_embs_dim:
@@ -112,9 +116,16 @@ def calculate_params(
     #     add_output_emb_layer = False
 
     assert len(d_ff_list) == num_enc
+    if depth_features is not None:
+        assert sum(depth_features) != num_enc, "Cannot drop all layers"
     per_layer_params = 0
     prev_bottleneck_dim = max_emb_dim
-    for d_ff, emb_dim in zip(d_ff_list, emb_dims):
+    for layer_idx, (d_ff, emb_dim) in enumerate(zip(d_ff_list, emb_dims)):
+
+        if depth_features is not None:
+            # if layer is dropped, we dont add the params
+            if depth_features[layer_idx] == 1:
+                continue
         # weight and bias in layernorm
         layer_norm_params = 2 * emb_dim
 
@@ -127,6 +138,9 @@ def calculate_params(
             + (d_ff + emb_dim)  # intermediate and bertoutput bias terms
             + 2 * layer_norm_params  # 2 layernorms in a transformer block
         )
+        # if training with bottleneck, we can compose layers to reduce parameter size
+        # for instance, output bottleneck of layer1 -> (128, 768) and input bottleneck of layer2 -> (768, 256)
+        # we can then compose these two bottlenecks to one (128, 256)
         if merged_bottleneck:
             # Assuming we have 3 layers with these hidden sizes:
             # 120, 240, 360
@@ -163,6 +177,11 @@ def calculate_params_from_config(
 ):
     add_embs_dim = scaling_laws != True
 
+    depth_features = None
+    if hasattr(config, "depth_features"):
+        if config.depth_features != []:
+            depth_features = config.depth_features
+
     return calculate_params(
         config.sample_hidden_size,
         config.sample_num_attention_heads,
@@ -173,6 +192,7 @@ def calculate_params_from_config(
         add_embs_dim=add_embs_dim,
         bottleneck=(config.mixing == "bert-bottleneck"),
         merged_bottleneck=merged_bottleneck,
+        depth_features=depth_features,
     )
 
 
@@ -188,6 +208,7 @@ def read_json(path):
     with open(path, "r") as f:
         return json.load(f)
 
+
 def dropout_layers(num_layers, layer_drop_prob):
     if layer_drop_prob == 0:
         return torch.zeros(num_layers)
@@ -201,7 +222,6 @@ def dropout_layers(num_layers, layer_drop_prob):
 
     # layers = [layer for (layer, drop) in zip(layers, to_drop) if not drop]
     return to_drop
-
 
 
 # taken from https://github.com/pytorch/pytorch/issues/3025#issuecomment-392601780

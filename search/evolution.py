@@ -1,6 +1,11 @@
+import os, sys
+
+dir_path = os.path.dirname(os.path.realpath(__file__))
+parent_dir_path = os.path.abspath(os.path.join(dir_path, os.pardir))
+sys.path.insert(0, parent_dir_path)
+
 import random
 from tqdm import tqdm
-import os
 import numpy as np
 import matplotlib.pyplot as plt
 import random
@@ -33,23 +38,23 @@ mode = 0o777
 class EvolSearch:
     def __init__(
         self,
-        population_size, 
+        population_size,
         parent_size,
-        mutation_size, 
-        crossover_size, 
+        mutation_size,
+        crossover_size,
         task,
-        mutation_prob, 
+        mutation_prob,
         time_budget,
         search_space_config,
         bert_config=None,
         constraints_set=None,
-        latency_predictor = None,
-        perplexity_predictor = None,
-        fitness_set = None,
-        ckpt_path = None, 
-        accelerator = None, 
-        device_type = None,
-        layerdrop = False,
+        latency_predictor=None,
+        perplexity_predictor=None,
+        fitness_set=None,
+        ckpt_path=None,
+        accelerator=None,
+        device_type=None,
+        layerdrop=False,
     ):
 
         self.search_space_config = search_space_config
@@ -68,32 +73,41 @@ class EvolSearch:
         self.crossover_size = crossover_size
         self.device_type = device_type
         self.mutation_prob = mutation_prob
-        self.keys = ["sample_hidden_size", "sample_num_attention_heads", "sample_intermediate_size", "sample_num_hidden_layers"]
-        
-        if self.layerdrop:  
+        self.keys = [
+            "sample_hidden_size",
+            "sample_num_attention_heads",
+            "sample_intermediate_size",
+        ]
+
+        if self.layerdrop:
             self.keys += ["depth_features"]
+
+        self.keys += ["sample_num_hidden_layers"]
 
     def get_search_space(self):
         space = {
             "sample_hidden_size": [120, 240, 360, 480, 540, 600, 768],
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
-            #"sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers+1, 2))
-            "sample_num_hidden_layers": [12]
-        } 
+            # "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers+1, 2))
+            "sample_num_hidden_layers": [12],
+        }
 
-        if self.search_space_config == 'bert-bottleneck':
-            space["sample_hidden_size"] = [120, 240, 360, 480, 540, 600, 768] 
-            #space["sample_num_attention_heads"] = [6,8,12]
+        if self.search_space_config == "bert-bottleneck":
+            space["sample_hidden_size"] = [120, 240, 360, 480, 540, 600, 768]
+            # space["sample_num_attention_heads"] = [6,8,12]
             space["sample_num_attention_heads"] = [12]
-            #space["sample_intermediate_size"] = [1024,2048,3072]
+            # space["sample_intermediate_size"] = [1024,2048,3072]
             space["sample_intermediate_size"] = [3072]
             space["sample_num_hidden_layers"] = [12]
-        elif self.search_space_config != 'bert-bottleneck' and self.search_space_config != 'attention':
+        elif (
+            self.search_space_config != "bert-bottleneck"
+            and self.search_space_config != "attention"
+        ):
             raise NotImplementedError
 
         if self.layerdrop:
-            space["depth_features"] = [0,1]
+            space["depth_features"] = [0, 1]
 
         gene_len = 0
         num_hidden_layers = space["sample_num_hidden_layers"][0]
@@ -101,11 +115,11 @@ class EvolSearch:
         ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
         gene_len = (len(space.keys()) - 1) * num_hidden_layers + 1
 
-        #if self.layerdrop:
+        # if self.layerdrop:
         #    gene_len += num_hidden_layers # We have num_hidden_layers more one-hot features now for depth
 
         self.gene_len = gene_len
-        
+
         self.gene_choice = []
         for key in self.keys:
             if key == "sample_num_hidden_layers":
@@ -113,15 +127,16 @@ class EvolSearch:
 
             for i in range(num_hidden_layers):
                 self.gene_choice.append(space[key])
-                
-        
+
         self.gene_choice.append(space["sample_num_hidden_layers"])
-            
+        # print("Gene choices: ", self.gene_choice)
 
         return space
-    
-    def fitness_fn(self, feature): ## This is just temporary, we can remove this for a a more general implementation 
-        feature = feature or self.features 
+
+    def fitness_fn(
+        self, feature
+    ):  ## This is just temporary, we can remove this for a a more general implementation
+        feature = feature or self.features
 
         feature = np.array(feature)
         feature = np.reshape(feature, (1, feature.shape[0]))
@@ -129,7 +144,6 @@ class EvolSearch:
         score = self.perplexity_predictor.predict(feature)
 
         return score[0]
-
 
     def arch2feature(self, config=None):
         config = config or self.config
@@ -149,84 +163,116 @@ class EvolSearch:
 
     def feature2arch(self, feature_in):
         features = feature_in or self.features
-        feature_cnt = 0 
+        feature_cnt = 0
         num_hidden_layers = getattr(self.config, "sample_num_hidden_layers")
 
         arch_config = copy.deepcopy(self.config)
 
         ## Change config here
         for key in self.keys:
-            if 'sample_num_hidden_layers' in key:
+            if "sample_num_hidden_layers" in key:
                 continue
 
             arch_conf_lst = []
             for i in range(num_hidden_layers):
                 arch_conf_lst.append(features[feature_cnt])
                 feature_cnt += 1
-            
+
             setattr(arch_config, key, arch_conf_lst)
 
         return arch_config
 
-    def satisfy_constraints(self, feature_in): 
+    def satisfy_constraints(self, feature_in):
         satisfy = None
         feature = feature_in or self.features
-        
         feature = np.array(feature)
-        feature = np.reshape(feature, (1,feature.shape[0])) ## Weird but seems necessary
+        feature = np.reshape(
+            feature, (1, feature.shape[0])
+        )  ## Weird but seems necessary
 
         ## This simple composition of multiple-objectives is a very slow process -> TODO: Use something like NSGA-II
         for constraints in self.constraints_set:
-            if 'latency' in constraints: 
+            if "latency" in constraints:
                 assert self.latency_predictor is not None
-                params = calculate_params_from_config(self.feature2arch(list(feature[0])))
+                params = calculate_params_from_config(
+                    self.feature2arch(list(feature[0]))
+                )
                 tmp_lst = list(feature[0])
                 tmp_lst.append(params)
                 feature = np.array(tmp_lst)
                 feature = np.reshape(feature, (1, feature.shape[0]))
                 lat = self.latency_predictor.predict(feature)
-                if lat <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
+                if (
+                    lat <= self.constraints_set[constraints]
+                    or self.constraints_set[constraints] == -1
+                ):
                     satisfy = True
                 else:
                     return False
-            elif 'perplexity' in constraints: 
+            elif "perplexity" in constraints:
                 assert self.perplexity_predictor is not None
 
                 perp = self.perplexity_predictor.predict(feature)
-                if perp <= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
+                if (
+                    perp <= self.constraints_set[constraints]
+                    or self.constraints_set[constraints] == -1
+                ):
                     satisfy = True
                 else:
                     return False
-            elif 'params' in constraints:
-                params = calculate_params_from_config(self.feature2arch(list(feature[0])))
-                if params >= self.constraints_set[constraints] or self.constraints_set[constraints] == -1:
+            elif "params" in constraints:
+                params = calculate_params_from_config(
+                    self.feature2arch(list(feature[0]))
+                )
+                if (
+                    params >= self.constraints_set[constraints]
+                    or self.constraints_set[constraints] == -1
+                ):
                     satisfy = True
                 else:
                     return False
-            elif 'none' in constraints: ## Trivially True
+            elif "none" in constraints:  ## Trivially True
                 return True
 
         if satisfy is None:
             raise NotImplementedError
 
         return satisfy
-    
+
     def random_sample_arch(self, config=None):
         space = self.get_search_space()
-        
-        config = config or copy.deepcopy(self.config) 
+
+        config = config or copy.deepcopy(self.config)
 
         num_hidden_layers = space["sample_num_hidden_layers"][0]
-        
+
         tmp_dict = {
-            "sample_hidden_size": random.choices(space["sample_hidden_size"], k=num_hidden_layers),
-            "sample_num_attention_heads": random.choices(space["sample_num_attention_heads"], k=num_hidden_layers),
-            "sample_intermediate_size": random.choices(space["sample_intermediate_size"], k=num_hidden_layers),
-            "sample_num_hidden_layers": random.choices(space["sample_num_hidden_layers"], k=1),
+            "sample_hidden_size": random.choices(
+                space["sample_hidden_size"], k=num_hidden_layers
+            ),
+            "sample_num_attention_heads": random.choices(
+                space["sample_num_attention_heads"], k=num_hidden_layers
+            ),
+            "sample_intermediate_size": random.choices(
+                space["sample_intermediate_size"], k=num_hidden_layers
+            ),
+            "sample_num_hidden_layers": random.choices(
+                space["sample_num_hidden_layers"], k=1
+            ),
         }
 
         if self.layerdrop:
-            tmp_dict["depth_features"] = random.choices(space["depth_features"], k=num_hidden_layers)
+            dropping_all_layers = True
+            while dropping_all_layers:
+                depth_features = random.choices(
+                    space["depth_features"], k=num_hidden_layers
+                )
+                if sum(depth_features) == num_hidden_layers:
+                    continue
+                else:
+                    dropping_all_layers = False
+
+            tmp_dict["depth_features"] = depth_features
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
@@ -238,17 +284,17 @@ class EvolSearch:
         cnt = 0
         total = 0
         print(f"Randomly sampling architectures")
-        
-        space = self.get_search_space()
 
         while cnt < self.population_size:
             arch = self.random_sample_arch()
+            # print(arch)
             candidate_gene = self.arch2feature(arch)
+            # print(candidate_gene)
 
             if self.satisfy_constraints(candidate_gene):
                 population.append(candidate_gene)
                 cnt += 1
-                print("Adding gene no. %d to the population"%(cnt))
+                print("Adding gene no. %d to the population" % (cnt))
             total += 1
         print(
             f"Only {cnt} out of {total} total generated samples were under given constraints."
@@ -261,10 +307,10 @@ class EvolSearch:
         eval_archs = []
         fitness_fn = self.fitness_fn
 
-        for p in population: 
-            #score = fitness_fn(self.feature2arch(p))
+        for p in population:
+            # score = fitness_fn(self.feature2arch(p))
             score = fitness_fn(p)
-            #score = self.tester.get_fitness(self.feature2arch(p), fitness_fn)
+            # score = self.tester.get_fitness(self.feature2arch(p), fitness_fn)
             eval_archs.append(score)
 
         return eval_archs
@@ -279,10 +325,11 @@ class EvolSearch:
 
         return crossedover_gene
 
-
     def mutate(self, feature_in):
         feature = feature_in or self.features
-        search_space = self.get_search_space() # Just to ensure self.gene_choice is updated 
+        search_space = (
+            self.get_search_space()
+        )  # Just to ensure self.gene_choice is updated
 
         mutated_gene = []
         for i in range(self.gene_len):
@@ -298,12 +345,12 @@ class EvolSearch:
     def run_evo_search(self):
         population = self.random_sample()
 
-        #directory = 'perpx_'+str(self.constraints_set['perplexity'])
+        # directory = 'perpx_'+str(self.constraints_set['perplexity'])
         assert self.device_type is not None
-        directory = self.device_type + '_'
+        directory = self.device_type + "_"
         for keys in self.constraints_set.keys():
-            directory += keys+str(self.constraints_set[keys])+'_'
-        
+            directory += keys + str(self.constraints_set[keys]) + "_"
+
         path = os.path.join(parent_dir, directory)
         os.makedirs(path, mode, exist_ok=True)
 
@@ -319,31 +366,35 @@ class EvolSearch:
                 if f not in new_f:
                     new_f.append(f)
                     new_population.append(population[cnt])
-                cnt+=1
-                    
+                cnt += 1
+
             fitness_scores = new_f
             population = new_population
 
-            
-            #sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
+            # sorted_ind = np.array(fitness_scores).argsort()[::-1][: self.parent_size]
             sorted_ind = np.array(fitness_scores).argsort()[0::][: self.parent_size]
 
             fitness_scores_top = np.array(fitness_scores)[sorted_ind]
 
             self.best_config = self.feature2arch(population[sorted_ind[0].item()])
-            #print(f"| Config for highest accuracy model: {self.best_config}")
+            # print(f"| Config for highest accuracy model: {self.best_config}")
 
             for j in range(self.parent_size):
-                self.best_config_lst.append(self.feature2arch(population[sorted_ind[j].item()]))
-            
-            df = pd.DataFrame(list(zip(self.best_config_lst, fitness_scores_top)), columns=['configs', 'predicted_perpx'])
-           
-            df.to_csv(path+'/best_configs_iter_'+str(i)+'.csv', index=False)
-    
-            parents_next_iter  =  [population[m.item()] for m in sorted_ind]
-            parents_next_score =  [fitness_scores[m.item()] for m in sorted_ind]
+                self.best_config_lst.append(
+                    self.feature2arch(population[sorted_ind[j].item()])
+                )
 
-            mutations = [] 
+            df = pd.DataFrame(
+                list(zip(self.best_config_lst, fitness_scores_top)),
+                columns=["configs", "predicted_perpx"],
+            )
+
+            df.to_csv(path + "/best_configs_iter_" + str(i) + ".csv", index=False)
+
+            parents_next_iter = [population[m.item()] for m in sorted_ind]
+            parents_next_score = [fitness_scores[m.item()] for m in sorted_ind]
+
+            mutations = []
             k = 0
             while k < self.mutation_size:
                 mutated_gene = self.mutate(random.choices(parents_next_iter)[0])
@@ -351,9 +402,8 @@ class EvolSearch:
                     mutations.append(mutated_gene)
                     k += 1
 
-            
             crossovers = []
-            k=0
+            k = 0
             while k < self.crossover_size:
                 crossedover_gene = self.crossover(random.sample(parents_next_iter, 2))
                 if self.satisfy_constraints(crossedover_gene):
@@ -363,6 +413,7 @@ class EvolSearch:
             population = parents_next_iter + mutations + crossovers
 
         return self.best_config
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -383,7 +434,7 @@ def parse_args():
     parser.add_argument(
         "--task",
         type=str,
-        default='mlm',
+        default="mlm",
         help="Task for evo-search",
     )
     parser.add_argument(
@@ -425,7 +476,7 @@ def parse_args():
     parser.add_argument(
         "--search_space_config",
         type=str,
-        default='bert-bottleneck',
+        default="bert-bottleneck",
         help="Search Space to use",
     )
     parser.add_argument(
@@ -449,24 +500,24 @@ def parse_args():
     parser.add_argument(
         "--model_type",
         type=str,
-        default='xgb',
+        default="xgb",
         help="Cost model type",
     )
     parser.add_argument(
-        "--device_type",
-        type=str,
-        required=True,
-        help='Device Type for outputs'
+        "--device_type", type=str, required=True, help="Device Type for outputs"
+    )
+    parser.add_argument(
+        "--layer_drop",
+        type=int,
+        default=0,
     )
 
     args = parser.parse_args()
-    
+
     return args
 
 
-
-
-def search(args): 
+def search(args):
     population_size = args.population_size
     parent_size = args.parent_size
     mutation_size = args.mutation_size
@@ -476,68 +527,81 @@ def search(args):
     time_budget = args.time_budget
     search_space_config = args.search_space_config
 
-    bert_config=get_supertransformer_config("bert-base-cased", mixing=search_space_config)
+    bert_config = get_supertransformer_config(
+        "bert-base-cased", mixing=search_space_config
+    )
 
-    fitness_set = None,
-    ckpt_path = None, 
-    accelerator = None,    
+    fitness_set = (None,)
+    ckpt_path = (None,)
+    accelerator = (None,)
     latency_predictor = None
-    
+
     if args.latency_constraints is not None:
         assert args.latency_model_file_name_or_path is not None
-        latency_predictor = Predictor(ckpt=args.latency_model_file_name_or_path, pred_type='latency', model_type=args.model_type)
+        latency_predictor = Predictor(
+            ckpt=args.latency_model_file_name_or_path,
+            pred_type="latency",
+            model_type=args.model_type,
+        )
         latency_predictor.load_ckpt()
 
     if args.perplexity_constraints is not None:
-        perplexity_predictor = Predictor(ckpt=args.perplexity_model_file_name_or_path, pred_type='perplexity', model_type=args.model_type)
+        perplexity_predictor = Predictor(
+            ckpt=args.perplexity_model_file_name_or_path,
+            pred_type="perplexity",
+            model_type=args.model_type,
+        )
         perplexity_predictor.load_ckpt()
- 
-    #constraints_set = { 'perplexity' : 5.65 } 
+
+    # constraints_set = { 'perplexity' : 5.65 }
     constraints_set = {}
     if args.params_constraints is not None:
-        constraints_set['params'] = float(args.params_constraints)
+        constraints_set["params"] = float(args.params_constraints)
 
     if args.perplexity_constraints is not None:
-        constraints_set['perplexity'] = float(args.perplexity_constraints)
+        constraints_set["perplexity"] = float(args.perplexity_constraints)
 
     if args.latency_constraints is not None:
-        constraints_set['latency'] = float(args.latency_constraints)
-   
-    evolution = EvolSearch(population_size, 
-                           parent_size, 
-                           mutation_size, 
-                           crossover_size, 
-                           task, 
-                           mutation_prob, 
-                           time_budget, 
-                           search_space_config, 
-                           bert_config,
-                           constraints_set = constraints_set, 
-                           perplexity_predictor = perplexity_predictor,
-                           latency_predictor = latency_predictor,
-                           device_type = args.device_type
-                           )
+        constraints_set["latency"] = float(args.latency_constraints)
+
+    evolution = EvolSearch(
+        population_size,
+        parent_size,
+        mutation_size,
+        crossover_size,
+        task,
+        mutation_prob,
+        time_budget,
+        search_space_config,
+        bert_config,
+        constraints_set=constraints_set,
+        perplexity_predictor=perplexity_predictor,
+        latency_predictor=latency_predictor,
+        device_type=args.device_type,
+        layerdrop=args.layer_drop,
+    )
 
     print(evolution.run_evo_search())
 
-def test():
-    ### Testing Get Search Space ### 
+
+def test(evolution):
+    ### Testing Get Search Space ###
     space = evolution.get_search_space()
     print(space)
     print(evolution.gene_len)
-    
+
     print("--------------------------------------")
 
-    ### Testing arch2feature and feature2arch ### 
+    ### Testing arch2feature and feature2arch ###
     gene = evolution.arch2feature(bert_config)
     print(gene)
-    
+
     print("--------------------------------------")
-        
+
     gene[0] = gene[1] = gene[-2] = gene[-3] = 256
     feature = evolution.feature2arch(gene)
     print(feature)
-    
+
     print("--------------------------------------")
 
     ### Testing Mutation and Crossover ###
@@ -553,10 +617,9 @@ def test():
 
     print("--------------------------------------")
 
-    ## Testing Random Sampling and Evolutionary Search ### 
+    ## Testing Random Sampling and Evolutionary Search ###
     sampled_population = evolution.random_sample()
     print(sampled_population)
-
 
 
 if __name__ == "__main__":
