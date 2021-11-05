@@ -116,6 +116,8 @@ def calculate_params(
     #     add_output_emb_layer = False
 
     assert len(d_ff_list) == num_enc
+    if depth_features is not None:
+        assert sum(depth_features) != num_enc, "Cannot drop all layers"
     per_layer_params = 0
     prev_bottleneck_dim = max_emb_dim
     for layer_idx, (d_ff, emb_dim) in enumerate(zip(d_ff_list, emb_dims)):

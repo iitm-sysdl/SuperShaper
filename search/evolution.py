@@ -77,11 +77,12 @@ class EvolSearch:
             "sample_hidden_size",
             "sample_num_attention_heads",
             "sample_intermediate_size",
-            "sample_num_hidden_layers",
         ]
 
         if self.layerdrop:
             self.keys += ["depth_features"]
+
+        self.keys += ["sample_num_hidden_layers"]
 
     def get_search_space(self):
         space = {
@@ -128,6 +129,7 @@ class EvolSearch:
                 self.gene_choice.append(space[key])
 
         self.gene_choice.append(space["sample_num_hidden_layers"])
+        # print("Gene choices: ", self.gene_choice)
 
         return space
 
@@ -183,7 +185,6 @@ class EvolSearch:
     def satisfy_constraints(self, feature_in):
         satisfy = None
         feature = feature_in or self.features
-
         feature = np.array(feature)
         feature = np.reshape(
             feature, (1, feature.shape[0])
@@ -261,9 +262,17 @@ class EvolSearch:
         }
 
         if self.layerdrop:
-            tmp_dict["depth_features"] = random.choices(
-                space["depth_features"], k=num_hidden_layers
-            )
+            dropping_all_layers = True
+            while dropping_all_layers:
+                depth_features = random.choices(
+                    space["depth_features"], k=num_hidden_layers
+                )
+                if sum(depth_features) == num_hidden_layers:
+                    continue
+                else:
+                    dropping_all_layers = False
+
+            tmp_dict["depth_features"] = depth_features
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
@@ -276,11 +285,11 @@ class EvolSearch:
         total = 0
         print(f"Randomly sampling architectures")
 
-        space = self.get_search_space()
-
         while cnt < self.population_size:
             arch = self.random_sample_arch()
+            # print(arch)
             candidate_gene = self.arch2feature(arch)
+            # print(candidate_gene)
 
             if self.satisfy_constraints(candidate_gene):
                 population.append(candidate_gene)
