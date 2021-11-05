@@ -26,6 +26,7 @@ import math
 import os
 from typing_extensions import final
 import warnings
+import random
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import torch
@@ -1813,7 +1814,7 @@ class BertPreTrainedModel(PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
-        """ Initialize the weights """
+        """Initialize the weights"""
         if isinstance(module, CustomLinear):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
@@ -2468,7 +2469,26 @@ class BertForMaskedLM(BertPreTrainedModel):
         self.bert = BertModel(config, add_pooling_layer=False)
         self.cls = BertOnlyMLMHead(config)
         self.config = config
+        if self.config.additional_random_softmaxing:
+            self.random_softmaxing_idx = random.randint(1, 11)
         self.init_weights()
+
+    def sample_next_layer(self):
+        if random.random() <= self.config.random_layer_selection_probability:
+            self.random_softmaxing_idx = random.choice(
+                list(range(1, self.random_softmaxing_idx - 1))
+                + list(range(self.random_softmaxing_idx + 2, 12))
+            )
+        else:
+            if self.random_softmaxing_idx == 1:
+                self.random_softmaxing_idx = 2
+            elif self.random_softmaxing_idx == 11:
+                self.random_softmaxing_idx = 10
+            else:
+                self.random_softmaxing_idx = random.choice(
+                    [self.random_softmaxing_idx - 1, self.random_softmaxing_idx + 1]
+                )
+        return self.random_softmaxing_idx
 
     def set_sample_config(self, config, drop_layers=True, drop_vector=None):
         # pass drop_layers flag to bertmodel for layerdrop
@@ -2567,6 +2587,21 @@ class BertForMaskedLM(BertPreTrainedModel):
                 masked_lm_loss = loss_fct(
                     prediction_scores.view(-1, self.config.vocab_size), labels.view(-1)
                 )
+
+            if self.config.additional_random_softmaxing and self.training:
+                prediction_scores = self.cls(
+                    outputs.hidden_states[self.random_softmaxing_idx]
+                )
+                if use_soft_loss:
+                    masked_lm_loss += loss_fct(
+                        prediction_scores.view(-1, self.config.vocab_size),
+                        labels.view(-1, self.config.vocab_size),
+                    )
+                else:
+                    masked_lm_loss += loss_fct(
+                        prediction_scores.view(-1, self.config.vocab_size),
+                        labels.view(-1),
+                    )
 
         if not return_dict:
             output = (prediction_scores,) + outputs[2:]
