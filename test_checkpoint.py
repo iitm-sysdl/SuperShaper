@@ -137,7 +137,7 @@ def validate_subtransformer(
     try:
         val_loss = torch.mean(losses)
         if evaluate_latency:
-            execution_time = statistics.mean(exec_time)
+            execution_time = mean(exec_time)
         perplexity = math.exp(torch.mean(losses))
     except OverflowError:
         perplexity = float("inf")
@@ -332,6 +332,11 @@ def parse_args():
         default=0.0,
         type=float,
         help="Probability to drop layers",
+    )
+    parser.add_argument(
+        "--additional_random_softmaxing",
+        action="store_true",
+        help=f"if true then random softmax layers will be softmaxed in addition to the last layer, except that there will be a random walk when it comes to choosing the layer to softmax",
     )
 
     args = parser.parse_args()
@@ -786,6 +791,18 @@ def main():
                 )
 
                 super_config_small.depth_features = to_drop
+            if args.additional_random_softmaxing:
+                random_softmaxing_idx = random.randint(0, 12)
+                depth_features = [0] * (random_softmaxing_idx + 1) + [1] * (
+                    subtransformer_config.sample_num_hidden_layers
+                    - (random_softmaxing_idx + 1)
+                )
+                if (
+                    depth_features
+                    == [1] * subtransformer_config.sample_num_hidden_layers
+                ):
+                    depth_features[0] = 0
+                subtransformer_config.depth_features = depth_features
 
         if not args.only_latency:
             model.set_sample_config(

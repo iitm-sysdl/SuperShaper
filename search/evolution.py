@@ -224,8 +224,11 @@ class EvolSearch:
                 params = calculate_params_from_config(
                     self.feature2arch(list(feature[0]))
                 )
+                # <= for perplexity
+                # >= for latency
+                # TODO: modularize this later
                 if (
-                    params >= self.constraints_set[constraints]
+                    params <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
