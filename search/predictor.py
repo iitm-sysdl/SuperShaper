@@ -140,6 +140,7 @@ def row_mapper(row):
 class Predictor:
     def __init__(
         self,
+        args_dict
         dataset_path=None,
         ckpt=None,
         pred_type="latency",
@@ -172,13 +173,13 @@ class Predictor:
         elif model_type == "xgb":
             # self.model = XGBRegressor()
             self.model = XGBRegressor(
-                max_depth=5,  # {5, 9, 10, 14}
-                n_estimators=1000,
-                min_child_weight=1,  # {1, 5, 6, 10}
-                subsample=0.8,  # {1, 0.8, 0.6, 0.3}
-                alpha=0.05,  # [.3, .2, .1, .05, .01, .005]
-                eta=0.1,  # [.3, .2, .1, .05, .01, .005]
-                seed=42,
+                max_depth=args_dict["max_depth"],  # {5, 9, 10, 14}
+                n_estimators=args_dict["n_estimators"],
+                min_child_weight=args_dict["min_child_weight"],  # {1, 5, 6, 10}
+                subsample=args_dict["subsample"],  # {1, 0.8, 0.6, 0.3}
+                alpha=args_dict["alpha"],  # [.3, .2, .1, .05, .01, .005]
+                eta=args_dict["eta"],  # [.3, .2, .1, .05, .01, .005]
+                seed=args_dict["seed"],
             )
 
         if self.model_type == "lgbm":
@@ -357,7 +358,47 @@ def parse_args():
         default=0,
     )
 
-    args = parser.parse_args()
+    parser.add_argument(
+        "--max_depth",
+        type=int,
+        default=5,
+    )
+
+    parser.add_argument(
+        "--n_estimators",
+        type=int,
+        default=1000,
+    )
+
+    parser.add_argument(
+        "--min_child_weight",
+        type=int,
+        default=1,
+    )
+
+    parser.add_argument(
+        "--subsample",
+        type=float,
+        default=0.8,
+    )
+    
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.05,
+    )
+
+    parser.add_argument(
+        "--eta",
+        type=float,
+        default=0.1,
+    )
+
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+    )
 
     return args
 
@@ -370,7 +411,19 @@ def learn_predictor(args):
         use_params=args.use_params,
     )
     print(df.iloc[0])
+    
+    args_dict = { 
+                "max_depth"       : args.max_depth,
+                "n_estimators"    : args.n_estimators,
+                "min_child_weight": args.min_child_weight,
+                "subsample"       : args.alpha,
+                "eta"             : args.eta,
+                "seed"            : args.seed
+                }
+                  
+                  
     predictor = Predictor(
+        args_dict = args_dict,
         pred_type=args.prediction_type,
         model_type=args.model_type,
         layerdrop=args.layer_drop,
