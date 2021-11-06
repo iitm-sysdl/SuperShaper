@@ -159,12 +159,13 @@ class Predictor:
             "sample_hidden_size",
             "sample_num_attention_heads",
             "sample_intermediate_size",
-            "sample_num_hidden_layers",
         ]
         if self.layerdrop:
             self.keys.append("depth_features")
         if self.use_params:
             self.keys.append("params")
+
+        self.keys.append("sample_num_hidden_layers")
 
         if model_type == "lgbm":
             self.model = lgb.Booster()
@@ -239,6 +240,7 @@ class Predictor:
         return self.dataset
 
     def train(self, dataset=None, split=0.7, plot=False):
+        print("Training ...")
         dataset = dataset or self.dataset
 
         features, metric = dataset

@@ -704,6 +704,7 @@ def main():
         logger.info("***** Running Validation *****")
         logger.info(f"  Num examples = {len(eval_dataset)}")
 
+        logger.info(f"{global_config.depth_features}")
         # change to supertransformer config
         model.set_sample_config(global_config, drop_vector=global_config.depth_features)
 
@@ -832,9 +833,10 @@ def main():
             subtransformer_accuracies.append(val_accuracy)
             subtransformer_losses.append(val_loss.item())
             if subtransformer_config.depth_features is not None:
-                subtransformer_config.depth_features = (
-                    subtransformer_config.depth_features.cpu().numpy().tolist()
-                )
+                if torch.is_tensor(subtransformer_config.depth_features):
+                    subtransformer_config.depth_features = (
+                        subtransformer_config.depth_features.cpu().numpy().tolist()
+                    )
                 # print(subtransformer_config)
             subtransformer_configs.append(subtransformer_config)
 
@@ -888,9 +890,11 @@ def main():
             # print(execution_time)
             subtransformer_latencies.append(execution_time)
             if subtransformer_config.depth_features is not None:
-                subtransformer_config.depth_features = (
-                    subtransformer_config.depth_features.cpu().numpy().tolist()
-                )
+                if torch.is_tensor(subtransformer_config.depth_features):
+
+                    subtransformer_config.depth_features = (
+                        subtransformer_config.depth_features.cpu().numpy().tolist()
+                    )
                 # print(subtransformer_config)
             subtransformer_configs.append(subtransformer_config)
 
