@@ -140,7 +140,7 @@ def row_mapper(row):
 class Predictor:
     def __init__(
         self,
-        args_dict
+        args_dict,
         dataset_path=None,
         ckpt=None,
         pred_type="latency",
@@ -171,16 +171,18 @@ class Predictor:
         if model_type == "lgbm":
             self.model = lgb.Booster()
         elif model_type == "xgb":
-            # self.model = XGBRegressor()
-            self.model = XGBRegressor(
-                max_depth=args_dict["max_depth"],  # {5, 9, 10, 14}
-                n_estimators=args_dict["n_estimators"],
-                min_child_weight=args_dict["min_child_weight"],  # {1, 5, 6, 10}
-                subsample=args_dict["subsample"],  # {1, 0.8, 0.6, 0.3}
-                alpha=args_dict["alpha"],  # [.3, .2, .1, .05, .01, .005]
-                eta=args_dict["eta"],  # [.3, .2, .1, .05, .01, .005]
-                seed=args_dict["seed"],
-            )
+            if args_dict == {}:
+                self.model = XGBRegressor()
+            else:
+                self.model = XGBRegressor(
+                    max_depth=args_dict["max_depth"],  # {5, 9, 10, 14}
+                    n_estimators=args_dict["n_estimators"],
+                    min_child_weight=args_dict["min_child_weight"],  # {1, 5, 6, 10}
+                    subsample=args_dict["subsample"],  # {1, 0.8, 0.6, 0.3}
+                    alpha=args_dict["alpha"],  # [.3, .2, .1, .05, .01, .005]
+                    eta=args_dict["eta"],  # [.3, .2, .1, .05, .01, .005]
+                    seed=args_dict["seed"],
+                )
 
         if self.model_type == "lgbm":
             self.lgb_params = {
@@ -381,7 +383,7 @@ def parse_args():
         type=float,
         default=0.8,
     )
-    
+
     parser.add_argument(
         "--alpha",
         type=float,
@@ -411,8 +413,8 @@ def learn_predictor(args):
         use_params=args.use_params,
     )
     print(df.iloc[0])
-    
-    args_dict = { 
+
+    args_dict = {
                 "max_depth"       : args.max_depth,
                 "n_estimators"    : args.n_estimators,
                 "min_child_weight": args.min_child_weight,
@@ -420,8 +422,8 @@ def learn_predictor(args):
                 "eta"             : args.eta,
                 "seed"            : args.seed
                 }
-                  
-                  
+
+
     predictor = Predictor(
         args_dict = args_dict,
         pred_type=args.prediction_type,

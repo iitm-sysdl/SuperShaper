@@ -550,6 +550,7 @@ def search(args):
 
     if args.perplexity_constraints is not None:
         perplexity_predictor = Predictor(
+            args_dict={},
             ckpt=args.perplexity_model_file_name_or_path,
             pred_type="perplexity",
             model_type=args.model_type,
