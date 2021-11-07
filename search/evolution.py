@@ -22,6 +22,7 @@ from transformers.models.bert.modeling_bert import BertForMaskedLM
 from utils import calculate_params_from_config
 from predictor import Predictor
 import pandas
+from pprint import pprint
 
 # Add sampling folder to the PYTHONPATH
 from sampling import (
@@ -581,7 +582,11 @@ def search(args):
         layerdrop=args.layer_drop,
     )
 
-    print(evolution.run_evo_search())
+    best_config = evolution.run_evo_search()
+
+    print(best_config)
+
+    print(calculate_params_from_config(best_config))
 
 
 def test(evolution):
