@@ -91,7 +91,6 @@ class EvolSearch:
             "sample_num_attention_heads": [2, 4, 6, 8, 10, 12],
             "sample_intermediate_size": [512, 1024, 2048, 3072],
             # "sample_num_hidden_layers": list(range(6, self.config.num_hidden_layers+1, 2))
-            "sample_num_hidden_layers": [12],
         }
 
         if self.search_space_config == "bert-bottleneck":
@@ -109,6 +108,8 @@ class EvolSearch:
 
         if self.layerdrop:
             space["depth_features"] = [0, 1]
+
+        space["sample_num_hidden_layers"] = [12]
 
         gene_len = 0
         num_hidden_layers = space["sample_num_hidden_layers"][0]

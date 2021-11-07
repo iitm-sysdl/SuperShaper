@@ -122,7 +122,6 @@ def row_mapper(row):
         row["sample_hidden_size"],
         row["sample_num_attention_heads"],
         row["sample_intermediate_size"],
-        row["sample_num_hidden_layers"],
     ]
 
     if "depth_features" in row.keys():
@@ -133,6 +132,8 @@ def row_mapper(row):
 
     if "macs" in row.keys():
         list_to_stack.append(row["macs"])
+
+    list_to_stack.append(row["sample_num_hidden_layers"])
 
     return np.hstack(list_to_stack)
 
@@ -401,7 +402,7 @@ def parse_args():
         type=int,
         default=42,
     )
-
+    args = parser.parse_args()
     return args
 
 
@@ -415,17 +416,17 @@ def learn_predictor(args):
     print(df.iloc[0])
 
     args_dict = {
-                "max_depth"       : args.max_depth,
-                "n_estimators"    : args.n_estimators,
-                "min_child_weight": args.min_child_weight,
-                "subsample"       : args.alpha,
-                "eta"             : args.eta,
-                "seed"            : args.seed
-                }
-
+        "max_depth": args.max_depth,
+        "n_estimators": args.n_estimators,
+        "min_child_weight": args.min_child_weight,
+        "subsample": args.alpha,
+        "subsample": args.alpha,
+        "eta": args.eta,
+        "seed": args.seed,
+    }
 
     predictor = Predictor(
-        args_dict = args_dict,
+        args_dict=args_dict,
         pred_type=args.prediction_type,
         model_type=args.model_type,
         layerdrop=args.layer_drop,
