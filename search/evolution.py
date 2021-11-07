@@ -226,6 +226,8 @@ class EvolSearch:
                 params = calculate_params_from_config(
                     self.feature2arch(list(feature[0]))
                 )
+                if params == 0.0:
+                    return False
                 # <= for perplexity
                 # >= for latency
                 # TODO: modularize this later

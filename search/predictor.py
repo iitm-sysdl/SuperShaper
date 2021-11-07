@@ -125,7 +125,7 @@ def row_mapper(row):
     ]
 
     if "depth_features" in row.keys():
-        list_to_stack.append(row["depth_features"])
+        list_to_stack.append(row["depth_features"][:row["sample_num_hidden_layers"]])
 
     if "params" in row.keys():
         list_to_stack.append(row["params"])
@@ -230,7 +230,6 @@ class Predictor:
                 self.features2shape[key] = len(df_features.iloc[0][key])
             else:
                 self.features2shape[key] = 1
-
         # df_metric = df_metric / df_metric.max()
 
         metric = df_metric.to_numpy()
