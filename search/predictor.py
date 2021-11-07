@@ -419,8 +419,8 @@ def learn_predictor(args):
         "max_depth": args.max_depth,
         "n_estimators": args.n_estimators,
         "min_child_weight": args.min_child_weight,
-        "subsample": args.alpha,
-        "subsample": args.alpha,
+        "subsample": args.subsample,
+        "alpha": args.alpha,
         "eta": args.eta,
         "seed": args.seed,
     }
