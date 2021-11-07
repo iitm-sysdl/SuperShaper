@@ -1507,6 +1507,7 @@ class BertEncoder(nn.Module):
         # or we could just iterate all layers and set identity layer to True (which we are currently doing)
         # Decide what is best and change this
         if drop_vector is not None:
+            drop_layers = True
             layers_to_drop = drop_vector
         else:
             layers_to_drop = dropout_layers(

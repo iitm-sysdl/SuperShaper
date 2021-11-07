@@ -225,8 +225,11 @@ class EvolSearch:
                 params = calculate_params_from_config(
                     self.feature2arch(list(feature[0]))
                 )
+                # <= for perplexity
+                # >= for latency
+                # TODO: modularize this later
                 if (
-                    params >= self.constraints_set[constraints]
+                    params <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
@@ -548,6 +551,7 @@ def search(args):
 
     if args.perplexity_constraints is not None:
         perplexity_predictor = Predictor(
+            args_dict={},
             ckpt=args.perplexity_model_file_name_or_path,
             pred_type="perplexity",
             model_type=args.model_type,
