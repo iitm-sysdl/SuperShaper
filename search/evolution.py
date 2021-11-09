@@ -56,6 +56,7 @@ class EvolSearch:
         accelerator=None,
         device_type=None,
         layerdrop=False,
+        additional_random_softmaxing=False,
     ):
 
         self.search_space_config = search_space_config
@@ -69,6 +70,7 @@ class EvolSearch:
         self.population_size = population_size
 
         self.layerdrop = layerdrop
+        self.additional_random_softmaxing = additional_random_softmaxing
         self.parent_size = parent_size
         self.mutation_size = mutation_size
         self.crossover_size = crossover_size
@@ -82,6 +84,8 @@ class EvolSearch:
 
         if self.layerdrop:
             self.keys += ["depth_features"]
+        if self.additional_random_softmaxing:
+            self.keys += ["random_softmaxing_idx"]
 
         self.keys += ["sample_num_hidden_layers"]
 
@@ -99,23 +103,29 @@ class EvolSearch:
             space["sample_num_attention_heads"] = [12]
             # space["sample_intermediate_size"] = [1024,2048,3072]
             space["sample_intermediate_size"] = [3072]
-            space["sample_num_hidden_layers"] = [12]
+            # space["sample_num_hidden_layers"] = [12]
         elif (
             self.search_space_config != "bert-bottleneck"
             and self.search_space_config != "attention"
         ):
             raise NotImplementedError
 
-        if self.layerdrop:
-            space["depth_features"] = [0, 1]
-
-        space["sample_num_hidden_layers"] = [12]
-
         gene_len = 0
         num_hidden_layers = space["sample_num_hidden_layers"][0]
 
         ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
-        gene_len = (len(space.keys()) - 1) * num_hidden_layers + 1
+        gene_len = (len(space.keys()) - 1) * num_hidden_layers
+
+        if self.layerdrop:
+            space["depth_features"] = [0, 1]
+            gene_len += num_hidden_layers
+
+        if self.additional_random_softmaxing:
+            space["random_softmaxing_idx"] = np.arange(12).tolist()
+            gene_len += 1
+
+        space["sample_num_hidden_layers"] = [12]
+        gene_len += 1
 
         # if self.layerdrop:
         #    gene_len += num_hidden_layers # We have num_hidden_layers more one-hot features now for depth
@@ -126,6 +136,9 @@ class EvolSearch:
         for key in self.keys:
             if key == "sample_num_hidden_layers":
                 break
+            if key == "random_softmaxing_idx":
+                self.gene_choice.append(space["random_softmaxing_idx"])
+                continue
 
             for i in range(num_hidden_layers):
                 self.gene_choice.append(space[key])
@@ -175,6 +188,15 @@ class EvolSearch:
             if "sample_num_hidden_layers" in key:
                 continue
 
+            if "random_softmaxing_idx" in key:
+                random_softmaxing_idx = getattr(self.config, "random_softmaxing_idx")
+                depth_features = [1] * 12
+                depth_features[:random_softmaxing_idx] = 0
+                setattr(arch_config, "depth_features", depth_features)
+                feature_cnt += 12
+                delattr(arch_config, "random_softmaxing_idx")
+                continue
+
             arch_conf_lst = []
             for i in range(num_hidden_layers):
                 arch_conf_lst.append(features[feature_cnt])
@@ -187,6 +209,10 @@ class EvolSearch:
     def satisfy_constraints(self, feature_in):
         satisfy = None
         feature = feature_in or self.features
+        # to convert random_softmaxing index to depth_features
+        if self.additional_random_softmaxing:
+            arch = self.feature2arch(feature)
+            feature = self.arch2feature(arch)
         feature = np.array(feature)
         feature = np.reshape(
             feature, (1, feature.shape[0])
@@ -280,6 +306,10 @@ class EvolSearch:
                     dropping_all_layers = False
 
             tmp_dict["depth_features"] = depth_features
+
+        if self.additional_random_softmaxing:
+            random_softmaxing_idx = random.choices(space["random_softmaxing_idx"], k=1)
+            tmp_dict["random_softmaxing_idx"] = random_softmaxing_idx
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
@@ -518,6 +548,11 @@ def parse_args():
         type=int,
         default=0,
     )
+    parser.add_argument(
+        "--additional_random_softmaxing",
+        type=int,
+        default=0,
+    )
 
     args = parser.parse_args()
 
@@ -587,6 +622,7 @@ def search(args):
         latency_predictor=latency_predictor,
         device_type=args.device_type,
         layerdrop=args.layer_drop,
+        additional_random_softmaxing=args.additional_random_softmaxing,
     )
 
     best_config = evolution.run_evo_search()
