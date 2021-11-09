@@ -23,13 +23,13 @@ from custom_layers import custom_bert, custom_mobile_bert
 import argparse
 import plotly
 
-sentences = ["hello how are you", "i am fine"]
-tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
-inputs = tokenizer.encode_plus(sentences, return_tensors="pt")
+#sentences = ["hello how are you", "i am fine"]
+#tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+#inputs = tokenizer.encode_plus(sentences, return_tensors="pt")
 plotly.io.orca.config.save()
 
 # prepring model
-bert_config = AutoConfig.from_pretrained("bert-base-uncased")
+#bert_config = AutoConfig.from_pretrained("bert-base-uncased")
 
 
 ## Move this to utils later ##

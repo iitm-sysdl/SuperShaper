@@ -111,10 +111,10 @@ class EvolSearch:
             raise NotImplementedError
 
         gene_len = 0
-        num_hidden_layers = space["sample_num_hidden_layers"][0]
+        num_hidden_layers = 12
 
         ### TODO: This logic breaks down if depth is elastic in the search_space - Diagnose
-        gene_len = (len(space.keys()) - 1) * num_hidden_layers
+        gene_len = len(space.keys()) * num_hidden_layers
 
         if self.layerdrop:
             space["depth_features"] = [0, 1]
@@ -152,7 +152,9 @@ class EvolSearch:
         self, feature
     ):  ## This is just temporary, we can remove this for a a more general implementation
         feature = feature or self.features
-
+        if self.additional_random_softmaxing:
+            arch = self.feature2arch(feature)
+            feature = self.arch2feature(arch)
         feature = np.array(feature)
         feature = np.reshape(feature, (1, feature.shape[0]))
 
@@ -166,6 +168,9 @@ class EvolSearch:
 
         ## Have the features arranged layerwise
         for key in self.keys:
+            if "random_softmaxing_idx" in key:
+                if hasattr(config, "depth_features"):
+                    key = "depth_features"
             attr = getattr(config, key)
             if isinstance(attr, list):
                 features += attr
@@ -184,21 +189,24 @@ class EvolSearch:
         arch_config = copy.deepcopy(self.config)
 
         ## Change config here
+        #print("Features: ", features, len(features))
         for key in self.keys:
             if "sample_num_hidden_layers" in key:
                 continue
 
             if "random_softmaxing_idx" in key:
-                random_softmaxing_idx = getattr(self.config, "random_softmaxing_idx")
+                random_softmaxing_idx = features[feature_cnt] + 1
                 depth_features = [1] * 12
-                depth_features[:random_softmaxing_idx] = 0
+                depth_features[:random_softmaxing_idx] = [0] * random_softmaxing_idx
                 setattr(arch_config, "depth_features", depth_features)
-                feature_cnt += 12
-                delattr(arch_config, "random_softmaxing_idx")
+                #print(depth_features)
+                feature_cnt += 1
+                #delattr(arch_config, "random_softmaxing_idx")
                 continue
 
             arch_conf_lst = []
             for i in range(num_hidden_layers):
+                #print(feature_cnt, key)
                 arch_conf_lst.append(features[feature_cnt])
                 feature_cnt += 1
 
@@ -209,22 +217,28 @@ class EvolSearch:
     def satisfy_constraints(self, feature_in):
         satisfy = None
         feature = feature_in or self.features
+        params = None
         # to convert random_softmaxing index to depth_features
         if self.additional_random_softmaxing:
             arch = self.feature2arch(feature)
+            #print(getattr(arch, "depth_features"), getattr(arch, "sample_hidden_size"))
+            params = calculate_params_from_config(arch)
             feature = self.arch2feature(arch)
+            #print(feature)
         feature = np.array(feature)
         feature = np.reshape(
             feature, (1, feature.shape[0])
         )  ## Weird but seems necessary
+        #print(self.feature2arch(feature[0].tolist()))
 
         ## This simple composition of multiple-objectives is a very slow process -> TODO: Use something like NSGA-II
         for constraints in self.constraints_set:
             if "latency" in constraints:
                 assert self.latency_predictor is not None
-                params = calculate_params_from_config(
-                    self.feature2arch(list(feature[0]))
-                )
+                if params is None:
+                    params = calculate_params_from_config(
+                        self.feature2arch(list(feature[0]))
+                    )
                 tmp_lst = list(feature[0])
                 tmp_lst.append(params)
                 feature = np.array(tmp_lst)
@@ -249,14 +263,16 @@ class EvolSearch:
                 else:
                     return False
             elif "params" in constraints:
-                params = calculate_params_from_config(
-                    self.feature2arch(list(feature[0]))
-                )
+                if params is None:
+                    params = calculate_params_from_config(
+                        self.feature2arch(list(feature[0]))
+                    )
                 if params == 0.0:
                     return False
                 # <= for perplexity
                 # >= for latency
                 # TODO: modularize this later
+                #print(params, self.constraints_set[constraints])
                 if (
                     params <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
@@ -307,9 +323,10 @@ class EvolSearch:
 
             tmp_dict["depth_features"] = depth_features
 
+        #print(self.additional_random_softmaxing)
         if self.additional_random_softmaxing:
             random_softmaxing_idx = random.choices(space["random_softmaxing_idx"], k=1)
-            tmp_dict["random_softmaxing_idx"] = random_softmaxing_idx
+            tmp_dict["random_softmaxing_idx"] = random_softmaxing_idx[0]
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
@@ -324,8 +341,11 @@ class EvolSearch:
 
         while cnt < self.population_size:
             arch = self.random_sample_arch()
+            #print(arch)
+            #print(arch.keys())
             # print(arch)
             candidate_gene = self.arch2feature(arch)
+            #print(candidate_gene)
             # print(candidate_gene)
 
             if self.satisfy_constraints(candidate_gene):
