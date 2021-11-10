@@ -1550,10 +1550,10 @@ def main():
                     super_config = super_configs[idx]
                     model.set_sample_config(super_config, drop_layers=True)
 
-                for layer_idx, hidden_size in enumerate(
-                    super_config.sample_hidden_size
-                ):
-                    per_layer_sampled_counts[layer_idx][hidden_size] += 1
+                    for layer_idx, hidden_size in enumerate(
+                        super_config.sample_hidden_size
+                    ):
+                        per_layer_sampled_counts[layer_idx][hidden_size] += 1
 
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
