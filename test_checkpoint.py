@@ -550,7 +550,7 @@ def main():
     model = custom_bert.BertForMaskedLM(global_config)
 
     model.resize_token_embeddings(len(tokenizer))
-    logger.info(summary(model, depth=4, verbose=0))
+    # logger.info(summary(model, depth=4, verbose=0))
 
     # maybe not required but doing it just to be sure
     model.set_sample_config(global_config)
