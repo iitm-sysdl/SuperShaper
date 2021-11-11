@@ -239,13 +239,21 @@ class EvolSearch:
                     params = calculate_params_from_config(
                         self.feature2arch(list(feature[0]))
                     )
-                tmp_lst = list(feature[0])
-                tmp_lst.append(params)
+                
+                ### Predictor feature representation always uses depth/num-hidden-layers in the very end 
+                ### To maintain that consistency of order, performing operations in the order specified below
+                ### See row_mapper function in the predictor for order
+                nlayers = feature[0][-1]
+                tmp_lst = list(feature[0][0:-1])
+                tmp_lst.append(int(params))
+                tmp_lst.append(nlayers)
+
                 feature = np.array(tmp_lst)
                 feature = np.reshape(feature, (1, feature.shape[0]))
                 lat = self.latency_predictor.predict(feature)
+                
                 if (
-                    lat <= self.constraints_set[constraints]
+                    lat[0] <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
@@ -256,7 +264,7 @@ class EvolSearch:
 
                 perp = self.perplexity_predictor.predict(feature)
                 if (
-                    perp <= self.constraints_set[constraints]
+                    perp[0] <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
@@ -274,7 +282,7 @@ class EvolSearch:
                 # TODO: modularize this later
                 #print(params, self.constraints_set[constraints])
                 if (
-                    params <= self.constraints_set[constraints]
+                    params >= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
@@ -601,6 +609,7 @@ def search(args):
     if args.latency_constraints is not None:
         assert args.latency_model_file_name_or_path is not None
         latency_predictor = Predictor(
+            args_dict = {},
             ckpt=args.latency_model_file_name_or_path,
             pred_type="latency",
             model_type=args.model_type,
