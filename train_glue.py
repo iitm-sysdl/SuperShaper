@@ -293,6 +293,19 @@ def parse_args():
         action="store_true",
         help="If passed, use 100 samples of dataset to quickly run and check code.",
     )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        required=True,
+        help=f"wandb entity",
+    )
+
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="Glue-Finetuning",
+        help=f"wandb project",
+    )
 
     parser.add_argument(
         "--sampling_type",
@@ -524,8 +537,8 @@ def main():
 
     if accelerator.is_main_process:
         wandb.init(
-            project="Glue-Finetuning",
-            entity="efficient-hat",
+            project=args.wandb_project,
+            entity=args.wandb_entity,
             name=args.task_name.split("/")[-1].strip() + "_" + str_name,
         )
 
@@ -883,7 +896,11 @@ def main():
     # Note -> the training dataloader needs to be prepared before we grab his length below (cause its length will be
     # shorter in multiprocess)
 
-    model.set_sample_config(global_config)
+    # model.set_sample_config(global_config)
+    if hasattr(global_config, "depth_features"):
+        model.set_sample_config(global_config, drop_vector=global_config.depth_features)
+    else:
+        model.set_sample_config(global_config, drop_layers=False)
 
     # Scheduler and math around the number of training steps.
     num_update_steps_per_epoch = math.ceil(
@@ -1037,7 +1054,13 @@ def main():
             hover_templates = []
             label_perplex = []
             for i, config in enumerate(diverse_subtransformers):
-                model.set_sample_config(config)
+                # model.set_sample_config(config)
+                if hasattr(global_config, "depth_features"):
+                    model.set_sample_config(
+                        global_config, drop_vector=global_config.depth_features
+                    )
+                else:
+                    model.set_sample_config(global_config, drop_layers=False)
 
                 eval_metric = validate_subtransformer(
                     model,

@@ -2770,12 +2770,14 @@ class BertForSequenceClassification(BertPreTrainedModel):
 
         self.init_weights()
 
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, drop_layers=True, drop_vector=None):
         if isinstance(config.sample_hidden_size, list):
             sample_hidden_size = config.hidden_size
         else:
             sample_hidden_size = config.sample_hidden_size
-        self.bert.set_sample_config(config)
+        self.bert.set_sample_config(
+            config, drop_layers=drop_layers, drop_vector=drop_vector
+        )
         self.classifier.set_sample_config(sample_hidden_size, config.num_labels)
 
         sample_hidden_dropout_prob = calc_dropout(
@@ -3096,11 +3098,13 @@ class BertForQuestionAnswering(BertPreTrainedModel):
 
         self.init_weights()
 
-    def set_sample_config(self, config):
+    def set_sample_config(self, config, drop_layers=True, drop_vector=None):
         sample_hidden_size = config.sample_hidden_size
         if config.mixing == "bert-bottleneck":
             sample_hidden_size = config.hidden_size
-        self.bert.set_sample_config(config)
+        self.bert.set_sample_config(
+            config, drop_layers=drop_layers, drop_vector=drop_vector
+        )
         self.qa_outputs.set_sample_config(sample_hidden_size, config.num_labels)
 
     def get_active_subnet(self, config):
