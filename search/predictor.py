@@ -300,6 +300,13 @@ class Predictor:
 
         fig.add_trace(go.Scatter(x=testy, y=test_predict, mode="markers"))
 
+        import pandas as pd
+        df_testy = pd.DataFrame(testy)
+        df_testP = pd.DataFrame(test_predict)
+
+        df_testy.to_csv("ryzen_test_actual.csv")
+        df_testP.to_csv("ryzen_test_predict.csv")
+
         fig.update_layout(
             xaxis_title="Actual Metric",
             yaxis_title="Predicted Metric",
