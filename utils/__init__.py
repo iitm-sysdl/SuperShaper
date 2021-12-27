@@ -234,7 +234,10 @@ def dropout_layers_like_mlsx(num_layers, layer_drop_prob=0.0):
 
     num_layers_to_drop = torch.randint(1, num_layers, (1,))
     # sample num_layers_to_drop layers to drop
-    layers_to_drop_indexes = torch.randint(0, num_layers, (num_layers_to_drop,))
+    # sampling with replacement
+    # layers_to_drop_indexes = torch.randint(0, num_layers, (num_layers_to_drop,))
+    # sampling without replacement
+    layers_to_drop_indexes = torch.randperm(num_layers)[:num_layers_to_drop]
 
     layers_to_drop[layers_to_drop_indexes] = 1
 
