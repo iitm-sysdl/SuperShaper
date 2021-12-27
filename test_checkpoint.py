@@ -793,16 +793,15 @@ def main():
 
                 super_config_small.depth_features = to_drop
             if args.additional_random_softmaxing:
-                random_softmaxing_idx = random.randint(0, 12)
-                depth_features = [0] * (random_softmaxing_idx + 1) + [1] * (
-                    subtransformer_config.sample_num_hidden_layers
-                    - (random_softmaxing_idx + 1)
+                num_layers = subtransformer_config.sample_num_hidden_layers
+                # num_layers - 1 as we need atleast 1 layer to work with
+                random_softmaxing_idx = random.randint(1, num_layers - 1)
+
+                remaining_layers = num_layers - random_softmaxing_idx
+
+                depth_features = [0] * (random_softmaxing_idx) + [1] * (
+                    remaining_layers
                 )
-                if (
-                    depth_features
-                    == [1] * subtransformer_config.sample_num_hidden_layers
-                ):
-                    depth_features[0] = 0
                 subtransformer_config.depth_features = depth_features
 
         if not args.only_latency:

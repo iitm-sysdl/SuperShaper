@@ -76,7 +76,7 @@ from loss import CrossEntropyLossSoft
 from loss import *
 
 from utils import get_overlap_order
-from utils import dropout_layers
+from utils import dropout_layers, dropout_layers_like_mlsx
 
 logger = logging.get_logger(__name__)
 
@@ -1510,9 +1510,15 @@ class BertEncoder(nn.Module):
             drop_layers = True
             layers_to_drop = drop_vector
         else:
-            layers_to_drop = dropout_layers(
-                self.sample_num_hidden_layers, config.layer_drop_prob
-            )
+            layer_drop_prob = config.layer_drop_prob
+            if drop_layers == False:
+                layers_to_drop = torch.zeros(self.sample_num_hidden_layers)
+            elif config.mlsx_layerdrop:
+                layers_to_drop = dropout_layers_like_mlsx(self.sample_num_hidden_layers)
+            else:
+                layers_to_drop = dropout_layers(
+                    self.sample_num_hidden_layers, layer_drop_prob
+                )
 
         for i, (drop, layer) in enumerate(zip(layers_to_drop, self.layer)):
             layer_config = deepcopy(config)

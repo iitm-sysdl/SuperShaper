@@ -350,6 +350,11 @@ def parse_args():
         type=float,
         help="Probability to drop layers",
     )
+    parser.add_argument(
+        "--mlsx_layerdrop",
+        action="store_true",
+        help=f"if true then layerdrop will be performed similar to multilayer softmaxing",
+    )
     # parser.add_argument(
     #     "--limit_subtransformer_choices",
     #     default=0,
@@ -708,6 +713,11 @@ def parse_args():
             and args.magic_sampling_per_layer_change_prob <= 1.0
         ), "magic_sampling_per_layer_change_prob should be between 0.0 and 1.0"
 
+    if args.mlsx_layerdrop and args.layer_drop_prob > 0.0:
+        assert (
+            args.layer_drop_prob == 0.0
+        ), "layer_drop_prob cannot be set if mlsx_layerdrop is set to True"
+
     return args
 
 
@@ -901,6 +911,7 @@ def main():
         global_config.output_attentions = True
         global_config.output_hidden_states = True
 
+    global_config.mlsx_layerdrop = args.mlsx_layerdrop
     global_config.alpha_divergence = args.alpha_divergence
 
     if args.alpha_divergence:
@@ -1495,7 +1506,7 @@ def main():
             if args.sampling_rule == "sandwich":
 
                 ## Sample Supertransformer
-                model.set_sample_config(global_config, drop_layers=True)
+                model.set_sample_config(global_config, drop_layers=False)
 
                 outputs = model(**batch)
                 loss = outputs.loss
@@ -1516,7 +1527,7 @@ def main():
                     batch["labels"] = soft_logits
 
                 ## Sample Smallest Subtransformer
-                model.set_sample_config(super_config_small, drop_layers=True)
+                model.set_sample_config(super_config_small, drop_layers=False)
                 outputs = model(**batch, use_soft_loss=args.inplace_distillation)
                 loss = outputs.loss
 
@@ -1699,7 +1710,7 @@ def main():
             eval_metric["perplexity"],
         )
 
-        if args.layer_drop_prob > 0:
+        if args.layer_drop_prob > 0 or args.mlsx_layerdrop:
             layer_drop_counts = model.bert.encoder.layer_drop_counts
             if args.sampling_rule == "sandwich":
                 # * 3 is done to account for sandwich rule

@@ -228,6 +228,20 @@ def dropout_layers(num_layers, layer_drop_prob):
     return to_drop
 
 
+def dropout_layers_like_mlsx(num_layers, layer_drop_prob=0.0):
+
+    layers_to_drop = torch.zeros(num_layers)
+
+    num_layers_to_drop = torch.randint(1, num_layers, (1,))
+    # sample num_layers_to_drop layers to drop
+    layers_to_drop_indexes = torch.randint(0, num_layers, (num_layers_to_drop,))
+
+    layers_to_drop[layers_to_drop_indexes] = 1
+
+    # layers = [layer for (layer, drop) in zip(layers, to_drop) if not drop]
+    return layers_to_drop
+
+
 # taken from https://github.com/pytorch/pytorch/issues/3025#issuecomment-392601780
 def get_overlap_order(ar1, ar2):
     # ar1 is the bigger matrix

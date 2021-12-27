@@ -239,8 +239,8 @@ class EvolSearch:
                     params = calculate_params_from_config(
                         self.feature2arch(list(feature[0]))
                     )
-                
-                ### Predictor feature representation always uses depth/num-hidden-layers in the very end 
+
+                ### Predictor feature representation always uses depth/num-hidden-layers in the very end
                 ### To maintain that consistency of order, performing operations in the order specified below
                 ### See row_mapper function in the predictor for order
                 nlayers = feature[0][-1]
@@ -251,7 +251,7 @@ class EvolSearch:
                 feature = np.array(tmp_lst)
                 feature = np.reshape(feature, (1, feature.shape[0]))
                 lat = self.latency_predictor.predict(feature)
-                
+
                 if (
                     lat[0] <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
