@@ -313,6 +313,11 @@ def parse_args():
         required=True,
         help=f"Evaluate only Latency",
     )
+    parser.add_argument(
+        "--mlsx_layerdrop",
+        action="store_true",
+        help=f"if true then layerdrop will be performed similar to multilayer softmaxing",
+    )
 
     parser.add_argument(
         "--num_iteration",
@@ -522,6 +527,7 @@ def main():
     # overriding the hideen dropout inline with hyperparms in gmlp paper
     global_config.hidden_dropout_prob = 0
     global_config.mixing = args.mixing
+    global_config.mlsx_layerdrop = args.mlsx_layerdrop
     if args.mixing == "mobilebert":
         # for mobilebert, dont use layernorm
         global_config.normalization_type = "no_norm"

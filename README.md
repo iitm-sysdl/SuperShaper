@@ -7,7 +7,7 @@ If you find this repo useful in your work, please consider citing our work:
 
 ## Super Pre-training with bottleneck layers
 <p align="center">
-<img src="figs/bert-bottleneck.png" width=50% height=50%>
+<img src="https://user-images.githubusercontent.com/9641196/147855518-a82cfba3-fbdd-4846-a298-195634197594.png" width=50% height=50%>
 </p>
 
 ## Competitive NLU performance
