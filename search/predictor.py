@@ -184,6 +184,7 @@ class Predictor:
                     eta=args_dict["eta"],  # [.3, .2, .1, .05, .01, .005]
                     seed=args_dict["seed"],
                 )
+                
 
         if self.model_type == "lgbm":
             self.lgb_params = {
@@ -247,6 +248,13 @@ class Predictor:
         dataset = dataset or self.dataset
 
         features, metric = dataset
+        print(features.shape)
+        print(metric.shape)
+
+        import pandas as pd
+        data = np.concatenate([features, metric], axis=1)
+        data_df = pd.DataFrame(data)
+        data_df.to_csv("data.csv", index=False)
 
         trainf = features[: int(split * len(features))]
         trainy = metric[: int(split * len(features))]
