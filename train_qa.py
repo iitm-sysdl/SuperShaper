@@ -367,6 +367,11 @@ def parse_args():
         choices=["none", "naive_params", "biased_params", "random"],
     )
     parser.add_argument(
+        "--mlsx_layerdrop",
+        action="store_true",
+        help=f"if true then layerdrop will be performed similar to multilayer softmaxing",
+    )
+    parser.add_argument(
         "--subtransformer_config_path",
         type=str,
         default=None,
@@ -677,6 +682,7 @@ def main():
 
     global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
     global_config.rewire = args.rewire
+    global_config.mlsx_layerdrop = args.mlsx_layerdrop
     global_config.layer_drop_prob = 0.0
 
     tokenizer = AutoTokenizer.from_pretrained(
