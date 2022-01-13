@@ -922,10 +922,10 @@ def main():
 
             df = pd.DataFrame(_dict)
             if args.checkpoint_dir is not None:
-                csv_path = os.path.join(args.checkpoint_dir, "subtransformer_stats.csv")
+                csv_path = os.path.join(args.checkpoint_dir, f"subtransformer_stats_{args.seed}.csv")
             else:
                 csv_path = os.path.join(
-                    f"subtransformer_{args.model_name_or_path}_perplexity_stats.csv"
+                    f"subtransformer_{args.model_name_or_path}_perplexity_stats__{args.seed}.csv"
                 )
             df.to_csv(csv_path, index=False)
     else:
