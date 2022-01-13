@@ -248,7 +248,7 @@ def parse_args():
     parser.add_argument(
         "--preprocessing_num_workers",
         type=int,
-        default=None,
+        default=8,
         help="The number of processes to use for the preprocessing.",
     )
     parser.add_argument(
@@ -808,6 +808,17 @@ def main():
                 depth_features = [0] * (random_softmaxing_idx) + [1] * (
                     remaining_layers
                 )
+                subtransformer_config.depth_features = depth_features
+            elif args.mlsx_layerdrop:
+                num_layers = subtransformer_config.sample_num_hidden_layers
+                num_layers_to_drop = random.randint(1, num_layers - 1)
+
+                layers_to_drop = np.random.permutation(num_layers)[:num_layers_to_drop]
+
+                # create a list of 0 and 1s
+                depth_features = [0] * (num_layers)
+                for layer in layers_to_drop:
+                    depth_features[layer] = 1
                 subtransformer_config.depth_features = depth_features
 
         if not args.only_latency:
