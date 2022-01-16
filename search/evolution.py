@@ -57,6 +57,7 @@ class EvolSearch:
         device_type=None,
         layerdrop=False,
         additional_random_softmaxing=False,
+        mlsx_layerdrop=False,
     ):
 
         self.search_space_config = search_space_config
@@ -71,6 +72,7 @@ class EvolSearch:
 
         self.layerdrop = layerdrop
         self.additional_random_softmaxing = additional_random_softmaxing
+        self.mlsx_layerdrop = mlsx_layerdrop
         self.parent_size = parent_size
         self.mutation_size = mutation_size
         self.crossover_size = crossover_size
