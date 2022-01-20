@@ -325,6 +325,8 @@ class Predictor:
         fig.write_image("./metrics_" + self.pred_type + "_.pdf")
 
     def predict(self, feature_in):
+        #print(feature_in)
+        #print(feature_in.shape)
         return self.model.predict(feature_in)
 
 

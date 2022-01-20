@@ -670,6 +670,7 @@ def search(args):
         device_type=args.device_type,
         layerdrop=args.layer_drop,
         additional_random_softmaxing=args.additional_random_softmaxing,
+        mlsx_layerdrop=args.mlsx_layerdrop,
     )
 
     best_config = evolution.run_evo_search()
