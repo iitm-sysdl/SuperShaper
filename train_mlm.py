@@ -559,7 +559,8 @@ def parse_args():
         "--wandb_suffix",
         type=str,
         default=None,
-        help=f"suffix for wandb",
+        required=True,
+        help=f"unique suffix to describe the training. This is used to create output folder to save model and also for wandb",
     )
 
     parser.add_argument(
@@ -778,11 +779,11 @@ def main():
         wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
-            name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
+            name=args.wandb_suffix.split("/")[-1].strip() + "_" + str_name,
         )
 
     if args.output_dir is not None and args.resume_from_checkpoint_dir is None:
-        dataset_name = args.dataset_name.split("/")[-1].strip()
+        dataset_name = args.wandb_suffix.split("/")[-1].strip()
         args.output_dir += (
             "/" + dataset_name + "_" + str_name + "_" + get_current_datetime()
         )
@@ -864,6 +865,13 @@ def main():
             additional_random_softmaxing=args.additional_random_softmaxing,
             random_layer_selection_probability=args.random_layer_selection_probability,
         )
+
+    if "validation" in raw_datasets.keys():
+        # trying to limit the validation set so that eval time is not too high
+        # for books_wiki, the eval time is around 30 mins in 8 gpus which seems to
+        # be a very high
+        if len(raw_datasets["validation"]) > 15000:
+            raw_datasets["validation"] = raw_datasets["validation"].select(range(15000))
 
     if args.tokenizer_name:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -1080,6 +1088,9 @@ def main():
 
     if args.tokenized_c4_dir is None:
         if args.line_by_line:
+            logger.info("=============================")
+            logger.info("Tokenizing the datasets one line at a time ..")
+            logger.info("=============================")
             # When using line_by_line, we just tokenize each nonempty line.
             padding = "max_length" if args.pad_to_max_length else False
 
@@ -1109,6 +1120,9 @@ def main():
                 load_from_cache_file=not args.overwrite_cache,
             )
         else:
+            logger.info("=============================")
+            logger.info("Tokenizing the datasets by concatenating lines (doc wise) ..")
+            logger.info("=============================")
             # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
             # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
             # efficient when it receives the `special_tokens_mask`.
