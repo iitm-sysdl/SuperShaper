@@ -311,8 +311,8 @@ def parse_args():
     )
     parser.add_argument(
         "--line_by_line",
-        type=bool,
-        default=True,
+        type=int,
+        default=1,
         help="""
         Whether distinct lines of text in the dataset are to be handled as
         distinct sequences. This is deafult for bert/electra models and should
