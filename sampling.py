@@ -460,8 +460,13 @@ def get_supertransformer_config(
     mixing="attention",
     additional_random_softmaxing=False,
     random_layer_selection_probability=0.1,
+    custom_hidden_size=None,
 ):
     config = AutoConfig.from_pretrained(model_name_or_path)
+    if custom_hidden_size is not None:
+        config.hidden_size = custom_hidden_size
+        config.true_hidden_size = custom_hidden_size
+        config.intermediate_size = custom_hidden_size * 4
 
     if mixing == "gmlp":
         # gmlp needs twice the encoder layers to match bert param size

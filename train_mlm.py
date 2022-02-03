@@ -584,6 +584,13 @@ def parse_args():
         help=f"wandb project",
     )
 
+    parser.add_argument(
+        "--custom_hidden_size",
+        type=int,
+        default=None,
+        help=f"value for custom hidden size",
+    )
+
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
     # )
@@ -857,6 +864,7 @@ def main():
             mixing=args.mixing,
             additional_random_softmaxing=args.additional_random_softmaxing,
             random_layer_selection_probability=args.random_layer_selection_probability,
+            custom_hidden_size=args.custom_hidden_size,
         )
     else:
         global_config = get_supertransformer_config(
@@ -864,6 +872,7 @@ def main():
             mixing=args.mixing,
             additional_random_softmaxing=args.additional_random_softmaxing,
             random_layer_selection_probability=args.random_layer_selection_probability,
+            custom_hidden_size=args.custom_hidden_size,
         )
 
     if "validation" in raw_datasets.keys():
@@ -944,9 +953,19 @@ def main():
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
         for key, value in subtransformer_config.items():
+            if key == "sample_hidden_size" and args.custom_hidden_size is not None:
+                new_value = []
+                for hidden_size in value:
+                    if hidden_size > args.custom_hidden_size:
+                        new_value.append(args.custom_hidden_size)
+                    else:
+                        new_value.append(hidden_size)
+                value = new_value
+
             # update global_config with attributes of subtransformer_config
             setattr(global_config, key, value)
 
+        print(global_config)
         logger.info(
             "=================================================================="
         )
@@ -995,9 +1014,15 @@ def main():
         logger.info("MobileBert Initiliazed with bert-base")
 
     elif args.mixing == "bert-bottleneck":
-        model = custom_bert.BertForMaskedLM.from_pretrained(
-            "bert-base-cased", config=global_config
-        )
+        if args.custom_hidden_size is not None:
+            logger.info("Loading model with custom hidden size: {}".format(args.custom_hidden_size))
+            model = custom_bert.BertForMaskedLM(
+                config=global_config
+            )
+        else:
+            model = custom_bert.BertForMaskedLM.from_pretrained(
+                "bert-base-cased", config=global_config
+            )
 
         identity = torch.eye(global_config.hidden_size)
 
