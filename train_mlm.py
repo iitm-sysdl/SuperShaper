@@ -975,7 +975,6 @@ def main():
         logger.info(
             "=================================================================="
         )
-
     # if check_path(args.model_name_or_path):
     #    model = custom_bert.BertForMaskedLM.from_pretrained(
     #        args.model_name_or_path, config=global_config

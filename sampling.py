@@ -466,7 +466,8 @@ def get_supertransformer_config(
     if custom_hidden_size is not None:
         config.hidden_size = custom_hidden_size
         config.true_hidden_size = custom_hidden_size
-        config.intermediate_size = custom_hidden_size * 4
+        # let intermediate size be 3072 as reducing ffn dim may have neg impact on training
+        # config.intermediate_size = custom_hidden_size * 4
 
     if mixing == "gmlp":
         # gmlp needs twice the encoder layers to match bert param size
