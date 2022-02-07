@@ -875,7 +875,7 @@ def main():
             custom_hidden_size=args.custom_hidden_size,
         )
 
-    if "validation" in raw_datasets.keys():
+    if args.tokenized_c4_dir is None and "validation" in raw_datasets.keys():
         # trying to limit the validation set so that eval time is not too high
         # for books_wiki, the eval time is around 30 mins in 8 gpus which seems to
         # be a very high
