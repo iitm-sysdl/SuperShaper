@@ -383,6 +383,24 @@ def parse_args():
         default=None,
         help=f"suffix for wandb",
     )
+    parser.add_argument(
+        "--wandb_project",
+        type=str,
+        default="Squad-finetuning",
+        help=f"wandb project",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        type=str,
+        required=True,
+        help=f"wandb entity",
+    )
+    parser.add_argument(
+        "--custom_hidden_size",
+        type=int,
+        default=None,
+        help=f"value for custom hidden size",
+    )
 
     args = parser.parse_args()
 
@@ -635,8 +653,8 @@ def main():
 
     if accelerator.is_main_process:
         wandb.init(
-            project="Squad-finetuning",
-            entity="efficient-hat",
+            project=args.wandb_project,
+            entity=args.wandb_entity,
             name=args.dataset_name.split("/")[-1].strip() + "_" + str_name,
         )
 
@@ -680,7 +698,11 @@ def main():
     # In distributed training, the .from_pretrained methods guarantee that only one local process can concurrently
     # download model & vocab.
 
-    global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
+    global_config = get_supertransformer_config(
+        "bert-base-cased",
+        mixing=args.mixing,
+        custom_hidden_size=args.custom_hidden_size,
+    )
     global_config.rewire = args.rewire
     global_config.mlsx_layerdrop = args.mlsx_layerdrop
     global_config.layer_drop_prob = 0.0
@@ -722,6 +744,15 @@ def main():
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
         for key, value in subtransformer_config.items():
+            if key == "sample_hidden_size" and args.custom_hidden_size is not None:
+                new_value = []
+                for hidden_size in value:
+                    if hidden_size > args.custom_hidden_size:
+                        new_value.append(args.custom_hidden_size)
+                    else:
+                        new_value.append(hidden_size)
+                value = new_value
+
             # update global_config with attributes of subtransformer_config
             setattr(global_config, key, value)
 

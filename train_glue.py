@@ -339,6 +339,12 @@ def parse_args():
         default=None,
         help=f"path to augmented train file",
     )
+    parser.add_argument(
+        "--custom_hidden_size",
+        type=int,
+        default=None,
+        help=f"value for custom hidden size",
+    )
 
     args = parser.parse_args()
 
@@ -658,7 +664,11 @@ def main():
     # config = AutoConfig.from_pretrained(
     #     args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name
     # )
-    global_config = get_supertransformer_config("bert-base-cased", mixing=args.mixing)
+    global_config = get_supertransformer_config(
+        "bert-base-cased",
+        mixing=args.mixing,
+        custom_hidden_size=args.custom_hidden_size,
+    )
     global_config.rewire = args.rewire
     global_config.layer_drop_prob = 0.0
 
@@ -680,6 +690,15 @@ def main():
     if args.subtransformer_config_path is not None:
         subtransformer_config = read_json(args.subtransformer_config_path)
         for key, value in subtransformer_config.items():
+            if key == "sample_hidden_size" and args.custom_hidden_size is not None:
+                new_value = []
+                for hidden_size in value:
+                    if hidden_size > args.custom_hidden_size:
+                        new_value.append(args.custom_hidden_size)
+                    else:
+                        new_value.append(hidden_size)
+                value = new_value
+
             # update global_config with attributes of subtransformer_config
             setattr(global_config, key, value)
 

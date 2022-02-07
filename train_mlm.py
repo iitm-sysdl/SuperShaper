@@ -1015,10 +1015,12 @@ def main():
 
     elif args.mixing == "bert-bottleneck":
         if args.custom_hidden_size is not None:
-            logger.info("Loading model with custom hidden size: {}".format(args.custom_hidden_size))
-            model = custom_bert.BertForMaskedLM(
-                config=global_config
+            logger.info(
+                "Loading model with custom hidden size: {}".format(
+                    args.custom_hidden_size
+                )
             )
+            model = custom_bert.BertForMaskedLM(config=global_config)
         else:
             model = custom_bert.BertForMaskedLM.from_pretrained(
                 "bert-base-cased", config=global_config
