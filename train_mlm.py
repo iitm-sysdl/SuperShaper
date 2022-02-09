@@ -16,6 +16,7 @@
 
 # taken and modified from https://github.com/huggingface/transformers/blob/master/examples/pytorch/language-modeling/run_mlm_no_trainer.py
 import argparse
+from functools import reduce
 import logging
 import math
 import os
@@ -50,6 +51,7 @@ from transformers import (
 from operator import attrgetter
 
 from utils.module_proxy_wrapper import ModuleProxyWrapper
+from utils.reduce_bert_emb_dim import reduce_emb_dim
 from accelerate import Accelerator, DistributedDataParallelKwargs, DistributedType
 
 from sampling import (
@@ -60,6 +62,7 @@ from sampling import (
 )
 
 from collections import defaultdict
+import joblib
 
 
 from custom_layers import custom_bert, custom_mobile_bert
@@ -590,6 +593,12 @@ def parse_args():
         default=None,
         help=f"value for custom hidden size",
     )
+    parser.add_argument(
+        "--svd_path",
+        type=str,
+        default=None,
+        help=f"if svd_path is provided and exists, we will retrieve the svd path to init the emb matrix, else this will be created and saved in the svd_path",
+    )
 
     # parser.add_argument(
     #     "--max_grad_norm", default=1.0, type=float, help="Max gradient norm."
@@ -597,7 +606,7 @@ def parse_args():
 
     args = parser.parse_args()
 
-    if args.subtransformer_config_path is None:
+    if args.subtransformer_config_path is None and args.model_name_or_path is None:
         args.model_name_or_path = "bert-base-cased"
 
     # Sanity checks
@@ -1013,7 +1022,32 @@ def main():
         logger.info("MobileBert Initiliazed with bert-base")
 
     elif args.mixing == "bert-bottleneck":
-        if args.custom_hidden_size is not None:
+        if args.custom_hidden_size is not None and args.svd_path is not None:
+            if args.model_name_or_path is None:
+                args.model_name_or_path = "bert-base-cased"
+            if os.path.exists(args.svd_path):
+                logger.info("Loading SVD embeddings from path")
+                emb_dict = joblib.load(args.svd_path)
+            else:
+                logger.info("SVD path does not exist. Creating SVD embeddings")
+                emb_dict = reduce_emb_dim(
+                    args.model_name_or_path,
+                    args.custom_hidden_size,
+                    args.svd_path,
+                    # global_config,
+                )
+
+            logger.info("SVD Embeddings loaded")
+            model = custom_bert.BertForMaskedLM(config=global_config)
+
+            for key_to_reduce in emb_dict:
+                emb = torch.from_numpy(emb_dict[key_to_reduce])
+                print(key_to_reduce)
+                # print("before", model.state_dict()[key_to_reduce][:10])
+                model.state_dict()[key_to_reduce].data.copy_(emb)
+                # print("after", model.state_dict()[key_to_reduce][:10])
+
+        elif args.custom_hidden_size is not None:
             logger.info(
                 "Loading model with custom hidden size: {}".format(
                     args.custom_hidden_size
@@ -1022,7 +1056,7 @@ def main():
             model = custom_bert.BertForMaskedLM(config=global_config)
         else:
             model = custom_bert.BertForMaskedLM.from_pretrained(
-                "bert-base-cased", config=global_config
+                args.model_name_or_path, config=global_config
             )
 
         identity = torch.eye(global_config.hidden_size)

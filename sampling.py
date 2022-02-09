@@ -141,6 +141,41 @@ class Sampler:
                 "sample_num_hidden_layers": [12],
             }
 
+        def sanity_check_choices_with_config(choices, _config):
+
+            _config = copy.deepcopy(_config)
+
+            config_num_attention_heads = _config.num_attention_heads
+            config_hidden_size = _config.hidden_size
+            config_intermediate_size = _config.intermediate_size
+            config_num_hidden_layers = _config.num_hidden_layers
+
+            assert (
+                config_hidden_size % config_num_attention_heads == 0
+            ), f"Hidden size in config {config_hidden_size} not divisible by number of attention heads in config {config_num_attention_heads}"
+
+            new_choices = {
+                "sample_hidden_size": [],
+                "sample_num_attention_heads": [config_num_attention_heads],
+                "sample_intermediate_size": [config_intermediate_size],
+                "sample_num_hidden_layers": [config_num_hidden_layers],
+            }  # after sanity check
+
+            for value in choices["sample_hidden_size"]:
+                if value <= config_hidden_size:
+                    assert (
+                        value % config_num_attention_heads == 0
+                    ), f"Sample hidden size {value} not divisible by num attention heads {config_num_attention_heads}"
+
+                else:
+                    # restrict value to config_hidden_size
+                    value = config_hidden_size
+
+                new_choices["sample_hidden_size"].append(value)
+            return new_choices
+
+        choices = sanity_check_choices_with_config(choices, self.config)
+
         return choices
 
     def get_diverse_subtransformers(self, elastic_variable):
@@ -323,14 +358,14 @@ class Sampler:
             config_dict["sample_hidden_size"] = [
                 min(choices["sample_hidden_size"])
             ] * config_dict["sample_num_hidden_layers"]
-            config_dict["sample_num_attention_heads"] = [12] * config_dict[
-                "sample_num_hidden_layers"
-            ]
+            config_dict["sample_num_attention_heads"] = [
+                config.num_attention_heads
+            ] * config_dict["sample_num_hidden_layers"]
 
         elif self.mixing == "mobilebert":
-            config_dict["sample_num_attention_heads"] = [12] * config_dict[
-                "sample_num_hidden_layers"
-            ]
+            config_dict["sample_num_attention_heads"] = [
+                config.num_attention_heads
+            ] * config_dict["sample_num_hidden_layers"]
             config_dict["sample_true_hidden_size"] = min(
                 choices["sample_true_hidden_size"]
             )
