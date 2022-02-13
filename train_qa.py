@@ -699,7 +699,7 @@ def main():
     # download model & vocab.
 
     global_config = get_supertransformer_config(
-        "bert-base-cased",
+        args.model_name_or_path,
         mixing=args.mixing,
         custom_hidden_size=args.custom_hidden_size,
     )

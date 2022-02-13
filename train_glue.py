@@ -665,7 +665,7 @@ def main():
     #     args.model_name_or_path, num_labels=num_labels, finetuning_task=args.task_name
     # )
     global_config = get_supertransformer_config(
-        "bert-base-cased",
+        args.model_name_or_path,
         mixing=args.mixing,
         custom_hidden_size=args.custom_hidden_size,
     )
