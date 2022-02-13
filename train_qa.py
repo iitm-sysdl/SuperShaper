@@ -707,9 +707,14 @@ def main():
     global_config.mlsx_layerdrop = args.mlsx_layerdrop
     global_config.layer_drop_prob = 0.0
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "bert-base-cased", use_fast=not args.use_slow_tokenizer
-    )
+    if args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path, use_fast=not args.use_slow_tokenizer
+        )
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            "bert-base-cased", use_fast=not args.use_slow_tokenizer
+        )
 
     # Preprocessing the datasets.
     # Preprocessing is slighlty different for training and evaluation.

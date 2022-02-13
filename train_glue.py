@@ -672,9 +672,14 @@ def main():
     global_config.rewire = args.rewire
     global_config.layer_drop_prob = 0.0
 
-    tokenizer = AutoTokenizer.from_pretrained(
-        "bert-base-cased", use_fast=not args.use_slow_tokenizer
-    )
+    if args.model_name_or_path:
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path, use_fast=not args.use_slow_tokenizer
+        )
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(
+            "bert-base-cased", use_fast=not args.use_slow_tokenizer
+        )
 
     if args.max_length:
         global_config.max_seq_length = args.max_length

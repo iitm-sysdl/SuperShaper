@@ -896,14 +896,9 @@ def main():
             args.tokenizer_name, use_fast=not args.use_slow_tokenizer
         )
     elif args.model_name_or_path:
-        if args.subtransformer_config_path is None:
-            tokenizer = AutoTokenizer.from_pretrained(
-                args.model_name_or_path, use_fast=not args.use_slow_tokenizer
-            )
-        else:
-            tokenizer = AutoTokenizer.from_pretrained(
-                "bert-base-cased", use_fast=not args.use_slow_tokenizer
-            )
+        tokenizer = AutoTokenizer.from_pretrained(
+            args.model_name_or_path, use_fast=not args.use_slow_tokenizer
+        )
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
