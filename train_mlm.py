@@ -594,6 +594,25 @@ def parse_args():
         help=f"value for custom hidden size",
     )
     parser.add_argument(
+        "--custom_intermediate_size",
+        type=int,
+        default=None,
+        help=f"value for custom intermediate size",
+    )
+    parser.add_argument(
+        "--custom_num_hidden_layers",
+        type=int,
+        default=None,
+        help=f"value for custom num hidden layers",
+    )
+    parser.add_argument(
+        "--custom_num_attention_heads",
+        type=int,
+        default=None,
+        help=f"value for custom num attention heads",
+    )
+
+    parser.add_argument(
         "--svd_path",
         type=str,
         default=None,

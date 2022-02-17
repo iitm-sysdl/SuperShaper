@@ -496,6 +496,9 @@ def get_supertransformer_config(
     additional_random_softmaxing=False,
     random_layer_selection_probability=0.1,
     custom_hidden_size=None,
+    custom_num_hidden_layers=None,
+    custom_num_attention_heads=None,
+    custom_intermediate_size=None,
 ):
     config = AutoConfig.from_pretrained(model_name_or_path)
     if custom_hidden_size is not None:
@@ -503,6 +506,14 @@ def get_supertransformer_config(
         config.true_hidden_size = custom_hidden_size
         # let intermediate size be 3072 as reducing ffn dim may have neg impact on training
         # config.intermediate_size = custom_hidden_size * 4
+
+    if custom_num_hidden_layers is not None:
+        config.num_hidden_layers = custom_num_hidden_layers
+
+    if custom_num_attention_heads is not None:
+        config.num_attention_heads = custom_num_attention_heads
+    if custom_intermediate_size is not None:
+        config.intermediate_size = custom_intermediate_size
 
     if mixing == "gmlp":
         # gmlp needs twice the encoder layers to match bert param size
