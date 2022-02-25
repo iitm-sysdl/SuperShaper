@@ -345,7 +345,13 @@ def parse_args():
     )
 
     args = parser.parse_args()
-    args.model_name_or_path = "bert-base-cased"
+    #args.model_name_or_path = "bert-base-cased"
+    if args.model_name_or_path is None:
+        if args.checkpoint_dir is None:
+            print("Model path or checkpoint_dir should be specified")
+            exit()
+        else:
+            args.model_name_or_path = args.checkpoint_dir
 
     if (
         args.dataset_name is None
@@ -553,7 +559,8 @@ def main():
             "=================================================================="
         )
 
-    model = custom_bert.BertForMaskedLM(global_config)
+    #model = custom_bert.BertForMaskedLM(global_config)
+    model = custom_bert.BertForMaskedLM.from_pretrained(args.model_name_or_path)
 
     model.resize_token_embeddings(len(tokenizer))
     # logger.info(summary(model, depth=4, verbose=0))
