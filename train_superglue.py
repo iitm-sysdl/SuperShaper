@@ -388,6 +388,13 @@ def parse_args():
         help=f"The step frequency of sampling a sub-transformers",
     )
 
+    parser.add_argument(
+        "--init_bottleneck",
+        type=int,
+        default=1,
+        help=f"Whether to initialize the bottleneck layer to identity (do this when your supertransformer isnt supertrained.",
+    )
+
     args = parser.parse_args()
 
     # args.model_name_or_path = "bert-base-cased"
@@ -770,6 +777,17 @@ def main():
             config=global_config,
             ignore_mismatched_sizes=args.is_mnli_checkpoint,
         )
+
+    if args.init_bottleneck:
+        identity = torch.eye(global_config.hidden_size)
+
+        for key in model.state_dict().keys():
+            if "input_bottleneck.weight" in key or "output_bottleneck.weight" in key:
+                model.state_dict()[key].data.copy_(identity)
+            elif "input_bottleneck.bias" in key or "output_bottleneck.bias" in key:
+                model.state_dict()[key].data.zero_()
+
+        logger.info("BERT-Bottleneck reinitialized")
 
     logger.info(summary(model, depth=4, verbose=0))
 
