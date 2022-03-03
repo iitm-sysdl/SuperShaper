@@ -58,6 +58,7 @@ class EvolSearch:
         layerdrop=False,
         additional_random_softmaxing=False,
         mlsx_layerdrop=False,
+        use_params=False,
     ):
 
         self.search_space_config = search_space_config
@@ -73,6 +74,7 @@ class EvolSearch:
         self.layerdrop = layerdrop
         self.additional_random_softmaxing = additional_random_softmaxing
         self.mlsx_layerdrop = mlsx_layerdrop
+        self.use_params = use_params
         self.parent_size = parent_size
         self.mutation_size = mutation_size
         self.crossover_size = crossover_size
@@ -87,6 +89,9 @@ class EvolSearch:
         if self.layerdrop or self.additional_random_softmaxing or self.mlsx_layerdrop:
             self.keys += ["depth_features"]
 
+        # if self.use_params:
+        #     self.keys += ["params"]
+
         self.keys += ["sample_num_hidden_layers"]
 
     def get_search_space(self):
@@ -100,15 +105,23 @@ class EvolSearch:
         if self.search_space_config == "bert-bottleneck":
             space["sample_hidden_size"] = [120, 240, 360, 480, 540, 600, 768]
             # space["sample_num_attention_heads"] = [6,8,12]
-            space["sample_num_attention_heads"] = [12]
+            space["sample_num_attention_heads"] = [self.config.num_attention_heads]
             # space["sample_intermediate_size"] = [1024,2048,3072]
-            space["sample_intermediate_size"] = [3072]
+            space["sample_intermediate_size"] = [self.config.intermediate_size]
             # space["sample_num_hidden_layers"] = [12]
         elif (
             self.search_space_config != "bert-bottleneck"
             and self.search_space_config != "attention"
         ):
             raise NotImplementedError
+
+        # sanity check for filtering hidden sizes
+        new_sample_hidden_size = []
+        for hidden_size in space["sample_hidden_size"]:
+            if hidden_size < self.config.hidden_size:
+                new_sample_hidden_size.append(hidden_size)
+
+        space["sample_hidden_size"] = new_sample_hidden_size
 
         gene_len = 0
         num_hidden_layers = 12
@@ -134,6 +147,8 @@ class EvolSearch:
 
         self.gene_choice = []
         for key in self.keys:
+            if key == "params":
+                continue
             if key == "sample_num_hidden_layers":
                 break
             if key == "random_softmaxing_idx":
@@ -144,17 +159,21 @@ class EvolSearch:
                 self.gene_choice.append(space[key])
 
         self.gene_choice.append(space["sample_num_hidden_layers"])
-        # print("Gene choices: ", self.gene_choice)
 
         return space
 
     def fitness_fn(
         self, feature
     ):  ## This is just temporary, we can remove this for a a more general implementation
+        # feature = feature or self.features
         feature = feature or self.features
+        arch = self.feature2arch(feature)
         if self.additional_random_softmaxing:
-            arch = self.feature2arch(feature)
             feature = self.arch2feature(arch)
+        if self.use_params:
+            params = calculate_params_from_config(arch)
+            feature = feature[:-1] + [params] + feature[-1:]
+
         feature = np.array(feature)
         feature = np.reshape(feature, (1, feature.shape[0]))
 
@@ -202,6 +221,11 @@ class EvolSearch:
                 # print(depth_features)
                 feature_cnt += 1
                 # delattr(arch_config, "random_softmaxing_idx")
+                continue
+
+            if "params" in key:
+                setattr(arch_config, "params", features[feature_cnt])
+                feature_cnt += 1
                 continue
 
             arch_conf_lst = []
@@ -262,9 +286,10 @@ class EvolSearch:
             elif "perplexity" in constraints:
                 assert self.perplexity_predictor is not None
 
-                perp = self.perplexity_predictor.predict(feature)
+                perp = self.fitness_fn(list(feature[0]))
+                # self.perplexity_predictor.predict(feature)
                 if (
-                    perp[0] <= self.constraints_set[constraints]
+                    perp <= self.constraints_set[constraints]
                     or self.constraints_set[constraints] == -1
                 ):
                     satisfy = True
@@ -348,6 +373,9 @@ class EvolSearch:
         if self.additional_random_softmaxing:
             random_softmaxing_idx = random.choices(space["random_softmaxing_idx"], k=1)
             tmp_dict["random_softmaxing_idx"] = random_softmaxing_idx[0]
+
+        # if self.use_params:
+        #     tmp_dict["params"] = calculate_params_from_config(config)
 
         for keys in tmp_dict.keys():
             setattr(config, keys, tmp_dict[keys])
@@ -599,6 +627,17 @@ def parse_args():
         type=int,
         default=0,
     )
+    parser.add_argument(
+        "--use_params",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--model_name_or_path",
+        type=str,
+        default="bert-base-cased",
+        help="Model Name or Path to get the config",
+    )
 
     args = parser.parse_args()
 
@@ -616,7 +655,7 @@ def search(args):
     search_space_config = args.search_space_config
 
     bert_config = get_supertransformer_config(
-        "bert-base-cased", mixing=search_space_config
+        args.model_name_or_path, mixing=search_space_config
     )
 
     fitness_set = (None,)
@@ -671,6 +710,7 @@ def search(args):
         layerdrop=args.layer_drop,
         additional_random_softmaxing=args.additional_random_softmaxing,
         mlsx_layerdrop=args.mlsx_layerdrop,
+        use_params=args.use_params,
     )
 
     best_config = evolution.run_evo_search()

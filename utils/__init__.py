@@ -197,6 +197,7 @@ def calculate_params_from_config(
         bottleneck=(config.mixing == "bert-bottleneck"),
         merged_bottleneck=merged_bottleneck,
         depth_features=depth_features,
+        max_emb_dim=config.hidden_size,
     )
 
 

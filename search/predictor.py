@@ -22,6 +22,7 @@ from transformers import AutoConfig, AutoTokenizer
 from custom_layers import custom_bert, custom_mobile_bert
 import argparse
 import plotly
+from collections import OrderedDict
 
 # sentences = ["hello how are you", "i am fine"]
 # tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
@@ -155,7 +156,7 @@ class Predictor:
         self.model_type = model_type
         self.layerdrop = layerdrop
         self.use_params = use_params
-        self.features2shape = {}
+        self.features2shape = OrderedDict()
 
         self.keys = [
             "sample_hidden_size",
@@ -184,7 +185,6 @@ class Predictor:
                     eta=args_dict["eta"],  # [.3, .2, .1, .05, .01, .005]
                     seed=args_dict["seed"],
                 )
-                
 
         if self.model_type == "lgbm":
             self.lgb_params = {
@@ -226,7 +226,7 @@ class Predictor:
         df_features = df.drop([self.pred_type], axis=1)
         df_metric = df.drop(self.keys, axis=1)
 
-        for key in df_features.columns:
+        for key in self.keys:
             if isinstance(df_features.iloc[0][key], list):
                 self.features2shape[key] = len(df_features.iloc[0][key])
             else:
@@ -252,6 +252,7 @@ class Predictor:
         print(metric.shape)
 
         import pandas as pd
+
         data = np.concatenate([features, metric], axis=1)
         data_df = pd.DataFrame(data)
         data_df.to_csv("data.csv", index=False)
@@ -309,6 +310,7 @@ class Predictor:
         fig.add_trace(go.Scatter(x=testy, y=test_predict, mode="markers"))
 
         import pandas as pd
+
         df_testy = pd.DataFrame(testy)
         df_testP = pd.DataFrame(test_predict)
 
@@ -325,8 +327,8 @@ class Predictor:
         fig.write_image("./metrics_" + self.pred_type + "_.pdf")
 
     def predict(self, feature_in):
-        #print(feature_in)
-        #print(feature_in.shape)
+        # print(feature_in)
+        # print(feature_in.shape)
         return self.model.predict(feature_in)
 
 
