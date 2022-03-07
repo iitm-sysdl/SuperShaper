@@ -200,11 +200,13 @@ def ce_soft(pred, soft_target):
 
 #  https://github.com/pytorch/pytorch/issues/11959
 class CrossEntropyLossSoft(_Loss):
-    def forward(self, preds, target_logits, reduction="mean"):
+    def forward(self, preds, target_logits, temperature=1.0, reduction="mean"):
         """
         :param input: (batch, *)
         :param target: (batch, *) same shape as input, each item must be a valid distribution: target[i, :].sum() == 1.
         """
+        preds = preds / temperature
+        target_logits = target_logits / temperature
         logprobs = torch.nn.functional.log_softmax(
             preds.view(preds.shape[0], -1), dim=1
         )

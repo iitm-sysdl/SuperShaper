@@ -559,6 +559,8 @@ def get_supertransformer_config(
     config.additional_random_softmaxing = additional_random_softmaxing
     config.random_layer_selection_probability = random_layer_selection_probability
     config.rewire = False
+    config.distillation_alpha = 1.0
+    config.distillation_temp = 1.0
     return config
 
 

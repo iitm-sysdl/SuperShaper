@@ -34,6 +34,7 @@ import transformers
 from transformers import (
     AdamW,
     AutoTokenizer,
+    AutoModelForSequenceClassification,
     DataCollatorWithPadding,
     PretrainedConfig,
     SchedulerType,
@@ -344,6 +345,24 @@ def parse_args():
         type=int,
         default=None,
         help=f"value for custom hidden size",
+    )
+    parser.add_argument(
+        "--distill_logits_from",
+        type=str,
+        default=None,
+        help=f"hf model or path to teacher model to distill logits from",
+    )
+    parser.add_argument(
+        "--distillation_alpha",
+        type=float,
+        default=1.0,
+        help=f"percentage of weight given to hard label cross entropy loss. (1-alpha) weight is given to distillation loss or soft label loss",
+    )
+    parser.add_argument(
+        "--distillation_temp",
+        type=float,
+        default=1.0,
+        help=f"temperature for distillation loss",
     )
 
     args = parser.parse_args()
@@ -671,6 +690,8 @@ def main():
     )
     global_config.rewire = args.rewire
     global_config.layer_drop_prob = 0.0
+    global_config.distillation_alpha = args.distillation_alpha
+    global_config.distillation_temp = args.distillation_temp
 
     if args.model_name_or_path:
         tokenizer = AutoTokenizer.from_pretrained(
@@ -729,6 +750,13 @@ def main():
         )
 
     logger.info(summary(model, depth=4, verbose=0))
+
+    if args.distill_logits_from is not None:
+        teacher = AutoModelForSequenceClassification.from_pretrained(
+            args.distill_logits_from,
+        )
+        logger.info("Loading teacher model from {}".format(args.distill_logits_from))
+        # logger.info(summary(teacher, depth=4, verbose=0))
 
     # Preprocessing the datasets
     if args.task_name is not None:
@@ -909,6 +937,9 @@ def main():
     model, optimizer, train_dataloader, eval_dataloader = accelerator.prepare(
         model, optimizer, train_dataloader, eval_dataloader
     )
+
+    if args.distill_logits_from is not None:
+        teacher = accelerator.prepare(teacher)
 
     if (
         accelerator.distributed_type == DistributedType.MULTI_GPU
@@ -1136,7 +1167,13 @@ def main():
 
                 model.set_sample_config(super_config)
 
-            outputs = model(**batch)
+            if args.distill_logits_from is not None:
+                with torch.no_grad():
+                    outputs = teacher(**batch)
+                    teacher_logits = outputs.logits
+                    batch["soft_labels"] = teacher_logits
+
+            outputs = model(**batch, use_soft_loss=args.distill_logits_from is not None)
             loss = outputs.loss
             loss = loss / args.gradient_accumulation_steps
             accelerator.backward(loss)

@@ -2770,6 +2770,9 @@ class BertForSequenceClassification(BertPreTrainedModel):
         super().__init__(config)
         self.num_labels = config.num_labels
 
+        self.distillation_alpha = config.distillation_alpha
+        self.distillation_temp = config.distillation_temp
+
         self.bert = BertModel(config)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
         self.classifier = CustomLinear(config.hidden_size, config.num_labels)
@@ -2826,6 +2829,8 @@ class BertForSequenceClassification(BertPreTrainedModel):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
+        use_soft_loss=False,
+        **kwargs,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -2863,6 +2868,23 @@ class BertForSequenceClassification(BertPreTrainedModel):
             else:
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        if use_soft_loss:
+            if kwargs.get("soft_labels", None) is None:
+                raise ValueError("Soft labels are not provided")
+            if self.num_labels == 1:
+                raise ValueError("Soft loss is not supported for regression")
+            loss_fct2 = CrossEntropyLossSoft()
+
+            soft_loss = loss_fct2(
+                logits.view(-1, self.num_labels),
+                kwargs["soft_labels"].view(-1, self.num_labels),
+                self.distillation_temp,
+            )
+            loss = (
+                self.distillation_alpha * loss
+                + (1 - self.distillation_alpha) * soft_loss
+            )
 
         if not return_dict:
             output = (logits,) + outputs[2:]
